@@ -1,0 +1,65 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    // Verifică admin-ul citind propriul document din users/ — exact rețeta
+    // dovedită la World Cup Arena (get(), nu un custom claim).
+    function isAdmin() {
+      return isSignedIn() &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.isAdmin == true;
+    }
+
+    match /users/{userId} {
+      allow read: if isSignedIn();
+      allow create: if isOwner(userId);
+      // Userul își poate edita propriul profil, dar NU poate să-și seteze singur isAdmin.
+      allow update: if isOwner(userId) &&
+        request.resource.data.isAdmin == resource.data.isAdmin;
+      allow update: if isAdmin();
+      allow delete: if isAdmin();
+    }
+
+    match /seasons/{seasonId} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+
+    match /gameweeks/{gameweekId} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+
+    match /matches/{matchId} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+
+    match /predictions/{predictionId} {
+      allow read: if isSignedIn();
+      // Fiecare user poate scrie DOAR propria predicție (id-ul include uid-ul lui).
+      allow create, update: if isSignedIn() &&
+        predictionId.matches('.*_' + request.auth.uid) &&
+        request.resource.data.userId == request.auth.uid;
+      allow delete: if isAdmin();
+    }
+
+    match /feed/{eventId} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+
+    match /trophies/{trophyId} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+  }
+}

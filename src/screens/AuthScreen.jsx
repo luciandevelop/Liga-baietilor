@@ -9,7 +9,12 @@ import {
 
 const MODES = { LOGIN: "login", REGISTER: "register", RESET: "reset" };
 
-export default function AuthScreen({ onAuthenticated }) {
+// Nu mai primește/apelează onAuthenticated — App.jsx navighează singur,
+// prin propriul listener onAuthStateChanged, o dată ce Firebase Auth
+// confirmă sign-in-ul (indiferent dacă a venit de-aici sau dintr-o sesiune
+// persistată). Ecranul ăsta doar pornește autentificarea și arată erori
+// specifice de credențiale — nu mai gestionează erori de profil Firestore.
+export default function AuthScreen() {
   const [mode, setMode] = useState(MODES.LOGIN);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -29,16 +34,14 @@ export default function AuthScreen({ onAuthenticated }) {
     setLoading(true);
     try {
       if (mode === MODES.LOGIN) {
-        const user = await loginWithEmail(email, password);
-        onAuthenticated(user);
+        await loginWithEmail(email, password);
       } else if (mode === MODES.REGISTER) {
         if (!nickname.trim()) {
           setError("Alege un nickname înainte de a continua.");
           setLoading(false);
           return;
         }
-        const user = await registerWithEmail(email, password, nickname.trim());
-        onAuthenticated(user);
+        await registerWithEmail(email, password, nickname.trim());
       } else if (mode === MODES.RESET) {
         await resetPassword(email);
         setInfo("Ți-am trimis un email cu instrucțiuni de resetare a parolei.");
@@ -54,8 +57,7 @@ export default function AuthScreen({ onAuthenticated }) {
     resetMessages();
     setLoading(true);
     try {
-      const user = await loginWithGoogle();
-      onAuthenticated(user);
+      await loginWithGoogle();
     } catch (err) {
       setError(translateAuthError(err.code));
     } finally {

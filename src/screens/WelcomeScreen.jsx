@@ -1,19 +1,10 @@
-import { useEffect, useState } from "react";
-import { doc, getDoc } from "firebase/firestore";
-import { db } from "../firebase";
 import { logout } from "../services/authService";
 
-export default function WelcomeScreen({ user }) {
-  const [profile, setProfile] = useState(null);
-
-  useEffect(() => {
-    async function load() {
-      const snap = await getDoc(doc(db, "users", user.uid));
-      if (snap.exists()) setProfile(snap.data());
-    }
-    load();
-  }, [user.uid]);
-
+// Componentă pur de afișare — nu mai citește Firestore și nu mai apelează
+// ensureUserProfile. Primește `profile` deja încărcat și confirmat de
+// App.jsx (profileState === "ready"), ca să nu existe niciun risc de
+// apel duplicat sau de afișare falsă a unui cont "gata" înainte de vreme.
+export default function WelcomeScreen({ user, profile }) {
   return (
     <div style={s.page}>
       <div style={s.card}>

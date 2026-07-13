@@ -2,8 +2,10 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { onAuthStateChanged } from "firebase/auth";
 import { auth } from "./firebase";
 import { ensureUserProfile, translateAuthError, logout } from "./services/authService";
+import { checkIsAdmin } from "./services/adminService";
 import AuthScreen from "./screens/AuthScreen";
 import WelcomeScreen from "./screens/WelcomeScreen";
+import AdminScreen from "./screens/AdminScreen";
 
 // profileState: "idle" | "checking" | "ready" | "error"
 // Stare centrală, unică — nimic altceva din aplicație nu mai apelează
@@ -15,6 +17,8 @@ export default function App() {
   const [profile, setProfile] = useState(null);
   const [profileState, setProfileState] = useState("idle");
   const [profileError, setProfileError] = useState("");
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [view, setView] = useState("welcome"); // "welcome" | "admin"
 
   // Incrementat la fiecare loadProfile() nou și la logout — orice cerere
   // în zbor care nu mai corespunde cu requestRef.current curent la momentul
@@ -30,6 +34,9 @@ export default function App() {
       if (requestRef.current !== myRequestId) return; // cerere învechită, ignorăm
       setProfile(data);
       setProfileState("ready");
+      const adminStatus = await checkIsAdmin(u.uid);
+      if (requestRef.current !== myRequestId) return;
+      setIsAdmin(adminStatus);
     } catch (err) {
       if (requestRef.current !== myRequestId) return; // cerere învechită, ignorăm
       console.error("Profil indisponibil:", err);
@@ -48,6 +55,8 @@ export default function App() {
         requestRef.current++; // invalidează orice cerere rămasă în zbor
         setProfile(null);
         setProfileState("idle");
+        setIsAdmin(false);
+        setView("welcome");
       }
     });
     return unsubscribe;
@@ -97,7 +106,18 @@ export default function App() {
     );
   }
 
-  return <WelcomeScreen user={user} profile={profile} />;
+  if (view === "admin" && isAdmin) {
+    return <AdminScreen onBack={() => setView("welcome")} />;
+  }
+
+  return (
+    <WelcomeScreen
+      user={user}
+      profile={profile}
+      isAdmin={isAdmin}
+      onOpenAdmin={() => setView("admin")}
+    />
+  );
 }
 
 const loadingStyle = {

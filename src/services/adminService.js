@@ -4,6 +4,7 @@ import {
   getDoc,
   getDocs,
   addDoc,
+  deleteDoc,
   query,
   where,
   orderBy,
@@ -79,4 +80,51 @@ export async function listMatches(gameweekId) {
     query(collection(db, "matches"), where("gameweekId", "==", gameweekId), orderBy("kickoffAt", "asc"))
   );
   return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+}
+
+// Parsează text lipit, un meci pe linie, format:
+// "Echipa Gazdă - Echipa Oaspete | 2026-09-16 21:00"
+// Returnează un array de {homeTeam, awayTeam, kickoffAt} sau aruncă eroare
+// cu numărul liniei greșite, ca userul să știe exact ce să corecteze.
+export function parseMatchesText(text) {
+  const lines = text.split("\n").map((l) => l.trim()).filter(Boolean);
+  return lines.map((line, i) => {
+    const [teamsPart, timePart] = line.split("|").map((p) => p && p.trim());
+    if (!teamsPart || !timePart) {
+      throw new Error(`Linia ${i + 1}: format greșit, lipsește "|" (echipe | dată oră).`);
+    }
+    const [homeTeam, awayTeam] = teamsPart.split(" - ").map((p) => p && p.trim());
+    if (!homeTeam || !awayTeam) {
+      throw new Error(`Linia ${i + 1}: lipsește " - " între echipe.`);
+    }
+    const kickoffAt = timePart.replace(" ", "T");
+    if (isNaN(new Date(kickoffAt).getTime())) {
+      throw new Error(`Linia ${i + 1}: data/ora nu e validă ("${timePart}").`);
+    }
+    return { homeTeam, awayTeam, kickoffAt };
+  });
+}
+
+// Creează toate meciurile dintr-un text lipit, dintr-o dată, pentru o etapă.
+export async function bulkCreateMatches(gameweekId, text) {
+  const parsed = parseMatchesText(text);
+  for (const m of parsed) {
+    await createMatch({ gameweekId, ...m });
+  }
+  return parsed.length;
+}
+
+// Șterge TOT (sezoane, etape, meciuri) — folosit doar pentru curățarea
+// datelor de test înainte de lansarea reală. Ireversibil.
+export async function resetAllTestData() {
+  const collections = ["matches", "gameweeks", "seasons"];
+  let deleted = 0;
+  for (const name of collections) {
+    const snap = await getDocs(collection(db, name));
+    for (const d of snap.docs) {
+      await deleteDoc(doc(db, name, d.id));
+      deleted++;
+    }
+  }
+  return deleted;
 }

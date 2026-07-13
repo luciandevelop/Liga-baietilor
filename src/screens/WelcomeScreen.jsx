@@ -4,7 +4,7 @@ import { logout } from "../services/authService";
 // ensureUserProfile. Primește `profile` deja încărcat și confirmat de
 // App.jsx (profileState === "ready"), ca să nu existe niciun risc de
 // apel duplicat sau de afișare falsă a unui cont "gata" înainte de vreme.
-export default function WelcomeScreen({ user, profile }) {
+export default function WelcomeScreen({ user, profile, isAdmin, onOpenAdmin }) {
   return (
     <div style={s.page}>
       <div style={s.card}>
@@ -18,6 +18,11 @@ export default function WelcomeScreen({ user, profile }) {
           Restul aplicației (etape, clasament, moduri speciale) apare aici pe măsură ce se
           construiește — revino curând.
         </p>
+        {isAdmin && (
+          <button style={s.adminBtn} onClick={onOpenAdmin}>
+            Panou Admin
+          </button>
+        )}
         <button style={s.logoutBtn} onClick={logout}>
           Deconectează-te
         </button>
@@ -72,5 +77,18 @@ const s = {
     fontSize: 13,
     fontWeight: 700,
     cursor: "pointer",
+  },
+  adminBtn: {
+    background: "linear-gradient(180deg, #E0BC4A, #C9A227)",
+    color: "#0A0E1A",
+    border: "none",
+    borderRadius: 10,
+    padding: "11px 22px",
+    fontSize: 13,
+    fontWeight: 800,
+    cursor: "pointer",
+    marginBottom: 10,
+    display: "block",
+    width: "100%",
   },
 };

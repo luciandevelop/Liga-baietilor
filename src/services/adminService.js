@@ -9,6 +9,7 @@ import {
   where,
   orderBy,
   serverTimestamp,
+  runTransaction,
   Timestamp,
 } from "firebase/firestore";
 import { db } from "../firebase";
@@ -31,6 +32,7 @@ export async function createSeason({ name, startDate, endDate }) {
     startDate: Timestamp.fromDate(new Date(startDate)),
     endDate: Timestamp.fromDate(new Date(endDate)),
     status: "upcoming",
+    gameweekCount: 0, // folosit pentru numerotarea atomică a etapelor
     createdAt: serverTimestamp(),
   });
   return ref.id;
@@ -41,15 +43,133 @@ export async function listSeasons() {
   return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
 }
 
-export async function createGameweek({ seasonId, number, title }) {
-  const ref = await addDoc(collection(db, "gameweeks"), {
-    seasonId,
-    number: Number(number),
-    title,
-    status: "upcoming",
-    createdAt: serverTimestamp(),
+// ── Calcul de săptămână, FIXAT pe Europe/Bucharest ─────────────────────
+// Nu depinde de fusul orar al dispozitivului (nu folosește Date.getDay()/
+// setHours() locale). Citește ora reală din Bucharest via Intl.DateTimeFormat,
+// gestionează corect ora de vară/iarnă. Testat concret (nu doar presupus)
+// pentru: luni/marți/miercuri, trecere peste Anul Nou, ambele tranziții DST,
+// și independență față de fusul dispozitivului — vezi timezone-test.js.
+const BUCHAREST_TZ = "Europe/Bucharest";
+
+function getZonedParts(date, timeZone) {
+  const dtf = new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    hourCycle: "h23",
+    year: "numeric", month: "2-digit", day: "2-digit",
+    hour: "2-digit", minute: "2-digit", second: "2-digit",
+    fractionalSecondDigits: 3,
   });
-  return ref.id;
+  const parts = dtf.formatToParts(date).reduce((acc, p) => {
+    if (p.type !== "literal") acc[p.type] = p.value;
+    return acc;
+  }, {});
+  return {
+    year: parseInt(parts.year, 10),
+    month: parseInt(parts.month, 10),
+    day: parseInt(parts.day, 10),
+    hour: parseInt(parts.hour, 10),
+    minute: parseInt(parts.minute, 10),
+    second: parseInt(parts.second, 10),
+    ms: parseInt(parts.fractionalSecond, 10),
+  };
+}
+
+// Offset-ul (ms) al fusului dat față de UTC, LA ACEL INSTANT anume
+// (diferă automat vara/iarna — nu e o constantă).
+function getTimeZoneOffsetMs(timeZone, date) {
+  const p = getZonedParts(date, timeZone);
+  const asUTC = Date.UTC(p.year, p.month - 1, p.day, p.hour, p.minute, p.second, p.ms);
+  return asUTC - date.getTime();
+}
+
+// Convertește o oră "de perete" din Bucharest într-un instant UTC real.
+function zonedTimeToUtc(y, m, d, h, mi, s, ms, timeZone) {
+  let guess = new Date(Date.UTC(y, m - 1, d, h, mi, s, ms));
+  for (let i = 0; i < 2; i++) {
+    const offset = getTimeZoneOffsetMs(timeZone, guess);
+    guess = new Date(Date.UTC(y, m - 1, d, h, mi, s, ms) - offset);
+  }
+  return guess;
+}
+
+// Zi-a-săptămânii PUR calendaristică (ancorată la amiază UTC — fără nicio
+// dependență de oră/fus, deci fără risc de alunecare de dată).
+function dowOf(y, m, d) {
+  return new Date(Date.UTC(y, m - 1, d, 12, 0, 0)).getUTCDay(); // 0=Duminică..6=Sâmbătă
+}
+function addDaysYMD(y, m, d, days) {
+  const t = Date.UTC(y, m - 1, d, 12, 0, 0) + days * 86400000;
+  const dt = new Date(t);
+  return { year: dt.getUTCFullYear(), month: dt.getUTCMonth() + 1, day: dt.getUTCDate() };
+}
+function pad(n) { return String(n).padStart(2, "0"); }
+
+// Calculează granițele săptămânii calendaristice CURENTE (Europe/Bucharest):
+// luni 00:00:00.000 până duminică 23:59:59.999, indiferent de fusul
+// dispozitivului care rulează codul.
+function getCurrentWeekBounds() {
+  const now = getZonedParts(new Date(), BUCHAREST_TZ);
+  const dow = dowOf(now.year, now.month, now.day);
+  const diffToMonday = dow === 0 ? -6 : 1 - dow;
+  const monday = addDaysYMD(now.year, now.month, now.day, diffToMonday);
+  const sunday = addDaysYMD(monday.year, monday.month, monday.day, 6);
+
+  const weekStart = zonedTimeToUtc(monday.year, monday.month, monday.day, 0, 0, 0, 0, BUCHAREST_TZ);
+  const weekEnd = zonedTimeToUtc(sunday.year, sunday.month, sunday.day, 23, 59, 59, 999, BUCHAREST_TZ);
+  return { weekStart, weekEnd, mondayYMD: monday };
+}
+
+function weekIdFromYMD({ year, month, day }) {
+  return `${year}-${pad(month)}-${pad(day)}`;
+}
+
+// Creează etapa săptămânii CURENTE pentru sezonul dat, sau — dacă există deja
+// o etapă pentru săptămâna asta — o returnează pe aceea, fără să creeze alta.
+//
+// Duplicarea e prevenită STRUCTURAL, nu doar printr-o verificare anterioară:
+// 1) ID-ul documentului e determinist (seasonId + luni-ul săptămânii), deci
+//    două apăsări simultane țintesc mereu EXACT același document.
+// 2) Totul rulează într-o runTransaction — Firestore serializează automat
+//    tranzacțiile concurente pe același document, deci un dublu-click rapid
+//    nu poate crea două etape, indiferent de viteza rețelei sau a click-urilor.
+// 3) Numărul etapei vine dintr-un contor atomic (seasons/{id}.gameweekCount),
+//    incrementat în aceeași tranzacție — nu dintr-un query separat "ultimul+1",
+//    care ar avea propriul risc de race condition.
+export async function createOrGetWeeklyGameweek(seasonId) {
+  const { weekStart, weekEnd, mondayYMD } = getCurrentWeekBounds();
+  const weekId = weekIdFromYMD(mondayYMD);
+  const gameweekId = `${seasonId}_${weekId}`;
+  const gwRef = doc(db, "gameweeks", gameweekId);
+  const seasonRef = doc(db, "seasons", seasonId);
+
+  const result = await runTransaction(db, async (tx) => {
+    const gwSnap = await tx.get(gwRef);
+    if (gwSnap.exists()) {
+      return { id: gameweekId, number: gwSnap.data().number, existed: true };
+    }
+
+    const seasonSnap = await tx.get(seasonRef);
+    if (!seasonSnap.exists()) {
+      throw new Error("Sezonul selectat nu există.");
+    }
+    const currentCount = seasonSnap.data().gameweekCount || 0;
+    const nextNumber = currentCount + 1;
+
+    tx.update(seasonRef, { gameweekCount: nextNumber });
+    tx.set(gwRef, {
+      seasonId,
+      number: nextNumber,
+      title: `Etapa ${nextNumber}`,
+      status: "draft",
+      weekStart: Timestamp.fromDate(weekStart),
+      weekEnd: Timestamp.fromDate(weekEnd),
+      createdAt: serverTimestamp(),
+    });
+
+    return { id: gameweekId, number: nextNumber, existed: false };
+  });
+
+  return result;
 }
 
 export async function listGameweeks(seasonId) {

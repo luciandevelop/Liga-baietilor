@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import {
   createSeason,
   listSeasons,
-  createGameweek,
+  createOrGetWeeklyGameweek,
   listGameweeks,
   bulkCreateMatches,
   listMatches,
@@ -21,9 +21,6 @@ export default function AdminScreen({ onBack }) {
   const [seasonName, setSeasonName] = useState("");
   const [seasonStart, setSeasonStart] = useState("");
   const [seasonEnd, setSeasonEnd] = useState("");
-
-  const [gwNumber, setGwNumber] = useState("");
-  const [gwTitle, setGwTitle] = useState("");
 
   const [matchesText, setMatchesText] = useState("");
 
@@ -78,18 +75,19 @@ export default function AdminScreen({ onBack }) {
     }
   }
 
-  async function handleCreateGameweek(e) {
-    e.preventDefault();
-    if (!selectedSeasonId || !gwNumber || !gwTitle) return;
+  async function handleCreateNextGameweek() {
+    if (!selectedSeasonId) return;
     setLoading(true);
     setMessage("");
     try {
-      const id = await createGameweek({ seasonId: selectedSeasonId, number: gwNumber, title: gwTitle });
-      setGwNumber("");
-      setGwTitle("");
+      const { id, number, existed } = await createOrGetWeeklyGameweek(selectedSeasonId);
       await refreshGameweeks(selectedSeasonId);
       setSelectedGameweekId(id);
-      setMessage("Etapă creată.");
+      setMessage(
+        existed
+          ? `Etapa acestei săptămâni există deja — Etapa ${number}, deschisă.`
+          : `Etapa ${number} creată pentru săptămâna curentă.`
+      );
     } catch (err) {
       console.error(err);
       setMessage("Eroare la crearea etapei: " + (err.code || err.message));
@@ -117,10 +115,13 @@ export default function AdminScreen({ onBack }) {
   }
 
   async function handleReset() {
-    const confirmed = window.confirm(
-      "Sigur ștergi TOATE sezoanele, etapele și meciurile de test? Nu se poate anula."
+    const typed = window.prompt(
+      'ATENȚIE — instrument doar de TEST. Șterge TOATE sezoanele, etapele și meciurile, ireversibil.\n\nScrie exact "RESET" ca să confirmi:'
     );
-    if (!confirmed) return;
+    if (typed !== "RESET") {
+      if (typed !== null) setMessage('Resetare anulată — trebuia scris exact "RESET".');
+      return;
+    }
     setLoading(true);
     setMessage("");
     try {
@@ -145,7 +146,7 @@ export default function AdminScreen({ onBack }) {
         <div style={s.headerRow}>
           <h1 style={s.title}>Panou Admin — test etapă</h1>
           <div style={s.headerBtns}>
-            <button style={s.resetBtn} onClick={handleReset} disabled={loading}>Reset tot</button>
+            <button style={s.resetBtn} onClick={handleReset} disabled={loading}>⚠️ Reset TEST</button>
             <button style={s.backBtn} onClick={onBack}>Înapoi</button>
           </div>
         </div>
@@ -187,17 +188,13 @@ export default function AdminScreen({ onBack }) {
             >
               <option value="">— alege o etapă —</option>
               {gameweeks.map((g) => (
-                <option key={g.id} value={g.id}>{g.title} (#{g.number})</option>
+                <option key={g.id} value={g.id}>{g.title} · {g.status}</option>
               ))}
             </select>
 
-            <form onSubmit={handleCreateGameweek} style={s.form}>
-              <div style={s.row}>
-                <input style={s.input} type="number" placeholder="Nr." value={gwNumber} onChange={(e) => setGwNumber(e.target.value)} />
-                <input style={s.input} placeholder="Titlu (ex: Etapa 1)" value={gwTitle} onChange={(e) => setGwTitle(e.target.value)} />
-              </div>
-              <button style={s.btn} disabled={loading} type="submit">+ Etapă nouă</button>
-            </form>
+            <button style={s.btn} disabled={loading} onClick={handleCreateNextGameweek}>
+              Creează / deschide etapa săptămânii
+            </button>
           </section>
         )}
 

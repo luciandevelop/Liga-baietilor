@@ -142,41 +142,58 @@ export async function createOrGetWeeklyGameweek(seasonId) {
   const gwRef = doc(db, "gameweeks", gameweekId);
   const seasonRef = doc(db, "seasons", seasonId);
 
-  const result = await runTransaction(db, async (tx) => {
-    const gwSnap = await tx.get(gwRef);
-    if (gwSnap.exists()) {
-      return { id: gameweekId, number: gwSnap.data().number, existed: true };
-    }
+  try {
+    const result = await runTransaction(db, async (tx) => {
+      // AMBELE citiri, necondiționat, înaintea oricărei decizii sau scrieri —
+      // nu doar "citiri înainte de scrieri pe calea de execuție", ci literal
+      // primele două linii ale tranzacției, fără nicio ramificație între ele.
+      const seasonSnap = await tx.get(seasonRef);
+      const gwSnap = await tx.get(gwRef);
 
-    const seasonSnap = await tx.get(seasonRef);
-    if (!seasonSnap.exists()) {
-      throw new Error("Sezonul selectat nu există.");
-    }
-    const currentCount = seasonSnap.data().gameweekCount || 0;
-    const nextNumber = currentCount + 1;
+      if (gwSnap.exists()) {
+        return { id: gameweekId, number: gwSnap.data().number, existed: true };
+      }
+      if (!seasonSnap.exists()) {
+        throw new Error("Sezonul selectat nu există.");
+      }
 
-    tx.update(seasonRef, { gameweekCount: nextNumber });
-    tx.set(gwRef, {
-      seasonId,
-      number: nextNumber,
-      title: `Etapa ${nextNumber}`,
-      status: "draft",
-      weekStart: Timestamp.fromDate(weekStart),
-      weekEnd: Timestamp.fromDate(weekEnd),
-      createdAt: serverTimestamp(),
+      const currentCount = seasonSnap.data().gameweekCount || 0;
+      const nextNumber = currentCount + 1;
+
+      tx.update(seasonRef, { gameweekCount: nextNumber });
+      tx.set(gwRef, {
+        seasonId,
+        number: nextNumber,
+        title: `Etapa ${nextNumber}`,
+        status: "draft",
+        weekStart: Timestamp.fromDate(weekStart),
+        weekEnd: Timestamp.fromDate(weekEnd),
+        createdAt: serverTimestamp(),
+      });
+
+      return { id: gameweekId, number: nextNumber, existed: false };
     });
 
-    return { id: gameweekId, number: nextNumber, existed: false };
-  });
-
-  return result;
+    return result;
+  } catch (err) {
+    // Nu ascundem eroarea originală — o păstrăm ca sursă, dar aruncăm un
+    // mesaj cu context, ca userul să vadă exact ce s-a întâmplat, nu doar
+    // un cod generic Firebase.
+    console.error("Tranzacție eșuată la createOrGetWeeklyGameweek:", err);
+    const detail = err?.message || err?.code || "eroare necunoscută";
+    const wrapped = new Error(`Crearea etapei a eșuat în tranzacția Firestore: ${detail}`);
+    wrapped.cause = err;
+    throw wrapped;
+  }
 }
 
 export async function listGameweeks(seasonId) {
-  const snap = await getDocs(
-    query(collection(db, "gameweeks"), where("seasonId", "==", seasonId), orderBy("number", "asc"))
-  );
-  return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+  // Fără orderBy() în query — where()+orderBy() pe câmpuri diferite ar cere
+  // un index compus în Firestore. Sortăm în JS după ce vin datele (liste
+  // mici, sub 40 de elemente — zero impact real de performanță).
+  const snap = await getDocs(query(collection(db, "gameweeks"), where("seasonId", "==", seasonId)));
+  const list = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+  return list.sort((a, b) => Number(a.number) - Number(b.number));
 }
 
 export async function createMatch({ gameweekId, homeTeam, awayTeam, kickoffAt }) {
@@ -196,10 +213,10 @@ export async function createMatch({ gameweekId, homeTeam, awayTeam, kickoffAt })
 }
 
 export async function listMatches(gameweekId) {
-  const snap = await getDocs(
-    query(collection(db, "matches"), where("gameweekId", "==", gameweekId), orderBy("kickoffAt", "asc"))
-  );
-  return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+  // Același motiv — fără orderBy() în query, sortăm în JS după kickoffAt.
+  const snap = await getDocs(query(collection(db, "matches"), where("gameweekId", "==", gameweekId)));
+  const list = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+  return list.sort((a, b) => a.kickoffAt.toMillis() - b.kickoffAt.toMillis());
 }
 
 // Parsează text lipit, un meci pe linie, format:

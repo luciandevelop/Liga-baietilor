@@ -69,7 +69,7 @@ export default function AdminScreen({ onBack }) {
       setMessage("Sezon creat.");
     } catch (err) {
       console.error(err);
-      setMessage("Eroare la crearea sezonului: " + (err.code || err.message));
+      setMessage("Eroare la crearea sezonului: " + (err.message || err.code));
     } finally {
       setLoading(false);
     }
@@ -79,21 +79,40 @@ export default function AdminScreen({ onBack }) {
     if (!selectedSeasonId) return;
     setLoading(true);
     setMessage("");
+
+    // Pasul 1: creează SAU deschide etapa săptămânii — rezultatul ăsta e
+    // sursa adevărului pentru "a mers sau nu a mers" crearea etapei.
+    let result;
     try {
-      const { id, number, existed } = await createOrGetWeeklyGameweek(selectedSeasonId);
-      await refreshGameweeks(selectedSeasonId);
-      setSelectedGameweekId(id);
-      setMessage(
-        existed
-          ? `Etapa acestei săptămâni există deja — Etapa ${number}, deschisă.`
-          : `Etapa ${number} creată pentru săptămâna curentă.`
-      );
+      result = await createOrGetWeeklyGameweek(selectedSeasonId);
     } catch (err) {
-      console.error(err);
-      setMessage("Eroare la crearea etapei: " + (err.code || err.message));
-    } finally {
+      console.error("Eroare la crearea/deschiderea etapei:", err);
+      setMessage("Eroare la crearea etapei: " + (err.message || err.code));
       setLoading(false);
+      return;
     }
+
+    const { id, number, existed } = result;
+    setSelectedGameweekId(id);
+    setMessage(
+      existed
+        ? `Etapa acestei săptămâni există deja — Etapa ${number}, deschisă.`
+        : `Etapa ${number} creată pentru săptămâna curentă.`
+    );
+
+    // Pasul 2: doar reîncarcă lista vizuală de etape. Dacă asta pică,
+    // etapa tot s-a creat/deschis corect la pasul 1 — nu suprascriem
+    // mesajul de succes cu o eroare de-a lui, doar o adăugăm distinct.
+    try {
+      await refreshGameweeks(selectedSeasonId);
+    } catch (err) {
+      console.error("Eroare la reîncărcarea listei de etape:", err);
+      setMessage(
+        (prev) => `${prev} (Atenție: lista de etape nu s-a putut reîncărca — ${err.message || err.code})`
+      );
+    }
+
+    setLoading(false);
   }
 
   async function handleImportMatches(e) {
@@ -134,7 +153,7 @@ export default function AdminScreen({ onBack }) {
       setMessage(`Resetat — ${count} documente șterse.`);
     } catch (err) {
       console.error(err);
-      setMessage("Eroare la resetare: " + (err.code || err.message));
+      setMessage("Eroare la resetare: " + (err.message || err.code));
     } finally {
       setLoading(false);
     }

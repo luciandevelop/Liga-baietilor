@@ -4,6 +4,7 @@ import {
   getDoc,
   getDocs,
   addDoc,
+  updateDoc,
   deleteDoc,
   query,
   where,
@@ -264,4 +265,14 @@ export async function resetAllTestData() {
     }
   }
   return deleted;
+}
+
+// Setează cele 3 Meciurile Săptămânii pentru o etapă — un singur câmp
+// array pe documentul gameweek, suprascris integral la fiecare salvare
+// (nu adăugare incrementală). Validare minimă client-side: exact 3 ID-uri.
+export async function setFeaturedMatches(gameweekId, matchIds) {
+  if (!Array.isArray(matchIds) || matchIds.length !== 3) {
+    throw new Error("Trebuie să alegi exact 3 Meciurile Săptămânii.");
+  }
+  await updateDoc(doc(db, "gameweeks", gameweekId), { featuredMatchIds: matchIds });
 }

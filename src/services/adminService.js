@@ -276,3 +276,36 @@ export async function setFeaturedMatches(gameweekId, matchIds) {
   }
   await updateDoc(doc(db, "gameweeks", gameweekId), { featuredMatchIds: matchIds });
 }
+
+// Șterge UN meci, curățând tot ce ar rămâne orfan după el:
+// 1) predicțiile userilor pentru acel meci (predictions/{matchId}_{uid});
+// 2) Jokerii care indicau exact acel meci (jokers/{gameweekId}_{uid});
+// 3) referința la meci din gameweek.featuredMatchIds, dacă era acolo;
+// 4) documentul meciului însuși, la final.
+// Nu e o tranzacție atomică (interogările nu pot fi combinate sigur cu
+// scrieri într-o singură tranzacție Firestore) — pentru date de test,
+// riscul unei erori la jumătatea drumului e acceptabil; operația poate
+// fi reluată în siguranță (fiecare pas e idempotent).
+export async function deleteMatch(matchId, gameweekId) {
+  const predSnap = await getDocs(query(collection(db, "predictions"), where("matchId", "==", matchId)));
+  for (const d of predSnap.docs) {
+    await deleteDoc(doc(db, "predictions", d.id));
+  }
+
+  const jokerSnap = await getDocs(query(collection(db, "jokers"), where("matchId", "==", matchId)));
+  for (const d of jokerSnap.docs) {
+    await deleteDoc(doc(db, "jokers", d.id));
+  }
+
+  const gwSnap = await getDoc(doc(db, "gameweeks", gameweekId));
+  if (gwSnap.exists()) {
+    const featured = gwSnap.data().featuredMatchIds || [];
+    if (featured.includes(matchId)) {
+      await updateDoc(doc(db, "gameweeks", gameweekId), {
+        featuredMatchIds: featured.filter((id) => id !== matchId),
+      });
+    }
+  }
+
+  await deleteDoc(doc(db, "matches", matchId));
+}

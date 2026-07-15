@@ -7,6 +7,7 @@ import {
   bulkCreateMatches,
   listMatches,
   resetAllTestData,
+  setFeaturedMatches,
 } from "../services/adminService";
 import MatchCard from "../components/MatchCard";
 
@@ -24,6 +25,10 @@ export default function AdminScreen({ onBack }) {
   const [seasonEnd, setSeasonEnd] = useState("");
 
   const [matchesText, setMatchesText] = useState("");
+
+  const [featuredIds, setFeaturedIds] = useState([]);
+  const [featuredSaving, setFeaturedSaving] = useState(false);
+  const [featuredMessage, setFeaturedMessage] = useState("");
 
   async function refreshSeasons() {
     const data = await listSeasons();
@@ -53,7 +58,33 @@ export default function AdminScreen({ onBack }) {
 
   useEffect(() => {
     refreshMatches(selectedGameweekId);
-  }, [selectedGameweekId]);
+    const gw = gameweeks.find((g) => g.id === selectedGameweekId);
+    setFeaturedIds(gw?.featuredMatchIds || []);
+    setFeaturedMessage("");
+  }, [selectedGameweekId, gameweeks]);
+
+  function toggleFeatured(matchId) {
+    setFeaturedIds((prev) => {
+      if (prev.includes(matchId)) return prev.filter((id) => id !== matchId);
+      if (prev.length >= 3) return prev; // deja 3 alese, ignorăm click-ul
+      return [...prev, matchId];
+    });
+  }
+
+  async function handleSaveFeatured() {
+    setFeaturedSaving(true);
+    setFeaturedMessage("");
+    try {
+      await setFeaturedMatches(selectedGameweekId, featuredIds);
+      await refreshGameweeks(selectedSeasonId);
+      setFeaturedMessage("✓ Meciurile Săptămânii salvate.");
+    } catch (err) {
+      console.error(err);
+      setFeaturedMessage("Eroare: " + (err.message || err.code));
+    } finally {
+      setFeaturedSaving(false);
+    }
+  }
 
   async function handleCreateSeason(e) {
     e.preventDefault();
@@ -226,14 +257,40 @@ export default function AdminScreen({ onBack }) {
             {matches.length > 0 && (
               <div style={s.matchList}>
                 {matches.map((m) => (
-                  <MatchCard
-                    key={m.id}
-                    homeTeam={m.homeTeam}
-                    awayTeam={m.awayTeam}
-                    kickoffAt={m.kickoffAt}
-                    status={m.status}
-                  />
+                  <label key={m.id} style={s.featuredRow}>
+                    <input
+                      type="checkbox"
+                      checked={featuredIds.includes(m.id)}
+                      onChange={() => toggleFeatured(m.id)}
+                      disabled={!featuredIds.includes(m.id) && featuredIds.length >= 3}
+                      style={s.featuredCheckbox}
+                    />
+                    <div style={{ flex: 1 }}>
+                      <MatchCard
+                        homeTeam={m.homeTeam}
+                        awayTeam={m.awayTeam}
+                        kickoffAt={m.kickoffAt}
+                        status={m.status}
+                      />
+                    </div>
+                  </label>
                 ))}
+              </div>
+            )}
+
+            {matches.length > 0 && (
+              <div style={s.featuredSaveBox}>
+                <p style={s.hint}>
+                  ⭐ Meciurile Săptămânii: {featuredIds.length}/3 alese
+                </p>
+                {featuredMessage && <div style={s.message}>{featuredMessage}</div>}
+                <button
+                  style={s.btn}
+                  disabled={featuredSaving || featuredIds.length !== 3}
+                  onClick={handleSaveFeatured}
+                >
+                  {featuredSaving ? "Se salvează…" : "Salvează Meciurile Săptămânii"}
+                </button>
               </div>
             )}
 
@@ -308,6 +365,11 @@ const s = {
     borderRadius: 10, padding: "11px 0", fontSize: 13.5, fontWeight: 800, cursor: "pointer", marginTop: 2,
   },
   matchList: { display: "flex", flexDirection: "column", gap: 8, marginBottom: 14 },
+  featuredRow: {
+    display: "flex", alignItems: "flex-start", gap: 10, cursor: "pointer",
+  },
+  featuredCheckbox: { width: 20, height: 20, marginTop: 14, flexShrink: 0, accentColor: "#C9A227" },
+  featuredSaveBox: { marginTop: 4, marginBottom: 14 },
   matchRow: {
     display: "flex", justifyContent: "space-between", background: "#0D1220",
     border: "1px solid #1c2338", borderRadius: 10, padding: "9px 12px", fontSize: 13, color: "#E8E4D8",

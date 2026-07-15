@@ -3,7 +3,10 @@ import {
   getCurrentSeason,
   getCurrentGameweek,
   loadUserPredictions,
-  saveAllPredictions,
+  savePredictionForMatch,
+  loadUserJoker,
+  saveJoker,
+  isMatchLocked,
 } from "../services/predictionsService";
 import { listMatches } from "../services/adminService";
 import MatchPredictionCard from "../components/MatchPredictionCard";
@@ -15,13 +18,14 @@ export default function PredictionsScreen({ user, onBack }) {
   const [gameweek, setGameweek] = useState(null);
   const [matches, setMatches] = useState([]);
   const [predictions, setPredictions] = useState({});
-  const [saving, setSaving] = useState(false);
-  const [saveMessage, setSaveMessage] = useState("");
+  const [saveState, setSaveState] = useState({}); // { [matchId]: { saving, status, error } }
+  const [joker, setJoker] = useState(null); // { matchId } | null
+  const [jokerSaving, setJokerSaving] = useState(false);
+  const [jokerError, setJokerError] = useState("");
 
   const load = useCallback(async () => {
     setLoadState("loading");
     setLoadError("");
-    setSaveMessage("");
 
     let s, gw, m;
 
@@ -74,6 +78,15 @@ export default function PredictionsScreen({ user, onBack }) {
       return;
     }
 
+    let existingJoker = null;
+    try {
+      existingJoker = await loadUserJoker(gw.id, user.uid);
+    } catch (err) {
+      console.error("Eroare la încărcarea Jokerului:", err);
+      // Nu blocăm toată pagina pentru asta — Jokerul e opțional, restul funcționează.
+      setJokerError("Nu s-a putut încărca Jokerul: " + (err.message || err.code));
+    }
+
     const initial = {};
     m.forEach((match) => {
       const p = existing[match.id];
@@ -85,6 +98,7 @@ export default function PredictionsScreen({ user, onBack }) {
       };
     });
     setPredictions(initial);
+    setJoker(existingJoker);
     setLoadState("ready");
   }, [user.uid]);
 
@@ -96,25 +110,40 @@ export default function PredictionsScreen({ user, onBack }) {
     setPredictions((prev) => ({ ...prev, [matchId]: { ...prev[matchId], ...patch } }));
   }
 
-  async function handleSaveAll() {
-    setSaving(true);
-    setSaveMessage("");
+  async function handleSaveMatch(match) {
+    const matchId = match.id;
+    setSaveState((prev) => ({ ...prev, [matchId]: { saving: true, status: "idle", error: "" } }));
     try {
-      const { saved, skippedEmpty, invalid, errors } = await saveAllPredictions(user.uid, matches, predictions);
-      const parts = [];
-      if (saved > 0) parts.push(`${saved} salvate`);
-      if (invalid > 0) parts.push(`${invalid} cu valori nevalide (verifică)`);
-      if (errors.length > 0) parts.push(`${errors.length} erori: ${errors.join(" | ")}`);
-      if (parts.length === 0) {
-        setSaveMessage(skippedEmpty > 0 ? "Niciun meci cu scor completat de salvat." : "Nimic de salvat.");
-      } else {
-        setSaveMessage("✓ " + parts.join(" · "));
-      }
+      const p = predictions[matchId] || {};
+      await savePredictionForMatch({
+        matchId,
+        uid: user.uid,
+        scoreA: p.scoreA,
+        scoreB: p.scoreB,
+        corners: p.corners,
+        cards: p.cards,
+      });
+      setSaveState((prev) => ({ ...prev, [matchId]: { saving: false, status: "success", error: "" } }));
     } catch (err) {
-      console.error(err);
-      setSaveMessage("Eroare la salvare: " + (err.message || err.code));
+      console.error(`Eroare la salvarea meciului ${matchId}:`, err);
+      setSaveState((prev) => ({
+        ...prev,
+        [matchId]: { saving: false, status: "error", error: err.message || err.code },
+      }));
+    }
+  }
+
+  async function handleSetJoker(match) {
+    setJokerSaving(true);
+    setJokerError("");
+    try {
+      await saveJoker({ gameweekId: gameweek.id, uid: user.uid, matchId: match.id });
+      setJoker({ userId: user.uid, gameweekId: gameweek.id, matchId: match.id });
+    } catch (err) {
+      console.error("Eroare la salvarea Jokerului:", err);
+      setJokerError(err.message || err.code);
     } finally {
-      setSaving(false);
+      setJokerSaving(false);
     }
   }
 
@@ -150,6 +179,8 @@ export default function PredictionsScreen({ user, onBack }) {
     );
   }
 
+  const featuredMatchIds = gameweek.featuredMatchIds || [];
+
   return (
     <div style={s.page}>
       <div style={s.headerRow}>
@@ -160,31 +191,37 @@ export default function PredictionsScreen({ user, onBack }) {
         <button style={s.backBtn} onClick={onBack}>Înapoi</button>
       </div>
 
+      {jokerError && <div style={s.jokerErrorBanner}>Joker: {jokerError}</div>}
+
       {matches.length === 0 ? (
         <div style={s.centerBox}>Etapa asta nu are încă meciuri adăugate.</div>
       ) : (
         <div style={s.matchList}>
           {matches.map((m) => {
-            const locked = m.kickoffAt?.toMillis ? m.kickoffAt.toMillis() <= Date.now() : false;
+            const locked = isMatchLocked(m);
+            const isFeatured = featuredMatchIds.includes(m.id);
+            const isJoker = joker?.matchId === m.id;
+            const jokerDisabled = isFeatured || locked || jokerSaving;
+            const sState = saveState[m.id] || {};
+
             return (
               <MatchPredictionCard
                 key={m.id}
                 match={m}
                 prediction={predictions[m.id]}
                 onChange={(patch) => updateMatch(m.id, patch)}
+                onSave={() => handleSaveMatch(m)}
+                saving={!!sState.saving}
+                saveStatus={sState.status}
+                saveError={sState.error}
                 locked={locked}
+                isFeatured={isFeatured}
+                isJoker={isJoker}
+                onToggleJoker={() => (isJoker ? null : handleSetJoker(m))}
+                jokerDisabled={jokerDisabled || isJoker}
               />
             );
           })}
-        </div>
-      )}
-
-      {matches.length > 0 && (
-        <div style={s.saveArea}>
-          {saveMessage && <div style={s.saveMessage}>{saveMessage}</div>}
-          <button style={s.saveBtn} disabled={saving} onClick={handleSaveAll}>
-            {saving ? "Se salvează…" : "SALVEAZĂ PRONOSTICURILE"}
-          </button>
         </div>
       )}
     </div>
@@ -243,32 +280,17 @@ const s = {
     cursor: "pointer",
     textDecoration: "underline",
   },
-  matchList: { display: "flex", flexDirection: "column", gap: 14, maxWidth: 480, margin: "0 auto" },
-  saveArea: {
-    maxWidth: 480,
-    margin: "20px auto 0",
-    display: "flex",
-    flexDirection: "column",
-    gap: 10,
-  },
-  saveMessage: {
-    fontSize: 12.5,
-    color: "#A9E0B8",
-    background: "rgba(63,168,92,0.1)",
-    border: "1px solid rgba(63,168,92,0.3)",
+  jokerErrorBanner: {
+    fontSize: 11.5,
+    color: "#E08A82",
+    background: "rgba(181,69,61,0.1)",
+    border: "1px solid rgba(181,69,61,0.3)",
     borderRadius: 10,
-    padding: "10px 12px",
-    lineHeight: 1.5,
+    padding: "8px 12px",
+    marginBottom: 14,
+    maxWidth: 480,
+    marginLeft: "auto",
+    marginRight: "auto",
   },
-  saveBtn: {
-    background: "linear-gradient(180deg, #E0BC4A, #C9A227)",
-    color: "#0A0E1A",
-    border: "none",
-    borderRadius: 12,
-    padding: "15px 0",
-    fontSize: 14.5,
-    fontWeight: 800,
-    letterSpacing: "0.02em",
-    cursor: "pointer",
-  },
+  matchList: { display: "flex", flexDirection: "column", gap: 14, maxWidth: 480, margin: "0 auto" },
 };

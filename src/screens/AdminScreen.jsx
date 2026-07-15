@@ -8,6 +8,7 @@ import {
   listMatches,
   resetAllTestData,
 } from "../services/adminService";
+import MatchCard from "../components/MatchCard";
 
 export default function AdminScreen({ onBack }) {
   const [seasons, setSeasons] = useState([]);
@@ -225,10 +226,13 @@ export default function AdminScreen({ onBack }) {
             {matches.length > 0 && (
               <div style={s.matchList}>
                 {matches.map((m) => (
-                  <div key={m.id} style={s.matchRow}>
-                    <span>{m.homeTeam} — {m.awayTeam}</span>
-                    <span style={s.matchMeta}>{m.status}</span>
-                  </div>
+                  <MatchCard
+                    key={m.id}
+                    homeTeam={m.homeTeam}
+                    awayTeam={m.awayTeam}
+                    kickoffAt={m.kickoffAt}
+                    status={m.status}
+                  />
                 ))}
               </div>
             )}

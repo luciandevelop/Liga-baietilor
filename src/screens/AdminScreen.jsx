@@ -8,6 +8,7 @@ import {
   listMatches,
   resetAllTestData,
   setFeaturedMatches,
+  deleteMatch,
 } from "../services/adminService";
 import MatchCard from "../components/MatchCard";
 
@@ -29,6 +30,9 @@ export default function AdminScreen({ onBack }) {
   const [featuredIds, setFeaturedIds] = useState([]);
   const [featuredSaving, setFeaturedSaving] = useState(false);
   const [featuredMessage, setFeaturedMessage] = useState("");
+
+  const [deletingMatchId, setDeletingMatchId] = useState("");
+  const [deleteMessage, setDeleteMessage] = useState("");
 
   async function refreshSeasons() {
     const data = await listSeasons();
@@ -147,6 +151,26 @@ export default function AdminScreen({ onBack }) {
     setLoading(false);
   }
 
+  async function handleDeleteMatch(match) {
+    const confirmed = window.confirm(
+      `Ștergi meciul "${match.homeTeam} - ${match.awayTeam}"?\n\nSe șterg și predicțiile/Jokerii asociați. Ireversibil.`
+    );
+    if (!confirmed) return;
+
+    setDeletingMatchId(match.id);
+    setDeleteMessage("");
+    try {
+      await deleteMatch(match.id, selectedGameweekId);
+      await refreshMatches(selectedGameweekId);
+      setDeleteMessage(`✓ Meciul "${match.homeTeam} - ${match.awayTeam}" a fost șters.`);
+    } catch (err) {
+      console.error(err);
+      setDeleteMessage("Eroare la ștergere: " + (err.message || err.code));
+    } finally {
+      setDeletingMatchId("");
+    }
+  }
+
   async function handleImportMatches(e) {
     e.preventDefault();
     if (!selectedGameweekId || !matchesText.trim()) return;
@@ -254,26 +278,39 @@ export default function AdminScreen({ onBack }) {
           <section style={s.card}>
             <h2 style={s.cardTitle}>3. Meciuri</h2>
 
+            {deleteMessage && <div style={s.message}>{deleteMessage}</div>}
+
             {matches.length > 0 && (
               <div style={s.matchList}>
                 {matches.map((m) => (
-                  <label key={m.id} style={s.featuredRow}>
-                    <input
-                      type="checkbox"
-                      checked={featuredIds.includes(m.id)}
-                      onChange={() => toggleFeatured(m.id)}
-                      disabled={!featuredIds.includes(m.id) && featuredIds.length >= 3}
-                      style={s.featuredCheckbox}
-                    />
-                    <div style={{ flex: 1 }}>
-                      <MatchCard
-                        homeTeam={m.homeTeam}
-                        awayTeam={m.awayTeam}
-                        kickoffAt={m.kickoffAt}
-                        status={m.status}
+                  <div key={m.id} style={s.matchRowWithDelete}>
+                    <label style={s.featuredRow}>
+                      <input
+                        type="checkbox"
+                        checked={featuredIds.includes(m.id)}
+                        onChange={() => toggleFeatured(m.id)}
+                        disabled={!featuredIds.includes(m.id) && featuredIds.length >= 3}
+                        style={s.featuredCheckbox}
                       />
-                    </div>
-                  </label>
+                      <div style={{ flex: 1 }}>
+                        <MatchCard
+                          homeTeam={m.homeTeam}
+                          awayTeam={m.awayTeam}
+                          kickoffAt={m.kickoffAt}
+                          status={m.status}
+                        />
+                      </div>
+                    </label>
+                    <button
+                      type="button"
+                      style={s.deleteBtn}
+                      disabled={deletingMatchId === m.id}
+                      onClick={() => handleDeleteMatch(m)}
+                      title="Șterge meciul"
+                    >
+                      {deletingMatchId === m.id ? "…" : "🗑"}
+                    </button>
+                  </div>
                 ))}
               </div>
             )}
@@ -366,7 +403,15 @@ const s = {
   },
   matchList: { display: "flex", flexDirection: "column", gap: 8, marginBottom: 14 },
   featuredRow: {
-    display: "flex", alignItems: "flex-start", gap: 10, cursor: "pointer",
+    display: "flex", alignItems: "flex-start", gap: 10, cursor: "pointer", flex: 1, minWidth: 0,
+  },
+  matchRowWithDelete: {
+    display: "flex", alignItems: "flex-start", gap: 8,
+  },
+  deleteBtn: {
+    flexShrink: 0, marginTop: 14, width: 34, height: 34, borderRadius: 10,
+    background: "rgba(181,69,61,0.12)", border: "1px solid rgba(181,69,61,0.4)",
+    color: "#E08A82", fontSize: 15, cursor: "pointer",
   },
   featuredCheckbox: { width: 20, height: 20, marginTop: 14, flexShrink: 0, accentColor: "#C9A227" },
   featuredSaveBox: { marginTop: 4, marginBottom: 14 },

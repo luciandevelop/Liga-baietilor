@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useState } from "react";
 import {
-  loadCurrentGameweekWithMatches,
+  getCurrentSeason,
+  getCurrentGameweek,
   loadUserPredictions,
   saveAllPredictions,
 } from "../services/predictionsService";
+import { listMatches } from "../services/adminService";
 import MatchPredictionCard from "../components/MatchPredictionCard";
 
 export default function PredictionsScreen({ user, onBack }) {
@@ -20,34 +22,70 @@ export default function PredictionsScreen({ user, onBack }) {
     setLoadState("loading");
     setLoadError("");
     setSaveMessage("");
-    try {
-      const { season: s, gameweek: gw, matches: m } = await loadCurrentGameweekWithMatches();
-      if (!gw) {
-        setLoadState("empty");
-        return;
-      }
-      setSeason(s);
-      setGameweek(gw);
-      setMatches(m);
 
-      const existing = await loadUserPredictions(user.uid, m.map((x) => x.id));
-      const initial = {};
-      m.forEach((match) => {
-        const p = existing[match.id];
-        initial[match.id] = {
-          scoreA: p?.scoreA ?? "",
-          scoreB: p?.scoreB ?? "",
-          corners: p?.corners ?? "",
-          cards: p?.cards ?? "",
-        };
-      });
-      setPredictions(initial);
-      setLoadState("ready");
+    let s, gw, m;
+
+    try {
+      s = await getCurrentSeason();
     } catch (err) {
-      console.error("Eroare la încărcarea etapei/meciurilor:", err);
-      setLoadError(err.message || err.code || "Eroare necunoscută");
+      console.error("Eroare la încărcarea sezonului:", err);
+      setLoadError("Încărcare sezon: " + (err.message || err.code));
       setLoadState("error");
+      return;
     }
+    if (!s) {
+      setLoadState("empty");
+      return;
+    }
+
+    try {
+      gw = await getCurrentGameweek(s.id);
+    } catch (err) {
+      console.error("Eroare la încărcarea etapei:", err);
+      setLoadError("Încărcare etapă: " + (err.message || err.code));
+      setLoadState("error");
+      return;
+    }
+    if (!gw) {
+      setLoadState("empty");
+      return;
+    }
+
+    try {
+      m = await listMatches(gw.id);
+    } catch (err) {
+      console.error("Eroare la încărcarea meciurilor:", err);
+      setLoadError("Încărcare meciuri: " + (err.message || err.code));
+      setLoadState("error");
+      return;
+    }
+
+    setSeason(s);
+    setGameweek(gw);
+    setMatches(m);
+
+    let existing;
+    try {
+      existing = await loadUserPredictions(user.uid, m.map((x) => x.id));
+    } catch (err) {
+      console.error("Eroare la încărcarea predicțiilor proprii:", err);
+      setLoadError("Încărcare predicții proprii: " + (err.message || err.code));
+      setLoadState("error");
+      return;
+    }
+
+    const initial = {};
+    m.forEach((match) => {
+      const p = existing[match.id];
+      initial[match.id] = {
+        scoreA: p?.scoreA ?? "",
+        scoreB: p?.scoreB ?? "",
+        corners: p?.corners ?? "",
+        cards: p?.cards ?? "",
+      };
+    });
+    setPredictions(initial);
+    setLoadState("ready");
   }, [user.uid]);
 
   useEffect(() => {

@@ -45,8 +45,18 @@ async function resolveCurrentGameweek(seasonId) {
   return withinWeek || null;
 }
 
-// Punctul de intrare al paginii: găsește sezonul+etapa curentă și meciurile
-// ei, dintr-o singură chemare.
+export async function getCurrentSeason() {
+  return resolveCurrentSeason();
+}
+
+export async function getCurrentGameweek(seasonId) {
+  return resolveCurrentGameweek(seasonId);
+}
+
+// Rămâne disponibilă pentru compatibilitate — combină cei 3 pași într-un
+// singur apel. PredictionsScreen NU o mai folosește (apelează pașii
+// separat, ca să poată atribui exact eroarea), dar rămâne validă dacă
+// e nevoie de tot fluxul dintr-o singură chemare.
 export async function loadCurrentGameweekWithMatches() {
   const season = await resolveCurrentSeason();
   if (!season) return { season: null, gameweek: null, matches: [] };

@@ -9,8 +9,13 @@ import {
   resetAllTestData,
   setFeaturedMatches,
   deleteMatch,
+  saveMatchResult,
+  previewGameweekResults,
+  finalizeGameweek,
+  getUserNicknames,
 } from "../services/adminService";
 import MatchCard from "../components/MatchCard";
+import MatchResultCard from "../components/MatchResultCard";
 
 export default function AdminScreen({ onBack }) {
   const [seasons, setSeasons] = useState([]);
@@ -33,6 +38,13 @@ export default function AdminScreen({ onBack }) {
 
   const [deletingMatchId, setDeletingMatchId] = useState("");
   const [deleteMessage, setDeleteMessage] = useState("");
+
+  const [previewRows, setPreviewRows] = useState(null);
+  const [previewIncomplete, setPreviewIncomplete] = useState(0);
+  const [previewNicknames, setPreviewNicknames] = useState({});
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const [previewMessage, setPreviewMessage] = useState("");
+  const [finalizing, setFinalizing] = useState(false);
 
   async function refreshSeasons() {
     const data = await listSeasons();
@@ -65,6 +77,9 @@ export default function AdminScreen({ onBack }) {
     const gw = gameweeks.find((g) => g.id === selectedGameweekId);
     setFeaturedIds(gw?.featuredMatchIds || []);
     setFeaturedMessage("");
+    setPreviewRows(null);
+    setPreviewIncomplete(0);
+    setPreviewMessage("");
   }, [selectedGameweekId, gameweeks]);
 
   function toggleFeatured(matchId) {
@@ -171,6 +186,60 @@ export default function AdminScreen({ onBack }) {
     }
   }
 
+  async function handleSaveResult(matchId, values) {
+    await saveMatchResult(matchId, values);
+    await refreshMatches(selectedGameweekId);
+  }
+
+  async function handlePreview() {
+    setPreviewLoading(true);
+    setPreviewMessage("");
+    try {
+      const result = await previewGameweekResults(selectedGameweekId);
+      setPreviewRows(result.rows);
+      setPreviewIncomplete(result.incompleteMatchIds.length);
+      const names = await getUserNicknames(result.rows.map((r) => r.uid));
+      setPreviewNicknames(names);
+      if (result.incompleteMatchIds.length > 0) {
+        setPreviewMessage(
+          `⚠️ ${result.incompleteMatchIds.length}/${result.totalMatches} meciuri nu au rezultat complet — finalizarea va fi refuzată până le completezi pe toate.`
+        );
+      } else if (result.rows.length === 0) {
+        setPreviewMessage("Niciun user în sistem — nimic de calculat.");
+      }
+    } catch (err) {
+      console.error(err);
+      setPreviewMessage("Eroare la calcul: " + (err.message || err.code));
+    } finally {
+      setPreviewLoading(false);
+    }
+  }
+
+  async function handleFinalize() {
+    const confirmed = window.confirm(
+      "Finalizezi etapa? seasonPoints și gameweeksPlayed se actualizează pentru toți userii din clasament. Ireversibil (etapa devine 'completed')."
+    );
+    if (!confirmed) return;
+
+    setFinalizing(true);
+    setPreviewMessage("");
+    try {
+      const outcome = await finalizeGameweek(selectedGameweekId);
+      if (outcome.alreadyCompleted) {
+        setPreviewMessage("Etapa era deja finalizată — nu s-a modificat nimic (protecție anti-dublare).");
+      } else {
+        setPreviewMessage("✓ Etapa finalizată. Clasamentul general a fost actualizat.");
+      }
+      setPreviewRows(outcome.rows);
+      await refreshGameweeks(selectedSeasonId);
+    } catch (err) {
+      console.error(err);
+      setPreviewMessage("Eroare la finalizare: " + (err.message || err.code));
+    } finally {
+      setFinalizing(false);
+    }
+  }
+
   async function handleImportMatches(e) {
     e.preventDefault();
     if (!selectedGameweekId || !matchesText.trim()) return;
@@ -214,6 +283,8 @@ export default function AdminScreen({ onBack }) {
       setLoading(false);
     }
   }
+
+  const currentGameweek = gameweeks.find((g) => g.id === selectedGameweekId);
 
   return (
     <div style={s.page}>
@@ -347,6 +418,62 @@ export default function AdminScreen({ onBack }) {
             </form>
           </section>
         )}
+
+        {/* Rezultate */}
+        {selectedGameweekId && matches.length > 0 && (
+          <section style={s.card}>
+            <h2 style={s.cardTitle}>4. Rezultate reale</h2>
+            <div style={s.matchList}>
+              {matches.map((m) => (
+                <MatchResultCard
+                  key={m.id}
+                  match={m}
+                  onSave={(values) => handleSaveResult(m.id, values)}
+                  disabled={currentGameweek?.status === "completed"}
+                />
+              ))}
+            </div>
+          </section>
+        )}
+
+        {/* Clasament etapă + finalizare */}
+        {selectedGameweekId && matches.length > 0 && (
+          <section style={s.card}>
+            <h2 style={s.cardTitle}>5. Clasament etapă</h2>
+
+            {currentGameweek?.status === "completed" && (
+              <div style={s.message}>Etapa e deja finalizată (status: completed).</div>
+            )}
+
+            <button style={s.btn} disabled={previewLoading} onClick={handlePreview}>
+              {previewLoading ? "Se calculează…" : "Calculează / Previzualizează clasamentul"}
+            </button>
+
+            {previewMessage && <div style={s.message}>{previewMessage}</div>}
+
+            {previewRows && previewRows.length > 0 && (
+              <div style={s.previewTable}>
+                {previewRows.map((r) => (
+                  <div key={r.uid} style={s.previewRow}>
+                    <span style={s.previewRank}>#{r.rank}</span>
+                    <span style={s.previewName}>{previewNicknames[r.uid] || r.uid}</span>
+                    <span style={s.previewPts}>{r.pointsFromMatches}p</span>
+                    <span style={{ ...s.previewBonus, color: r.rankingBonus >= 0 ? "#A9E0B8" : "#E08A82" }}>
+                      {r.rankingBonus >= 0 ? "+" : ""}{r.rankingBonus}p
+                    </span>
+                    <span style={s.previewTotal}>{r.totalPoints}p</span>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {previewRows && currentGameweek?.status !== "completed" && (
+              <button style={s.finalizeBtn} disabled={finalizing || previewIncomplete > 0} onClick={handleFinalize}>
+                {finalizing ? "Se finalizează…" : "Finalizează etapa"}
+              </button>
+            )}
+          </section>
+        )}
       </div>
     </div>
   );
@@ -420,4 +547,18 @@ const s = {
     border: "1px solid #1c2338", borderRadius: 10, padding: "9px 12px", fontSize: 13, color: "#E8E4D8",
   },
   matchMeta: { color: "#5A6280", fontSize: 11.5 },
+  previewTable: { display: "flex", flexDirection: "column", gap: 6, marginTop: 12, marginBottom: 12 },
+  previewRow: {
+    display: "flex", alignItems: "center", gap: 8, background: "#0D1220",
+    border: "1px solid #1c2338", borderRadius: 10, padding: "9px 12px",
+  },
+  previewRank: { fontSize: 12, fontWeight: 800, color: "#C9A227", width: 26, flexShrink: 0 },
+  previewName: { fontSize: 13, fontWeight: 700, color: "#F5F5F0", flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
+  previewPts: { fontSize: 12, color: "#8B93A8", flexShrink: 0 },
+  previewBonus: { fontSize: 12, fontWeight: 700, flexShrink: 0, width: 46, textAlign: "right" },
+  previewTotal: { fontSize: 13.5, fontWeight: 800, color: "#E0BC4A", flexShrink: 0, width: 52, textAlign: "right" },
+  finalizeBtn: {
+    width: "100%", background: "rgba(63,168,92,0.15)", border: "1px solid #3FA85C", color: "#A9E0B8",
+    borderRadius: 10, padding: "12px 0", fontSize: 13.5, fontWeight: 800, cursor: "pointer",
+  },
 };

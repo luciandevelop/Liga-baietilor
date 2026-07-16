@@ -14,6 +14,7 @@ import {
   Timestamp,
 } from "firebase/firestore";
 import { db } from "../firebase";
+import { computeMatchPoints, computeRankingBonuses } from "./scoringEngine";
 
 // Verifică dacă userul curent e admin, citind admins/{uid} — conform
 // regulilor Firestore, doar owner-ul poate citi propriul document din admins/.
@@ -308,4 +309,229 @@ export async function deleteMatch(matchId, gameweekId) {
   }
 
   await deleteDoc(doc(db, "matches", matchId));
+}
+
+function isValidNonNegInt(v) {
+  return typeof v === "number" && Number.isInteger(v) && v >= 0;
+}
+
+// Salvează rezultatul real al unui meci — actualizează documentul
+// matches/{matchId} existent, nu creează o colecție separată.
+// Validare STRICTĂ: toate cele 4 valori trebuie prezente și întregi >= 0
+// (nu se mai acceptă salvare parțială a rezultatului — cornerele/cartona-
+// șele fac parte din "rezultatul final", nu sunt opționale ca la predicții).
+// Blocată dacă etapa e deja finalizată — verificat aici, în service, NU
+// doar prin disabled în UI.
+export async function saveMatchResult(matchId, { realScoreA, realScoreB, realCorners, realCards }) {
+  if (!isValidNonNegInt(realScoreA) || !isValidNonNegInt(realScoreB)) {
+    throw new Error("Scorul real trebuie completat, întreg, pentru ambele echipe.");
+  }
+  if (!isValidNonNegInt(realCorners) || !isValidNonNegInt(realCards)) {
+    throw new Error("Cornerele și cartonașele reale trebuie completate, întregi (≥0), pentru rezultatul final.");
+  }
+
+  const matchSnap = await getDoc(doc(db, "matches", matchId));
+  if (!matchSnap.exists()) throw new Error("Meciul nu există.");
+  const gameweekId = matchSnap.data().gameweekId;
+
+  const gwSnap = await getDoc(doc(db, "gameweeks", gameweekId));
+  if (gwSnap.exists() && gwSnap.data().status === "completed") {
+    throw new Error("Etapa e deja finalizată — rezultatele nu mai pot fi modificate.");
+  }
+
+  await updateDoc(doc(db, "matches", matchId), { realScoreA, realScoreB, realCorners, realCards });
+}
+
+// Un meci are rezultat COMPLET dacă toate cele 4 valori sunt întregi >= 0.
+function isMatchResultComplete(m) {
+  return (
+    isValidNonNegInt(m.realScoreA) &&
+    isValidNonNegInt(m.realScoreB) &&
+    isValidNonNegInt(m.realCorners) &&
+    isValidNonNegInt(m.realCards)
+  );
+}
+
+// Calcul PUR (fără scriere) al rezultatelor unei etape — folosit atât de
+// preview, cât și de finalizare (aceeași sursă de adevăr pentru ambele,
+// ca preview-ul afișat adminului să fie mereu exact ce se va scrie).
+//
+// PARTICIPĂ TOȚI userii din users/, nu doar cei cu predicții — un user
+// fără niciun pronostic intră cu pointsFromMatches=0 și poate primi
+// penalizarea de ultim loc (nu poate "evita" clasamentul nepontând).
+async function computeGameweekResults(gameweekId) {
+  const gwSnap = await getDoc(doc(db, "gameweeks", gameweekId));
+  if (!gwSnap.exists()) throw new Error("Etapa nu există.");
+  const gameweek = gwSnap.data();
+  const featuredMatchIds = gameweek.featuredMatchIds || [];
+
+  const matches = await listMatches(gameweekId);
+  const matchById = {};
+  matches.forEach((m) => { matchById[m.id] = m; });
+
+  const incompleteMatchIds = matches.filter((m) => !isMatchResultComplete(m)).map((m) => m.id);
+
+  // Toate predicțiile pentru meciurile etapei — un query per meci (fără
+  // index compus, doar egalitate pe matchId). Admin are acces deja
+  // confirmat prin firestore.rules (isAdmin() pe read la predictions).
+  const allPredictions = [];
+  for (const matchId of Object.keys(matchById)) {
+    const snap = await getDocs(query(collection(db, "predictions"), where("matchId", "==", matchId)));
+    snap.docs.forEach((d) => allPredictions.push(d.data()));
+  }
+
+  const jokerSnap = await getDocs(query(collection(db, "jokers"), where("gameweekId", "==", gameweekId)));
+  const jokerMatchByUser = {};
+  jokerSnap.docs.forEach((d) => {
+    const j = d.data();
+    jokerMatchByUser[j.userId] = j.matchId;
+  });
+
+  const predictionsByUser = {};
+  allPredictions.forEach((p) => {
+    if (!predictionsByUser[p.userId]) predictionsByUser[p.userId] = [];
+    predictionsByUser[p.userId].push(p);
+  });
+
+  // TOȚI userii — sursa participanților, nu doar cei cu predicții.
+  const usersSnap = await getDocs(collection(db, "users"));
+  const allUids = usersSnap.docs.map((d) => d.id);
+
+  const rows = allUids.map((uid) => {
+    let pointsFromMatches = 0;
+    const breakdown = {};
+    (predictionsByUser[uid] || []).forEach((p) => {
+      const match = matchById[p.matchId];
+      if (!match) return;
+      const isFeatured = featuredMatchIds.includes(p.matchId);
+      const isJoker = jokerMatchByUser[uid] === p.matchId;
+      const result = computeMatchPoints({ prediction: p, match, isFeatured, isJoker });
+      if (result) {
+        pointsFromMatches += result.total;
+        breakdown[p.matchId] = result;
+      }
+    });
+    return { uid, pointsFromMatches, breakdown };
+  });
+
+  const ranked = computeRankingBonuses(rows);
+  const withTotals = ranked.map((r) => ({ ...r, totalPoints: r.pointsFromMatches + r.rankingBonus }));
+  withTotals.sort((a, b) => a.rank - b.rank);
+
+  return { gameweekId, rows: withTotals, incompleteMatchIds, totalMatches: matches.length };
+}
+
+// Preview — DOAR calcul, nicio scriere. Admin vede exact ce s-ar
+// întâmpla, INCLUSIV câte meciuri nu au încă rezultat complet.
+export async function previewGameweekResults(gameweekId) {
+  return computeGameweekResults(gameweekId);
+}
+
+// Finalizare IDEMPOTENTĂ: dacă etapa e deja "completed", tranzacția
+// citește asta ȘI RETURNEAZĂ IMEDIAT, fără nicio scriere — a doua
+// apăsare accidentală a butonului nu poate dubla seasonPoints/
+// gameweeksPlayed, indiferent de viteza click-urilor (Firestore
+// serializează tranzacțiile concurente pe același document gameweek).
+// Calculul (computeGameweekResults) rulează ÎN AFARA tranzacției — e
+// pur/idempotent prin construcție; doar SCRIEREA finală e tranzacțională,
+// cu citirile (gameweek + fiecare user) înaintea oricărei scrieri.
+//
+// REFUZ OBLIGATORIU dacă există meciuri fără rezultat complet — verificat
+// ÎNAINTE de a porni tranzacția, deci în caz de refuz nu se scrie NIMIC
+// (gameweek.status rămâne neschimbat, gameweekScores nu se scrie, users
+// nu se ating).
+export async function finalizeGameweek(gameweekId) {
+  const results = await computeGameweekResults(gameweekId);
+
+  if (results.incompleteMatchIds.length > 0) {
+    throw new Error(
+      `Nu poți finaliza etapa. ${results.incompleteMatchIds.length} meciuri nu au rezultate complete.`
+    );
+  }
+
+  const gwRef = doc(db, "gameweeks", gameweekId);
+
+  const outcome = await runTransaction(db, async (tx) => {
+    const gwSnap = await tx.get(gwRef);
+    if (!gwSnap.exists()) throw new Error("Etapa nu există.");
+    if (gwSnap.data().status === "completed") {
+      return { alreadyCompleted: true, rows: results.rows };
+    }
+
+    const userRefs = results.rows.map((r) => doc(db, "users", r.uid));
+    const userSnaps = [];
+    for (const ref of userRefs) {
+      userSnaps.push(await tx.get(ref));
+    }
+
+    results.rows.forEach((r, i) => {
+      const scoreRef = doc(db, "gameweekScores", `${gameweekId}_${r.uid}`);
+      tx.set(scoreRef, {
+        gameweekId,
+        userId: r.uid,
+        rank: r.rank,
+        pointsFromMatches: r.pointsFromMatches,
+        rankingBonus: r.rankingBonus,
+        totalPoints: r.totalPoints,
+        breakdown: r.breakdown,
+        computedAt: serverTimestamp(),
+      });
+
+      if (userSnaps[i].exists()) {
+        const prev = userSnaps[i].data();
+        tx.update(userRefs[i], {
+          seasonPoints: (prev.seasonPoints || 0) + r.totalPoints,
+          gameweeksPlayed: (prev.gameweeksPlayed || 0) + 1,
+        });
+      }
+    });
+
+    tx.update(gwRef, { status: "completed", finalizedAt: serverTimestamp() });
+    return { alreadyCompleted: false, rows: results.rows };
+  });
+
+  return outcome;
+}
+
+// Nickname-uri pentru un set de UID-uri — folosit la afișarea preview-ului
+// de clasament (admin) și la ecranul de Clasament (user). users/{uid} e
+// deja citibil de orice user autentificat.
+export async function getUserNicknames(uids) {
+  const result = {};
+  await Promise.all(
+    uids.map(async (uid) => {
+      const snap = await getDoc(doc(db, "users", uid));
+      result[uid] = snap.exists() ? snap.data().nickname : uid;
+    })
+  );
+  return result;
+}
+
+// Clasamentul unei etape — citit din gameweekScores (populat doar după
+// finalizare). Sortare pe `rank` salvat (păstrează exact egalitățile
+// calculate la finalizare, ex. 1,1,3) — NU recalculăm rangul din
+// totalPoints aici, ca să nu riscăm o altă regulă de tie-break din
+// greșeală. Fallback defensiv: documente vechi fără `rank` (dinainte de
+// acest fix) merg la coadă, sortate după totalPoints între ele.
+export async function listGameweekScores(gameweekId) {
+  const snap = await getDocs(query(collection(db, "gameweekScores"), where("gameweekId", "==", gameweekId)));
+  const rows = snap.docs.map((d) => d.data());
+  rows.sort((a, b) => {
+    const aHasRank = typeof a.rank === "number";
+    const bHasRank = typeof b.rank === "number";
+    if (aHasRank && bHasRank) return a.rank - b.rank;
+    if (aHasRank) return -1;
+    if (bHasRank) return 1;
+    return b.totalPoints - a.totalPoints;
+  });
+  return rows;
+}
+
+// Clasamentul general — direct din users (seasonPoints/gameweeksPlayed),
+// deja citibil de orice user autentificat.
+export async function listGeneralLeaderboard() {
+  const snap = await getDocs(collection(db, "users"));
+  const rows = snap.docs.map((d) => d.data());
+  rows.sort((a, b) => (b.seasonPoints || 0) - (a.seasonPoints || 0));
+  return rows;
 }

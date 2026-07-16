@@ -4,7 +4,7 @@ import { logout } from "../services/authService";
 // ensureUserProfile. Primește `profile` deja încărcat și confirmat de
 // App.jsx (profileState === "ready"), ca să nu existe niciun risc de
 // apel duplicat sau de afișare falsă a unui cont "gata" înainte de vreme.
-export default function WelcomeScreen({ user, profile, isAdmin, onOpenAdmin, onOpenPredictions }) {
+export default function WelcomeScreen({ user, profile, isAdmin, onOpenAdmin, onOpenPredictions, onOpenLeaderboard }) {
   return (
     <div style={s.page}>
       <div style={s.card}>
@@ -15,10 +15,13 @@ export default function WelcomeScreen({ user, profile, isAdmin, onOpenAdmin, onO
           League, în septembrie.
         </p>
         <p style={s.textMuted}>
-          Restul aplicației (clasament, moduri speciale) apare aici pe măsură ce se construiește.
+          Restul aplicației (moduri speciale) apare aici pe măsură ce se construiește.
         </p>
         <button style={s.predictionsBtn} onClick={onOpenPredictions}>
           Pronosticuri
+        </button>
+        <button style={s.leaderboardBtn} onClick={onOpenLeaderboard}>
+          Clasament
         </button>
         {isAdmin && (
           <button style={s.adminBtn} onClick={onOpenAdmin}>
@@ -101,6 +104,19 @@ const s = {
     padding: "13px 22px",
     fontSize: 14,
     fontWeight: 800,
+    cursor: "pointer",
+    marginBottom: 10,
+    display: "block",
+    width: "100%",
+  },
+  leaderboardBtn: {
+    background: "#0D1220",
+    border: "1px solid #2A3350",
+    color: "#E8E4D8",
+    borderRadius: 10,
+    padding: "12px 22px",
+    fontSize: 13.5,
+    fontWeight: 700,
     cursor: "pointer",
     marginBottom: 10,
     display: "block",

@@ -7,6 +7,7 @@ import AuthScreen from "./screens/AuthScreen";
 import WelcomeScreen from "./screens/WelcomeScreen";
 import AdminScreen from "./screens/AdminScreen";
 import PredictionsScreen from "./screens/PredictionsScreen";
+import LeaderboardScreen from "./screens/LeaderboardScreen";
 
 // profileState: "idle" | "checking" | "ready" | "error"
 // Stare centrală, unică — nimic altceva din aplicație nu mai apelează
@@ -115,6 +116,10 @@ export default function App() {
     return <PredictionsScreen user={user} onBack={() => setView("welcome")} />;
   }
 
+  if (view === "leaderboard") {
+    return <LeaderboardScreen onBack={() => setView("welcome")} />;
+  }
+
   return (
     <WelcomeScreen
       user={user}
@@ -122,6 +127,7 @@ export default function App() {
       isAdmin={isAdmin}
       onOpenAdmin={() => setView("admin")}
       onOpenPredictions={() => setView("predictions")}
+      onOpenLeaderboard={() => setView("leaderboard")}
     />
   );
 }

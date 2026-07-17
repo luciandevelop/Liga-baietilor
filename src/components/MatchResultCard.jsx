@@ -1,11 +1,12 @@
 import { useState } from "react";
 import MatchCard from "./MatchCard";
+import NumericStepper from "./NumericStepper";
 
 export default function MatchResultCard({ match, onSave, disabled }) {
-  const [scoreA, setScoreA] = useState(match.realScoreA ?? "");
-  const [scoreB, setScoreB] = useState(match.realScoreB ?? "");
-  const [corners, setCorners] = useState(match.realCorners ?? "");
-  const [cards, setCards] = useState(match.realCards ?? "");
+  const [scoreA, setScoreA] = useState(match.realScoreA ?? 0);
+  const [scoreB, setScoreB] = useState(match.realScoreB ?? 0);
+  const [corners, setCorners] = useState(match.realCorners ?? 0);
+  const [cards, setCards] = useState(match.realCards ?? 0);
   const [saving, setSaving] = useState(false);
   const [status, setStatus] = useState("idle"); // idle | success | error
   const [error, setError] = useState("");
@@ -42,33 +43,15 @@ export default function MatchResultCard({ match, onSave, disabled }) {
           <div style={s.field}>
             <span style={s.label}>SCOR</span>
             <div style={s.scoreInputs}>
-              <input
-                type="number" inputMode="numeric" min="0" disabled={disabled || saving}
-                style={s.scoreInput} value={scoreA} onChange={(e) => setScoreA(e.target.value)}
-              />
+              <NumericStepper value={scoreA} onChange={(v) => setScoreA(v)} disabled={disabled || saving} />
               <span style={s.dash}>–</span>
-              <input
-                type="number" inputMode="numeric" min="0" disabled={disabled || saving}
-                style={s.scoreInput} value={scoreB} onChange={(e) => setScoreB(e.target.value)}
-              />
+              <NumericStepper value={scoreB} onChange={(v) => setScoreB(v)} disabled={disabled || saving} />
             </div>
           </div>
         </div>
         <div style={s.row}>
-          <div style={s.smallField}>
-            <span style={s.smallLabel}>CORNERE TOTALE</span>
-            <input
-              type="number" inputMode="numeric" min="0" disabled={disabled || saving}
-              style={s.smallInput} value={corners} onChange={(e) => setCorners(e.target.value)}
-            />
-          </div>
-          <div style={s.smallField}>
-            <span style={s.smallLabel}>CARTONAȘE TOTALE</span>
-            <input
-              type="number" inputMode="numeric" min="0" disabled={disabled || saving}
-              style={s.smallInput} value={cards} onChange={(e) => setCards(e.target.value)}
-            />
-          </div>
+          <NumericStepper label="CORNERE TOTALE" value={corners} onChange={(v) => setCorners(v)} disabled={disabled || saving} />
+          <NumericStepper label="CARTONAȘE TOTALE" value={cards} onChange={(v) => setCards(v)} disabled={disabled || saving} />
         </div>
         <button type="button" style={s.saveBtn} disabled={disabled || saving} onClick={handleSave}>
           {saving ? "Se salvează…" : "Salvează rezultat"}

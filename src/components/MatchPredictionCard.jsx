@@ -1,24 +1,5 @@
 import MatchCard from "./MatchCard";
-
-function Stepper({ value, onChange, disabled }) {
-  const num = value === "" || value === undefined || value === null ? 0 : Number(value);
-  return (
-    <div style={s.stepperWrap}>
-      <button
-        type="button"
-        style={s.stepperBtn}
-        disabled={disabled || num <= 0}
-        onClick={() => onChange(String(Math.max(0, num - 1)))}
-      >
-        −
-      </button>
-      <span style={s.stepperValue}>{num}</span>
-      <button type="button" style={s.stepperBtn} disabled={disabled} onClick={() => onChange(String(num + 1))}>
-        +
-      </button>
-    </div>
-  );
-}
+import NumericStepper from "./NumericStepper";
 
 export default function MatchPredictionCard({
   match,
@@ -71,39 +52,25 @@ export default function MatchPredictionCard({
             <div style={s.scoreSection}>
               <span style={s.fieldLabel}>PRONOSTIC SCOR</span>
               <div style={s.scoreRow}>
-                <Stepper value={p.scoreA} onChange={(v) => onChange({ scoreA: v })} disabled={saving} />
+                <NumericStepper value={p.scoreA} onChange={(v) => onChange({ scoreA: v })} disabled={saving} />
                 <span style={s.dash}>–</span>
-                <Stepper value={p.scoreB} onChange={(v) => onChange({ scoreB: v })} disabled={saving} />
+                <NumericStepper value={p.scoreB} onChange={(v) => onChange({ scoreB: v })} disabled={saving} />
               </div>
             </div>
 
             <div style={s.smallRow}>
-              <div style={s.smallField}>
-                <span style={s.smallLabel}>CORNERE TOTALE</span>
-                <input
-                  type="number"
-                  inputMode="numeric"
-                  min="0"
-                  placeholder="–"
-                  disabled={saving}
-                  style={s.smallInput}
-                  value={p.corners ?? ""}
-                  onChange={(e) => onChange({ corners: e.target.value })}
-                />
-              </div>
-              <div style={s.smallField}>
-                <span style={s.smallLabel}>CARTONAȘE TOTALE</span>
-                <input
-                  type="number"
-                  inputMode="numeric"
-                  min="0"
-                  placeholder="–"
-                  disabled={saving}
-                  style={s.smallInput}
-                  value={p.cards ?? ""}
-                  onChange={(e) => onChange({ cards: e.target.value })}
-                />
-              </div>
+              <NumericStepper
+                label="CORNERE TOTALE"
+                value={p.corners}
+                onChange={(v) => onChange({ corners: v })}
+                disabled={saving}
+              />
+              <NumericStepper
+                label="CARTONAȘE TOTALE"
+                value={p.cards}
+                onChange={(v) => onChange({ cards: v })}
+                disabled={saving}
+              />
             </div>
 
             <div style={s.actionsRow}>
@@ -117,7 +84,7 @@ export default function MatchPredictionCard({
                 disabled={jokerDisabled || saving}
                 onClick={onToggleJoker}
               >
-                {isJoker ? "🃏 Joker ales" : "🃏 Alege Joker"}
+                {isJoker ? "🃏 Renunță la Joker" : "🃏 Alege Joker"}
               </button>
 
               <button type="button" style={s.saveBtn} disabled={saving} onClick={onSave}>

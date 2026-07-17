@@ -1,4 +1,4 @@
-import { collection, doc, getDoc, getDocs, query, where, setDoc } from "firebase/firestore";
+import { collection, doc, getDoc, getDocs, query, where, setDoc, deleteDoc } from "firebase/firestore";
 import { db } from "../firebase";
 import { listMatches } from "./adminService";
 
@@ -121,4 +121,29 @@ export async function loadUserJoker(gameweekId, uid) {
 export async function saveJoker({ gameweekId, uid, matchId }) {
   const ref = doc(db, "jokers", `${gameweekId}_${uid}`);
   await setDoc(ref, { userId: uid, gameweekId, matchId }, { merge: false });
+}
+
+// Renunțare la Joker — șterge documentul complet. Userul rămâne fără
+// Joker activ pentru etapă până alege altul. Blocată de firestore.rules
+// (nu doar de UI) după lock-ul meciului care avea Jokerul.
+export async function deleteJoker(gameweekId, uid) {
+  await deleteDoc(doc(db, "jokers", `${gameweekId}_${uid}`));
+}
+
+// Citire best-effort a pronosticului UNUI ALT user pentru UN meci —
+// folosită de Player Detail când documentul public gameweekLiveScores încă
+// arată `predictionHidden: true` (posibil pentru că adminul nu a republicat
+// de la lock încoace). NU decidem noi dacă e permis — încercăm citirea
+// directă din predictions/{matchId}_{uid} și lăsăm firestore.rules să
+// accepte sau să refuze, exact ca la orice altă citire. Un refuz
+// (permission-denied) înseamnă doar "încă ascuns", nu o eroare de
+// aplicație — întoarcem null, silențios. Rezultatul reflectă mereu starea
+// REALĂ, server-side, a lock-ului — nu ceasul telefonului adminului.
+export async function tryLoadPrediction(matchId, uid) {
+  try {
+    const snap = await getDoc(doc(db, "predictions", `${matchId}_${uid}`));
+    return snap.exists() ? snap.data() : null;
+  } catch (err) {
+    return null;
+  }
 }

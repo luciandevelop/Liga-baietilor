@@ -11,10 +11,23 @@ import {
   orderBy,
   serverTimestamp,
   runTransaction,
+  writeBatch,
+  onSnapshot,
   Timestamp,
 } from "firebase/firestore";
 import { db } from "../firebase";
 import { computeMatchPoints, computeRankingBonuses } from "./scoringEngine";
+
+// Aceeași regulă de lock ca în predictionsService.LOCK_MINUTES_BEFORE_KICKOFF
+// (30 min înainte de kickoff) — NU importată de-acolo intenționat, ca să nu
+// creăm un import circular (predictionsService.js importă deja listMatches
+// din acest fișier). Dacă schimbi pragul de lock, schimbă-l ȘI aici.
+const LIVE_PUBLISH_LOCK_MS = 30 * 60 * 1000;
+function isLockedForPublish(match) {
+  const kickoffMs = match?.kickoffAt?.toMillis ? match.kickoffAt.toMillis() : null;
+  if (kickoffMs === null) return false;
+  return Date.now() >= kickoffMs - LIVE_PUBLISH_LOCK_MS;
+}
 
 // Verifică dacă userul curent e admin, citind admins/{uid} — conform
 // regulilor Firestore, doar owner-ul poate citi propriul document din admins/.
@@ -256,7 +269,7 @@ export async function bulkCreateMatches(gameweekId, text) {
 // Șterge TOT (sezoane, etape, meciuri) — folosit doar pentru curățarea
 // datelor de test înainte de lansarea reală. Ireversibil.
 export async function resetAllTestData() {
-  const collections = ["matches", "gameweeks", "seasons"];
+  const collections = ["matches", "gameweeks", "seasons", "gameweekLiveScores"];
   let deleted = 0;
   for (const name of collections) {
     const snap = await getDocs(collection(db, name));
@@ -397,20 +410,59 @@ async function computeGameweekResults(gameweekId) {
   const usersSnap = await getDocs(collection(db, "users"));
   const allUids = usersSnap.docs.map((d) => d.id);
 
+  // Breakdown COMPLET, per user per meci — nu doar meciurile cu predicție
+  // și rezultat (cum era înainte). Fiecare meci al etapei apare mereu în
+  // breakdown, cu un `status` explicit:
+  //  - "scored"        — predicție validă + rezultat real → punctaj calculat normal
+  //  - "pending"        — meciul încă nu are rezultat real introdus
+  //  - "no-prediction"  — meciul are rezultat, dar userul nu a pontat deloc
+  // Asta permite UI-ului (Admin Preview / Clasament live / Player Detail) să
+  // arate exact "meciuri deja punctate" vs. "meciuri în așteptare", fără nicio
+  // formulă duplicată — totul vine din computeMatchPoints, aceeași sursă unică.
   const rows = allUids.map((uid) => {
     let pointsFromMatches = 0;
     const breakdown = {};
-    (predictionsByUser[uid] || []).forEach((p) => {
-      const match = matchById[p.matchId];
-      if (!match) return;
-      const isFeatured = featuredMatchIds.includes(p.matchId);
-      const isJoker = jokerMatchByUser[uid] === p.matchId;
-      const result = computeMatchPoints({ prediction: p, match, isFeatured, isJoker });
-      if (result) {
-        pointsFromMatches += result.total;
-        breakdown[p.matchId] = result;
+
+    matches.forEach((match) => {
+      const p = (predictionsByUser[uid] || []).find((pr) => pr.matchId === match.id) || null;
+      const isFeatured = featuredMatchIds.includes(match.id);
+      const isJoker = jokerMatchByUser[uid] === match.id;
+      const hasResult = isMatchResultComplete(match);
+
+      const matchSnapshot = {
+        matchId: match.id,
+        homeTeam: match.homeTeam,
+        awayTeam: match.awayTeam,
+        kickoffAt: match.kickoffAt,
+        prediction: p ? { scoreA: p.scoreA, scoreB: p.scoreB, corners: p.corners, cards: p.cards } : null,
+        real: hasResult
+          ? { scoreA: match.realScoreA, scoreB: match.realScoreB, corners: match.realCorners, cards: match.realCards }
+          : null,
+        isFeatured,
+        isJoker,
+      };
+
+      if (!hasResult) {
+        breakdown[match.id] = { ...matchSnapshot, status: "pending" };
+        return;
       }
+      if (!p) {
+        breakdown[match.id] = { ...matchSnapshot, status: "no-prediction" };
+        return;
+      }
+
+      const result = computeMatchPoints({ prediction: p, match, isFeatured, isJoker });
+      if (!result) {
+        // predicție incompletă (fără scor) — tratată tot ca "no-prediction"
+        // pentru scop de afișare, nu contribuie puncte.
+        breakdown[match.id] = { ...matchSnapshot, status: "no-prediction" };
+        return;
+      }
+
+      pointsFromMatches += result.total;
+      breakdown[match.id] = { ...matchSnapshot, status: "scored", ...result };
     });
+
     return { uid, pointsFromMatches, breakdown };
   });
 
@@ -418,13 +470,107 @@ async function computeGameweekResults(gameweekId) {
   const withTotals = ranked.map((r) => ({ ...r, totalPoints: r.pointsFromMatches + r.rankingBonus }));
   withTotals.sort((a, b) => a.rank - b.rank);
 
-  return { gameweekId, rows: withTotals, incompleteMatchIds, totalMatches: matches.length };
+  return {
+    gameweekId,
+    rows: withTotals,
+    incompleteMatchIds,
+    totalMatches: matches.length,
+    matches,
+    featuredMatchIds,
+  };
 }
 
 // Preview — DOAR calcul, nicio scriere. Admin vede exact ce s-ar
 // întâmpla, INCLUSIV câte meciuri nu au încă rezultat complet.
 export async function previewGameweekResults(gameweekId) {
   return computeGameweekResults(gameweekId);
+}
+
+// ── Clasament LIVE public, sigur pentru useri normali ──────────────────
+//
+// computeGameweekResults (mai sus) e ADMIN-ONLY prin natura ei: interoghează
+// predictions/jokers ale TUTUROR userilor, fără nicio filtrare de privacy —
+// corect pentru Admin Preview (adminul trebuie să vadă tot ca să audit-eze
+// matematic), GREȘIT dacă un user normal ar rula aceeași funcție (ar primi
+// în browser pronosticul altora înainte de lock).
+//
+// Soluția: adminul (singurul care oricum rulează computeGameweekResults)
+// calculează totul complet, apoi scrie o COPIE SANITIZATĂ, per user, într-o
+// colecție publică nouă `gameweekLiveScores/{gameweekId}_{uid}` — citibilă
+// de orice user semnat. Sanitizarea se face AICI, înainte de scriere, nu în
+// UI: pentru fiecare meci "scored" care încă NU e locked (kickoff - 30min
+// nu a trecut încă), câmpul `prediction` e ȘTERS complet din documentul
+// public și înlocuit cu `predictionHidden: true` — pronosticul lui X nu
+// ajunge NICIODATĂ în clientul lui Y înainte de lock, pentru că nu e scris
+// niciodată în documentul pe care Y îl citește. Punctajul (numărul de
+// puncte) rămâne vizibil — cerința explicită e să ascundem PRONOSTICUL, nu
+// scorul.
+function sanitizeBreakdownForPublish(breakdown) {
+  const clean = {};
+  Object.entries(breakdown).forEach(([matchId, m]) => {
+    const locked = isLockedForPublish({ kickoffAt: m.kickoffAt });
+
+    // isJoker e o alegere PERSONALĂ/secretă (spre deosebire de isFeatured,
+    // care e o decizie publică a adminului, anunțată tuturor) — nu trebuie
+    // să ajungă la ceilalți înainte de lock, indiferent de status. Doar
+    // flagul e ascuns; NU atingem multiplier/finalMatchPoints — punctajele
+    // rămân afișabile normal (regulă explicită, separată de pronostic).
+    const isJokerSafe = locked ? m.isJoker : false;
+
+    if (!m.prediction) {
+      clean[matchId] = { ...m, isJoker: isJokerSafe };
+      return;
+    }
+    if (locked) {
+      clean[matchId] = m; // după lock, pronosticul + Jokerul sunt publice conform regulii existente
+    } else {
+      const { prediction, ...rest } = m;
+      clean[matchId] = { ...rest, prediction: null, predictionHidden: true, isJoker: isJokerSafe };
+    }
+  });
+  return clean;
+}
+
+// Recalculează TOT (aceeași sursă unică, computeGameweekResults) și publică
+// o copie sanitizată per user în gameweekLiveScores. De apelat de admin
+// după orice schimbare care afectează punctajul: rezultat nou salvat,
+// Meciurile Săptămânii schimbate, sau manual din buton. NU scrie nimic în
+// gameweekScores (acela rămâne DOAR pentru finalizare) și nu atinge
+// seasonPoints/gameweeksPlayed — complet separat de finalizare, sigur de
+// rulat oricând, oricât de des.
+export async function publishLiveScores(gameweekId) {
+  const results = await computeGameweekResults(gameweekId);
+
+  const batch = writeBatch(db);
+  results.rows.forEach((r) => {
+    const ref = doc(db, "gameweekLiveScores", `${gameweekId}_${r.uid}`);
+    batch.set(ref, {
+      gameweekId,
+      userId: r.uid,
+      rank: r.rank,
+      pointsFromMatches: r.pointsFromMatches,
+      rankingBonus: r.rankingBonus,
+      totalPoints: r.totalPoints,
+      breakdown: sanitizeBreakdownForPublish(r.breakdown),
+      computedAt: serverTimestamp(),
+    });
+  });
+  await batch.commit();
+
+  return { publishedRows: results.rows.length, incompleteMatchIds: results.incompleteMatchIds };
+}
+
+// Citire live (real-time) a gameweekLiveScores pentru useri normali —
+// NICIODATĂ predictions/jokers direct. onSnapshot, nu polling: userul
+// primește update automat de fiecare dată când adminul republică (după un
+// rezultat nou salvat), fără request-uri repetate. Întoarce funcția de
+// unsubscribe — apelantul TREBUIE să o cheme la unmount.
+export function listenLiveGameweekScores(gameweekId, onRows) {
+  const q = query(collection(db, "gameweekLiveScores"), where("gameweekId", "==", gameweekId));
+  return onSnapshot(q, (snap) => {
+    const rows = snap.docs.map((d) => d.data());
+    onRows(rows);
+  });
 }
 
 // Finalizare IDEMPOTENTĂ: dacă etapa e deja "completed", tranzacția

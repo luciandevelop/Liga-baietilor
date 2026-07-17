@@ -59,6 +59,17 @@ export function computeCardsScore(predCards, realCards) {
 // două sunt deja mutual exclusive, impus la nivel de Firestore Rules în
 // Livrarea 1: un Joker nu poate fi ales pe un meci deja featured).
 // Întoarce null dacă nu există predicție validă sau rezultat real încă.
+//
+// Rezultatul conține DUBLU set de câmpuri, intenționat:
+// - numele vechi (mainScore/cornersScore/cardsScore/base/total) — neatinse,
+//   folosite deja de restul aplicației, ca să nu rupem niciun call-site;
+// - un breakdown explicit (scorePoints/cornersPoints/cardsPoints/baseTotal/
+//   multiplierReason/finalMatchPoints) — aceleași valori, nume mai clare
+//   pentru UI-ul de transparență (Admin Preview / Player Detail), ca să nu
+//   fie nevoie de nicio formulă duplicată acolo.
+// isFeatured și isJoker nu pot fi ambele true (garantat structural în altă
+// parte a aplicației) — dar chiar dacă s-ar întâmpla, multiplicatorul tot
+// rămâne x2, niciodată x4.
 export function computeMatchPoints({ prediction, match, isFeatured, isJoker }) {
   if (!prediction || prediction.scoreA === undefined || prediction.scoreA === null) return null;
   if (prediction.scoreB === undefined || prediction.scoreB === null) return null;
@@ -72,7 +83,21 @@ export function computeMatchPoints({ prediction, match, isFeatured, isJoker }) {
   const multiplier = isFeatured || isJoker ? 2 : 1;
   const total = base * multiplier;
 
-  return { mainScore, cornersScore, cardsScore, base, multiplier, total };
+  let multiplierReason = null;
+  if (isFeatured) multiplierReason = "featured";
+  else if (isJoker) multiplierReason = "joker";
+
+  return {
+    // câmpuri vechi — neschimbate, folosite deja în adminService/UI existent
+    mainScore, cornersScore, cardsScore, base, multiplier, total,
+    // breakdown explicit pentru UI de transparență
+    scorePoints: mainScore,
+    cornersPoints: cornersScore,
+    cardsPoints: cardsScore,
+    baseTotal: base,
+    multiplierReason,
+    finalMatchPoints: total,
+  };
 }
 
 // Bonus/penalizare de poziție, cu regulă olimpică (egalitate = punctaj
@@ -82,7 +107,7 @@ export function computeMatchPoints({ prediction, match, isFeatured, isJoker }) {
 // Regulă defensivă exactă (grupuri mici):
 // 1) Se calculează rangul standard de competiție (1,1,3,4… la egalități).
 // 2) Locurile 1/2/3 primesc mereu bonusul lor, DACĂ acel rang există.
-// 3) Locul "ultimul" (rangul maxim) primește -150 — DAR NUMAI dacă acel
+// 3) Locul "ultimul" (rangul maxim) primește -100 — DAR NUMAI dacă acel
 //    rang nu a fost deja premiat la pasul 2 (evită contradicția "locul 3
 //    ȘI ultimul" când sunt doar 3 jucători, caz în care doar bonusul
 //    pozitiv se aplică, penalizarea se omite).
@@ -116,7 +141,7 @@ export function computeRankingBonuses(rows) {
   const unclaimed = distinctRanksAsc.filter((r) => !(r in bonusByRank));
   if (unclaimed.length > 0) {
     const lastRank = Math.max(...unclaimed);
-    bonusByRank[lastRank] = -150;
+    bonusByRank[lastRank] = -100;
 
     const remaining = unclaimed.filter((r) => r !== lastRank);
     if (remaining.length > 0) {

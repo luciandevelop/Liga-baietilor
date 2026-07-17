@@ -6,6 +6,7 @@ import {
   savePredictionForMatch,
   loadUserJoker,
   saveJoker,
+  deleteJoker,
   isMatchLocked,
 } from "../services/predictionsService";
 import { listMatches } from "../services/adminService";
@@ -91,10 +92,10 @@ export default function PredictionsScreen({ user, onBack }) {
     m.forEach((match) => {
       const p = existing[match.id];
       initial[match.id] = {
-        scoreA: p?.scoreA ?? "",
-        scoreB: p?.scoreB ?? "",
-        corners: p?.corners ?? "",
-        cards: p?.cards ?? "",
+        scoreA: p?.scoreA ?? 0,
+        scoreB: p?.scoreB ?? 0,
+        corners: p?.corners ?? 0,
+        cards: p?.cards ?? 0,
       };
     });
     setPredictions(initial);
@@ -147,6 +148,23 @@ export default function PredictionsScreen({ user, onBack }) {
     }
   }
 
+  // Renunțare la Joker — șterge alegerea complet, doar dacă meciul care
+  // avea Jokerul nu e deja locked (verificat și la nivel de firestore.rules,
+  // nu doar aici).
+  async function handleRemoveJoker() {
+    setJokerSaving(true);
+    setJokerError("");
+    try {
+      await deleteJoker(gameweek.id, user.uid);
+      setJoker(null);
+    } catch (err) {
+      console.error("Eroare la renunțarea Jokerului:", err);
+      setJokerError(err.message || err.code);
+    } finally {
+      setJokerSaving(false);
+    }
+  }
+
   if (loadState === "loading") {
     return (
       <div style={s.page}>
@@ -181,6 +199,12 @@ export default function PredictionsScreen({ user, onBack }) {
 
   const featuredMatchIds = gameweek.featuredMatchIds || [];
 
+  // Meciul care deține Jokerul acum (dacă există) — folosit ca să blocăm
+  // ORICE schimbare (mutare SAU renunțare) odată ce acel meci s-a locked,
+  // nu doar mutarea către un meci nou deja locked.
+  const jokerMatch = joker ? matches.find((x) => x.id === joker.matchId) : null;
+  const jokerMatchLocked = jokerMatch ? isMatchLocked(jokerMatch) : false;
+
   return (
     <div style={s.page}>
       <div style={s.headerRow}>
@@ -201,8 +225,15 @@ export default function PredictionsScreen({ user, onBack }) {
             const locked = isMatchLocked(m);
             const isFeatured = featuredMatchIds.includes(m.id);
             const isJoker = joker?.matchId === m.id;
-            const jokerDisabled = isFeatured || locked || jokerSaving;
             const sState = saveState[m.id] || {};
+
+            // Meciul care ARE deja Jokerul: poate fi doar renunțat, și doar
+            // dacă nu e locked. Orice alt meci: poate DEVENI noul Joker
+            // (mutare A→B), dar numai dacă meciul nou nu e featured/locked
+            // ȘI meciul vechi al Jokerului (dacă există) nu e deja locked.
+            const jokerDisabled = isJoker
+              ? locked || jokerSaving
+              : isFeatured || locked || jokerSaving || jokerMatchLocked;
 
             return (
               <MatchPredictionCard
@@ -217,8 +248,8 @@ export default function PredictionsScreen({ user, onBack }) {
                 locked={locked}
                 isFeatured={isFeatured}
                 isJoker={isJoker}
-                onToggleJoker={() => (isJoker ? null : handleSetJoker(m))}
-                jokerDisabled={jokerDisabled || isJoker}
+                onToggleJoker={() => (isJoker ? handleRemoveJoker() : handleSetJoker(m))}
+                jokerDisabled={jokerDisabled}
               />
             );
           })}

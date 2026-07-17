@@ -117,7 +117,7 @@ export default function App() {
   }
 
   if (view === "leaderboard") {
-    return <LeaderboardScreen onBack={() => setView("welcome")} />;
+    return <LeaderboardScreen user={user} onBack={() => setView("welcome")} />;
   }
 
   return (

@@ -11,8 +11,17 @@ import {
 } from "../services/predictionsService";
 import { listMatches } from "../services/adminService";
 import MatchPredictionCard from "../components/MatchPredictionCard";
+import PageHeader from "../components/PageHeader";
+import EmptyState from "../components/EmptyState";
+import { color, font, layout } from "../theme";
+import useNow from "../hooks/useNow";
 
 export default function PredictionsScreen({ user, onBack }) {
+  // Re-render la fiecare 30s — face ca isMatchLocked(m) să reflecte mereu
+  // ora reală curentă, fără refresh manual. Nu e sursa de securitate
+  // (aceea rămâne firestore.rules), doar sincronizează UI-ul cu ea.
+  useNow(30000);
+
   const [loadState, setLoadState] = useState("loading"); // loading | ready | error | empty
   const [loadError, setLoadError] = useState("");
   const [season, setSeason] = useState(null);
@@ -167,7 +176,7 @@ export default function PredictionsScreen({ user, onBack }) {
 
   if (loadState === "loading") {
     return (
-      <div style={s.page}>
+      <div style={layout.page}>
         <div style={s.centerBox}>Se încarcă etapa…</div>
       </div>
     );
@@ -175,7 +184,7 @@ export default function PredictionsScreen({ user, onBack }) {
 
   if (loadState === "error") {
     return (
-      <div style={s.page}>
+      <div style={layout.page}>
         <div style={s.centerBox}>
           <p style={s.errorText}>Eroare la încărcare: {loadError}</p>
           <button style={s.retryBtn} onClick={load}>Încearcă din nou</button>
@@ -187,12 +196,11 @@ export default function PredictionsScreen({ user, onBack }) {
 
   if (loadState === "empty") {
     return (
-      <div style={s.page}>
-        <div style={s.headerRow}>
-          <h1 style={s.title}>Pronosticuri</h1>
-          <button style={s.backBtn} onClick={onBack}>Înapoi</button>
+      <div style={layout.page}>
+        <div style={layout.wrap}>
+          <PageHeader title="Pronosticuri" onBack={onBack} />
+          <EmptyState icon="📅" title="Nu există o etapă activă în această săptămână." />
         </div>
-        <div style={s.centerBox}>Nu există o etapă activă în această săptămână.</div>
       </div>
     );
   }
@@ -206,95 +214,71 @@ export default function PredictionsScreen({ user, onBack }) {
   const jokerMatchLocked = jokerMatch ? isMatchLocked(jokerMatch) : false;
 
   return (
-    <div style={s.page}>
-      <div style={s.headerRow}>
-        <div>
-          <h1 style={s.title}>{gameweek.title}</h1>
-          {season?.name && <p style={s.subtitle}>{season.name}</p>}
-        </div>
-        <button style={s.backBtn} onClick={onBack}>Înapoi</button>
+    <div style={layout.page}>
+      <div style={layout.wrap}>
+        <PageHeader
+          eyebrow={season?.name}
+          title={gameweek.title}
+          subtitle={`${matches.length} meciuri`}
+          onBack={onBack}
+        />
+
+        {jokerError && <div style={s.jokerErrorBanner}>Joker: {jokerError}</div>}
+
+        {matches.length === 0 ? (
+          <EmptyState icon="📅" title="Etapa asta nu are încă meciuri adăugate." />
+        ) : (
+          <div style={s.matchList}>
+            {matches.map((m) => {
+              const locked = isMatchLocked(m);
+              const isFeatured = featuredMatchIds.includes(m.id);
+              const isJoker = joker?.matchId === m.id;
+              const sState = saveState[m.id] || {};
+
+              // Meciul care ARE deja Jokerul: poate fi doar renunțat, și doar
+              // dacă nu e locked. Orice alt meci: poate DEVENI noul Joker
+              // (mutare A→B), dar numai dacă meciul nou nu e featured/locked
+              // ȘI meciul vechi al Jokerului (dacă există) nu e deja locked.
+              const jokerDisabled = isJoker
+                ? locked || jokerSaving
+                : isFeatured || locked || jokerSaving || jokerMatchLocked;
+
+              return (
+                <MatchPredictionCard
+                  key={m.id}
+                  match={m}
+                  prediction={predictions[m.id]}
+                  onChange={(patch) => updateMatch(m.id, patch)}
+                  onSave={() => handleSaveMatch(m)}
+                  saving={!!sState.saving}
+                  saveStatus={sState.status}
+                  saveError={sState.error}
+                  locked={locked}
+                  isFeatured={isFeatured}
+                  isJoker={isJoker}
+                  onToggleJoker={() => (isJoker ? handleRemoveJoker() : handleSetJoker(m))}
+                  jokerDisabled={jokerDisabled}
+                />
+              );
+            })}
+          </div>
+        )}
       </div>
-
-      {jokerError && <div style={s.jokerErrorBanner}>Joker: {jokerError}</div>}
-
-      {matches.length === 0 ? (
-        <div style={s.centerBox}>Etapa asta nu are încă meciuri adăugate.</div>
-      ) : (
-        <div style={s.matchList}>
-          {matches.map((m) => {
-            const locked = isMatchLocked(m);
-            const isFeatured = featuredMatchIds.includes(m.id);
-            const isJoker = joker?.matchId === m.id;
-            const sState = saveState[m.id] || {};
-
-            // Meciul care ARE deja Jokerul: poate fi doar renunțat, și doar
-            // dacă nu e locked. Orice alt meci: poate DEVENI noul Joker
-            // (mutare A→B), dar numai dacă meciul nou nu e featured/locked
-            // ȘI meciul vechi al Jokerului (dacă există) nu e deja locked.
-            const jokerDisabled = isJoker
-              ? locked || jokerSaving
-              : isFeatured || locked || jokerSaving || jokerMatchLocked;
-
-            return (
-              <MatchPredictionCard
-                key={m.id}
-                match={m}
-                prediction={predictions[m.id]}
-                onChange={(patch) => updateMatch(m.id, patch)}
-                onSave={() => handleSaveMatch(m)}
-                saving={!!sState.saving}
-                saveStatus={sState.status}
-                saveError={sState.error}
-                locked={locked}
-                isFeatured={isFeatured}
-                isJoker={isJoker}
-                onToggleJoker={() => (isJoker ? handleRemoveJoker() : handleSetJoker(m))}
-                jokerDisabled={jokerDisabled}
-              />
-            );
-          })}
-        </div>
-      )}
     </div>
   );
 }
 
 const s = {
-  page: {
-    minHeight: "100vh",
-    background: "radial-gradient(ellipse at 50% -10%, #131A2E 0%, #080B14 60%)",
-    padding: "20px 14px 32px",
-    fontFamily: "'Helvetica Neue', Arial, sans-serif",
-  },
-  headerRow: {
-    display: "flex",
-    alignItems: "flex-start",
-    justifyContent: "space-between",
-    marginBottom: 16,
-  },
-  title: { fontSize: 19, fontWeight: 800, color: "#F5F5F0", margin: 0 },
-  subtitle: { fontSize: 11.5, color: "#6B7390", margin: "3px 0 0" },
-  backBtn: {
-    background: "#0D1220",
-    border: "1px solid #232B42",
-    color: "#8B93A8",
-    borderRadius: 10,
-    padding: "8px 14px",
-    fontSize: 12.5,
-    fontWeight: 700,
-    cursor: "pointer",
-    flexShrink: 0,
-  },
   centerBox: {
     textAlign: "center",
-    color: "#8B93A8",
+    color: color.textMuted,
     fontSize: 13.5,
     padding: "40px 16px",
   },
-  errorText: { color: "#E08A82", fontSize: 13, marginBottom: 14 },
+  errorText: { color: color.red, fontSize: 13, marginBottom: 14 },
   retryBtn: {
-    background: "linear-gradient(180deg, #E0BC4A, #C9A227)",
-    color: "#0A0E1A",
+    background: color.goldGradient,
+    color: color.goldOn,
     border: "none",
     borderRadius: 10,
     padding: "10px 20px",
@@ -302,26 +286,25 @@ const s = {
     fontWeight: 800,
     cursor: "pointer",
     marginRight: 8,
+    fontFamily: font.body,
   },
   backLink: {
     background: "none",
     border: "none",
-    color: "#8B93A8",
+    color: color.textMuted,
     fontSize: 12.5,
     cursor: "pointer",
     textDecoration: "underline",
+    fontFamily: font.body,
   },
   jokerErrorBanner: {
     fontSize: 11.5,
-    color: "#E08A82",
-    background: "rgba(181,69,61,0.1)",
-    border: "1px solid rgba(181,69,61,0.3)",
+    color: color.red,
+    background: color.redBg,
+    border: `1px solid ${color.redBorder}`,
     borderRadius: 10,
     padding: "8px 12px",
     marginBottom: 14,
-    maxWidth: 480,
-    marginLeft: "auto",
-    marginRight: "auto",
   },
-  matchList: { display: "flex", flexDirection: "column", gap: 14, maxWidth: 480, margin: "0 auto" },
+  matchList: { display: "flex", flexDirection: "column", gap: 10 },
 };

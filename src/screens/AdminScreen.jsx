@@ -13,12 +13,18 @@ import {
   previewGameweekResults,
   publishLiveScores,
   finalizeGameweek,
-  getUserNicknames,
 } from "../services/adminService";
+import { getUserPublicProfiles } from "../services/profilesService";
 import { getCurrentSeason, getCurrentGameweek } from "../services/predictionsService";
 import MatchCard from "../components/MatchCard";
 import MatchResultCard from "../components/MatchResultCard";
 import PlayerBreakdownModal from "../components/PlayerBreakdownModal";
+import PageHeader from "../components/PageHeader";
+import SectionCard from "../components/SectionCard";
+import StatusBadge from "../components/StatusBadge";
+import PlayerRankRow from "../components/PlayerRankRow";
+import EmptyState from "../components/EmptyState";
+import { color, font, layout, radius } from "../theme";
 
 // Ordonare operațională pentru secțiunea de Rezultate: meciurile FĂRĂ
 // rezultat introdus încă vin primele (sortate după kickoffAt), apoi cele
@@ -41,7 +47,15 @@ function matchesSearch(m, term) {
   return (m.homeTeam || "").toLowerCase().includes(t) || (m.awayTeam || "").toLowerCase().includes(t);
 }
 
+const TABS = [
+  { id: "results", label: "Rezultate" },
+  { id: "live", label: "Live" },
+  { id: "featured", label: "Săptămânii" },
+  { id: "config", label: "Config" },
+];
+
 export default function AdminScreen({ onBack }) {
+  const [tab, setTab] = useState("results");
   const [seasons, setSeasons] = useState([]);
   const [gameweeks, setGameweeks] = useState([]);
   const [matches, setMatches] = useState([]);
@@ -67,15 +81,13 @@ export default function AdminScreen({ onBack }) {
   const [featuredIds, setFeaturedIds] = useState([]);
   const [featuredSaving, setFeaturedSaving] = useState(false);
   const [featuredMessage, setFeaturedMessage] = useState("");
-  const [showMatchList, setShowMatchList] = useState(false);
-  const [showImport, setShowImport] = useState(false);
 
   const [deletingMatchId, setDeletingMatchId] = useState("");
   const [deleteMessage, setDeleteMessage] = useState("");
 
   const [previewRows, setPreviewRows] = useState(null);
   const [previewIncomplete, setPreviewIncomplete] = useState(0);
-  const [previewNicknames, setPreviewNicknames] = useState({});
+  const [previewProfiles, setPreviewProfiles] = useState({});
   const [previewLoading, setPreviewLoading] = useState(false);
   const [previewMessage, setPreviewMessage] = useState("");
   const [finalizing, setFinalizing] = useState(false);
@@ -113,7 +125,7 @@ export default function AdminScreen({ onBack }) {
         const current = await getCurrentSeason();
         if (current) {
           setSelectedSeasonId(current.id);
-          const gws = await refreshGameweeks(current.id);
+          await refreshGameweeks(current.id);
           const currentGw = await getCurrentGameweek(current.id);
           if (currentGw) {
             setSelectedGameweekId(currentGw.id);
@@ -274,8 +286,8 @@ export default function AdminScreen({ onBack }) {
       const result = await previewGameweekResults(selectedGameweekId);
       setPreviewRows(result.rows);
       setPreviewIncomplete(result.incompleteMatchIds.length);
-      const names = await getUserNicknames(result.rows.map((r) => r.uid));
-      setPreviewNicknames(names);
+      const names = await getUserPublicProfiles(result.rows.map((r) => r.uid));
+      setPreviewProfiles(names);
 
       if (result.rows.length > 0 && currentGameweek?.status !== "completed") {
         await publishLiveScores(selectedGameweekId);
@@ -375,93 +387,89 @@ export default function AdminScreen({ onBack }) {
   const openPlayerRow = previewRows?.find((r) => r.uid === openPlayerUid) || null;
 
   return (
-    <div style={s.page}>
-      <div style={s.wrap}>
-        <div style={s.headerRow}>
-          <h1 style={s.title}>Panou Admin — test etapă</h1>
-          <div style={s.headerBtns}>
-            <button style={s.resetBtn} onClick={handleReset} disabled={loading}>⚠️ Reset TEST</button>
-            <button style={s.backBtn} onClick={onBack}>Înapoi</button>
-          </div>
-        </div>
+    <div style={layout.page}>
+      <div style={layout.wrap}>
+        <PageHeader
+          eyebrow="Panou Admin"
+          title={currentGameweek ? currentGameweek.title : "Fără etapă selectată"}
+          subtitle={autoDetecting ? "Se detectează…" : autoDetectedLabel}
+          onBack={onBack}
+          right={
+            <button style={s.resetBtn} onClick={handleReset} disabled={loading} type="button">⚠️ Reset</button>
+          }
+        />
 
         {message && <div style={s.message}>{message}</div>}
 
-        {/* Sezon/Etapă curentă — auto-detectate, cu opțiune manuală */}
-        <section style={s.card}>
-          <h2 style={s.cardTitle}>Sezon & etapă curentă</h2>
-          {autoDetecting ? (
-            <p style={s.hint}>Se detectează automat sezonul activ și etapa curentă…</p>
-          ) : (
-            <p style={s.autoLabel}>📍 {autoDetectedLabel || "Nimic detectat automat."}</p>
-          )}
-          <button style={s.linkBtn} onClick={() => setShowManualSelectors((v) => !v)}>
-            {showManualSelectors ? "Ascunde selecția manuală" : "Schimbă sezon / etapă manual"}
-          </button>
+        <button style={s.linkBtn} onClick={() => setShowManualSelectors((v) => !v)} type="button">
+          {showManualSelectors ? "Ascunde selecția manuală" : "Schimbă sezon / etapă manual"}
+        </button>
 
-          {showManualSelectors && (
-            <div style={{ marginTop: 12 }}>
-              <select
-                style={s.select}
-                value={selectedSeasonId}
-                onChange={(e) => setSelectedSeasonId(e.target.value)}
-              >
-                <option value="">— alege un sezon —</option>
-                {seasons.map((s2) => (
-                  <option key={s2.id} value={s2.id}>{s2.name}</option>
+        {showManualSelectors && (
+          <SectionCard style={{ marginTop: 8 }}>
+            <select style={s.select} value={selectedSeasonId} onChange={(e) => setSelectedSeasonId(e.target.value)}>
+              <option value="">— alege un sezon —</option>
+              {seasons.map((s2) => (
+                <option key={s2.id} value={s2.id}>{s2.name}</option>
+              ))}
+            </select>
+
+            {selectedSeasonId && (
+              <select style={s.select} value={selectedGameweekId} onChange={(e) => setSelectedGameweekId(e.target.value)}>
+                <option value="">— alege o etapă —</option>
+                {gameweeks.map((g) => (
+                  <option key={g.id} value={g.id}>{g.title} · {g.status}</option>
                 ))}
               </select>
+            )}
 
-              {selectedSeasonId && (
-                <select
-                  style={s.select}
-                  value={selectedGameweekId}
-                  onChange={(e) => setSelectedGameweekId(e.target.value)}
-                >
-                  <option value="">— alege o etapă —</option>
-                  {gameweeks.map((g) => (
-                    <option key={g.id} value={g.id}>{g.title} · {g.status}</option>
-                  ))}
-                </select>
-              )}
+            {selectedSeasonId && (
+              <button style={s.btn} disabled={loading} onClick={handleCreateNextGameweek} type="button">
+                Creează / deschide etapa săptămânii
+              </button>
+            )}
 
-              {selectedSeasonId && (
-                <button style={s.btn} disabled={loading} onClick={handleCreateNextGameweek}>
-                  Creează / deschide etapa săptămânii
-                </button>
-              )}
-
-              <form onSubmit={handleCreateSeason} style={{ ...s.form, marginTop: 14 }}>
-                <p style={s.hint}>+ Sezon nou</p>
-                <input style={s.input} placeholder="Nume sezon (ex: Sezon 2026/27)" value={seasonName} onChange={(e) => setSeasonName(e.target.value)} />
-                <div style={s.row}>
-                  <input style={s.input} type="date" value={seasonStart} onChange={(e) => setSeasonStart(e.target.value)} />
-                  <input style={s.input} type="date" value={seasonEnd} onChange={(e) => setSeasonEnd(e.target.value)} />
-                </div>
-                <button style={s.btn} disabled={loading} type="submit">+ Sezon nou</button>
-              </form>
-            </div>
-          )}
-        </section>
+            <form onSubmit={handleCreateSeason} style={{ ...s.form, marginTop: 14 }}>
+              <p style={s.hint}>+ Sezon nou</p>
+              <input style={s.input} placeholder="Nume sezon (ex: Sezon 2026/27)" value={seasonName} onChange={(e) => setSeasonName(e.target.value)} />
+              <div style={s.row}>
+                <input style={s.input} type="date" value={seasonStart} onChange={(e) => setSeasonStart(e.target.value)} />
+                <input style={s.input} type="date" value={seasonEnd} onChange={(e) => setSeasonEnd(e.target.value)} />
+              </div>
+              <button style={s.btn} disabled={loading} type="submit">+ Sezon nou</button>
+            </form>
+          </SectionCard>
+        )}
 
         {selectedGameweekId && (
           <>
-            {matches.length > 0 && (
-              <div style={s.searchBox}>
-                <input
-                  style={s.searchInput}
-                  placeholder="Caută echipa…"
-                  value={searchTerm}
-                  onChange={(e) => setSearchTerm(e.target.value)}
-                />
-              </div>
+            <div style={s.tabRow}>
+              {TABS.map((t) => (
+                <button
+                  key={t.id}
+                  style={{ ...s.tabBtn, ...(tab === t.id ? s.tabBtnActive : {}) }}
+                  onClick={() => setTab(t.id)}
+                  type="button"
+                >
+                  {t.label}
+                </button>
+              ))}
+            </div>
+
+            {(tab === "results" || tab === "featured") && matches.length > 0 && (
+              <input
+                style={s.searchInput}
+                placeholder="Caută echipa…"
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+              />
             )}
 
-            {/* 1. Rezultate reale */}
-            {matches.length > 0 && (
-              <section style={s.card}>
-                <h2 style={s.cardTitle}>Rezultate reale</h2>
-                <p style={s.hint}>Meciurile fără rezultat introdus apar primele.</p>
+            {/* ── Rezultate ─────────────────────────────────────────── */}
+            {tab === "results" && (
+              matches.length === 0 ? (
+                <EmptyState icon="📋" title="Etapa nu are încă meciuri." subtitle="Adaugă-le din tab-ul Import / Config." />
+              ) : (
                 <div style={s.matchList}>
                   {resultsOrderedMatches.map((m) => (
                     <MatchResultCard
@@ -472,25 +480,22 @@ export default function AdminScreen({ onBack }) {
                     />
                   ))}
                   {resultsOrderedMatches.length === 0 && (
-                    <p style={s.hint}>Niciun meci nu corespunde căutării.</p>
+                    <EmptyState icon="🔍" title="Niciun meci nu corespunde căutării." />
                   )}
                 </div>
-              </section>
+              )
             )}
 
-            {/* 2. Preview / Clasament live */}
-            {matches.length > 0 && (
-              <section style={s.card}>
-                <h2 style={s.cardTitle}>Clasament live / Preview</h2>
+            {/* ── Clasament live ────────────────────────────────────── */}
+            {tab === "live" && (
+              <SectionCard>
+                {currentGameweek?.status === "completed" ? (
+                  <StatusBadge tone="gold">FINAL — etapă finalizată</StatusBadge>
+                ) : previewRows ? (
+                  <StatusBadge tone="live" dot>LIVE · provizoriu</StatusBadge>
+                ) : null}
 
-                {currentGameweek?.status === "completed" && (
-                  <div style={s.message}>Etapa e deja finalizată (status: completed) — clasamentul de mai jos e definitiv.</div>
-                )}
-                {currentGameweek?.status !== "completed" && previewRows && (
-                  <div style={s.liveTag}>🔴 Clasament live — bonusurile de poziție sunt provizorii, se recalculează la fiecare rezultat nou.</div>
-                )}
-
-                <button style={s.btn} disabled={previewLoading} onClick={handlePreview}>
+                <button style={{ ...s.btn, marginTop: 12 }} disabled={previewLoading} onClick={handlePreview} type="button">
                   {previewLoading ? "Se calculează…" : "Calculează / Previzualizează clasamentul"}
                 </button>
 
@@ -499,103 +504,86 @@ export default function AdminScreen({ onBack }) {
                 {previewRows && previewRows.length > 0 && (
                   <div style={s.previewTable}>
                     {previewRows.map((r) => (
-                      <button
+                      <PlayerRankRow
                         key={r.uid}
-                        style={s.previewRow}
+                        rank={r.rank}
+                        nickname={previewProfiles[r.uid]?.nickname || r.uid}
+                        avatarId={previewProfiles[r.uid]?.avatarId}
+                        pointsFromMatches={r.pointsFromMatches}
+                        rankingBonus={r.rankingBonus}
+                        totalPoints={r.totalPoints}
+                        top3={r.rank <= 3}
                         onClick={() => setOpenPlayerUid(r.uid)}
-                        type="button"
-                      >
-                        <span style={s.previewRank}>#{r.rank}</span>
-                        <span style={s.previewName}>{previewNicknames[r.uid] || r.uid}</span>
-                        <span style={s.previewPts}>{r.pointsFromMatches}p</span>
-                        <span style={{ ...s.previewBonus, color: r.rankingBonus >= 0 ? "#A9E0B8" : "#E08A82" }}>
-                          {r.rankingBonus >= 0 ? "+" : ""}{r.rankingBonus}p
-                        </span>
-                        <span style={s.previewTotal}>{r.totalPoints}p</span>
-                      </button>
+                      />
                     ))}
                   </div>
                 )}
 
                 {previewRows && currentGameweek?.status !== "completed" && (
-                  <button style={s.finalizeBtn} disabled={finalizing || previewIncomplete > 0} onClick={handleFinalize}>
+                  <button style={s.finalizeBtn} disabled={finalizing || previewIncomplete > 0} onClick={handleFinalize} type="button">
                     {finalizing ? "Se finalizează…" : "Finalizează etapa"}
                   </button>
                 )}
-              </section>
+              </SectionCard>
             )}
 
-            {/* 3. Meciuri & Meciurile Săptămânii (collapsible) */}
-            <section style={s.card}>
-              <button style={s.collapseHeader} onClick={() => setShowMatchList((v) => !v)} type="button">
-                <h2 style={s.cardTitle}>Meciuri & Meciurile Săptămânii</h2>
-                <span style={s.chevron}>{showMatchList ? "▲" : "▼"}</span>
-              </button>
+            {/* ── Meciurile Săptămânii ──────────────────────────────── */}
+            {tab === "featured" && (
+              <>
+                {deleteMessage && <div style={s.message}>{deleteMessage}</div>}
 
-              {showMatchList && (
-                <>
-                  {deleteMessage && <div style={s.message}>{deleteMessage}</div>}
-
-                  {filteredMatches.length > 0 && (
-                    <div style={s.matchList}>
-                      {filteredMatches.map((m) => (
-                        <div key={m.id} style={s.matchRowWithDelete}>
-                          <label style={s.featuredRow}>
-                            <input
-                              type="checkbox"
-                              checked={featuredIds.includes(m.id)}
-                              onChange={() => toggleFeatured(m.id)}
-                              disabled={!featuredIds.includes(m.id) && featuredIds.length >= 3}
-                              style={s.featuredCheckbox}
+                {filteredMatches.length > 0 ? (
+                  <div style={s.matchList}>
+                    {filteredMatches.map((m) => (
+                      <div key={m.id} style={s.matchRowWithDelete}>
+                        <label style={s.featuredRow}>
+                          <input
+                            type="checkbox"
+                            checked={featuredIds.includes(m.id)}
+                            onChange={() => toggleFeatured(m.id)}
+                            disabled={!featuredIds.includes(m.id) && featuredIds.length >= 3}
+                            style={s.featuredCheckbox}
+                          />
+                          <div style={{ flex: 1 }}>
+                            <MatchCard
+                              homeTeam={m.homeTeam}
+                              awayTeam={m.awayTeam}
+                              kickoffAt={m.kickoffAt}
+                              status={m.status}
                             />
-                            <div style={{ flex: 1 }}>
-                              <MatchCard
-                                homeTeam={m.homeTeam}
-                                awayTeam={m.awayTeam}
-                                kickoffAt={m.kickoffAt}
-                                status={m.status}
-                              />
-                            </div>
-                          </label>
-                          <button
-                            type="button"
-                            style={s.deleteBtn}
-                            disabled={deletingMatchId === m.id}
-                            onClick={() => handleDeleteMatch(m)}
-                            title="Șterge meciul"
-                          >
-                            {deletingMatchId === m.id ? "…" : "🗑"}
-                          </button>
-                        </div>
-                      ))}
-                    </div>
-                  )}
+                          </div>
+                        </label>
+                        <button
+                          type="button"
+                          style={s.deleteBtn}
+                          disabled={deletingMatchId === m.id}
+                          onClick={() => handleDeleteMatch(m)}
+                          title="Șterge meciul"
+                        >
+                          {deletingMatchId === m.id ? "…" : "🗑"}
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <EmptyState icon="⭐" title="Niciun meci nu corespunde căutării." />
+                )}
 
-                  {matches.length > 0 && (
-                    <div style={s.featuredSaveBox}>
-                      <p style={s.hint}>⭐ Meciurile Săptămânii: {featuredIds.length}/3 alese</p>
-                      {featuredMessage && <div style={s.message}>{featuredMessage}</div>}
-                      <button
-                        style={s.btn}
-                        disabled={featuredSaving || featuredIds.length !== 3}
-                        onClick={handleSaveFeatured}
-                      >
-                        {featuredSaving ? "Se salvează…" : "Salvează Meciurile Săptămânii"}
-                      </button>
-                    </div>
-                  )}
-                </>
-              )}
-            </section>
+                {matches.length > 0 && (
+                  <SectionCard style={{ marginTop: 4 }}>
+                    <p style={s.hint}>⭐ Meciurile Săptămânii: {featuredIds.length}/3 alese</p>
+                    {featuredMessage && <div style={s.message}>{featuredMessage}</div>}
+                    <button style={s.btn} disabled={featuredSaving || featuredIds.length !== 3} onClick={handleSaveFeatured} type="button">
+                      {featuredSaving ? "Se salvează…" : "Salvează Meciurile Săptămânii"}
+                    </button>
+                  </SectionCard>
+                )}
+              </>
+            )}
 
-            {/* 4. Import meciuri (collapsible) */}
-            <section style={s.card}>
-              <button style={s.collapseHeader} onClick={() => setShowImport((v) => !v)} type="button">
-                <h2 style={s.cardTitle}>Import meciuri</h2>
-                <span style={s.chevron}>{showImport ? "▲" : "▼"}</span>
-              </button>
-
-              {showImport && (
+            {/* ── Import / Config ───────────────────────────────────── */}
+            {tab === "config" && (
+              <SectionCard title="Import meciuri">
                 <form onSubmit={handleImportMatches} style={s.form}>
                   <p style={s.hint}>
                     Lipește meciurile, un rând pe meci, format: <br />
@@ -610,15 +598,16 @@ export default function AdminScreen({ onBack }) {
                   />
                   <button style={s.btn} disabled={loading} type="submit">Importă meciurile</button>
                 </form>
-              )}
-            </section>
+              </SectionCard>
+            )}
           </>
         )}
       </div>
 
       {openPlayerRow && (
         <PlayerBreakdownModal
-          nickname={previewNicknames[openPlayerUid] || openPlayerUid}
+          nickname={previewProfiles[openPlayerUid]?.nickname || openPlayerUid}
+          avatarId={previewProfiles[openPlayerUid]?.avatarId}
           row={openPlayerRow}
           isOwn={true}
           onClose={() => setOpenPlayerUid("")}
@@ -629,100 +618,62 @@ export default function AdminScreen({ onBack }) {
 }
 
 const s = {
-  page: {
-    minHeight: "100vh",
-    background: "radial-gradient(ellipse at 50% -10%, #131A2E 0%, #080B14 60%)",
-    padding: "24px 16px",
-    fontFamily: "'Helvetica Neue', Arial, sans-serif",
-  },
-  wrap: { maxWidth: 480, margin: "0 auto" },
-  headerRow: { display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 18 },
-  headerBtns: { display: "flex", gap: 8 },
-  title: { fontSize: 19, fontWeight: 800, color: "#F5F5F0", margin: 0 },
-  backBtn: {
-    background: "#0D1220", border: "1px solid #232B42", color: "#8B93A8",
-    borderRadius: 10, padding: "8px 14px", fontSize: 12.5, fontWeight: 700, cursor: "pointer",
-  },
   resetBtn: {
-    background: "rgba(181,69,61,0.12)", border: "1px solid rgba(181,69,61,0.4)", color: "#E08A82",
-    borderRadius: 10, padding: "8px 14px", fontSize: 12.5, fontWeight: 700, cursor: "pointer",
+    background: color.redBg, border: `1px solid ${color.redBorder}`, color: color.red,
+    borderRadius: radius.sm, padding: "8px 14px", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: font.body,
   },
-  hint: { fontSize: 11.5, color: "#6B7390", lineHeight: 1.5, margin: "0 0 4px" },
-  autoLabel: { fontSize: 13, color: "#E0BC4A", fontWeight: 700, margin: "0 0 8px" },
+  hint: { fontSize: 11.5, color: color.textMuted, lineHeight: 1.5, margin: "0 0 4px" },
   linkBtn: {
-    background: "none", border: "none", color: "#8B93A8", fontSize: 12,
-    textDecoration: "underline", cursor: "pointer", padding: 0,
+    background: "none", border: "none", color: color.textMuted, fontSize: 12,
+    textDecoration: "underline", cursor: "pointer", padding: 0, marginBottom: 12, fontFamily: font.body,
   },
-  code: { color: "#A9E0B8", fontSize: 11 },
+  code: { color: color.green, fontSize: 11 },
   textarea: {
-    width: "100%", background: "#0D1220", border: "1px solid #232B42", borderRadius: 10,
-    padding: "11px 12px", fontSize: 12.5, color: "#F5F5F0", outline: "none", resize: "vertical",
+    width: "100%", background: color.surfaceInset, border: `1px solid ${color.border}`, borderRadius: radius.sm,
+    padding: "11px 12px", fontSize: 12.5, color: color.textPrimary, outline: "none", resize: "vertical",
     fontFamily: "monospace",
   },
   message: {
-    background: "rgba(63,168,92,0.12)", border: "1px solid rgba(63,168,92,0.35)",
-    color: "#A9E0B8", borderRadius: 10, padding: "10px 14px", fontSize: 12.5, marginBottom: 16,
+    background: color.greenBg, border: `1px solid ${color.greenBorder}`,
+    color: color.green, borderRadius: radius.sm, padding: "10px 14px", fontSize: 12.5, marginBottom: 16,
   },
-  liveTag: {
-    background: "rgba(181,69,61,0.10)", border: "1px solid rgba(181,69,61,0.3)",
-    color: "#E08A82", borderRadius: 10, padding: "8px 12px", fontSize: 11.5, marginBottom: 12,
-  },
-  card: {
-    background: "#12182B", border: "1px solid #232B42", borderRadius: 16,
-    padding: "18px 16px", marginBottom: 16,
-  },
-  cardTitle: { fontSize: 14, fontWeight: 800, color: "#C9A227", margin: 0 },
-  collapseHeader: {
-    display: "flex", alignItems: "center", justifyContent: "space-between", width: "100%",
-    background: "none", border: "none", padding: 0, cursor: "pointer", marginBottom: 4,
-  },
-  chevron: { color: "#6B7390", fontSize: 12 },
   select: {
-    width: "100%", background: "#0D1220", border: "1px solid #232B42", borderRadius: 10,
-    padding: "11px 12px", fontSize: 13.5, color: "#F5F5F0", marginBottom: 10,
+    width: "100%", background: color.surfaceInset, border: `1px solid ${color.border}`, borderRadius: radius.sm,
+    padding: "11px 12px", fontSize: 13.5, color: color.textPrimary, marginBottom: 10, fontFamily: font.body,
   },
-  searchBox: { maxWidth: 480, margin: "0 auto 12px" },
   searchInput: {
-    width: "100%", background: "#0D1220", border: "1px solid #232B42", borderRadius: 10,
-    padding: "10px 14px", fontSize: 13.5, color: "#F5F5F0", outline: "none",
+    width: "100%", background: color.surfaceInset, border: `1px solid ${color.border}`, borderRadius: radius.sm,
+    padding: "10px 14px", fontSize: 13.5, color: color.textPrimary, outline: "none", marginBottom: 12, fontFamily: font.body,
   },
   form: { display: "flex", flexDirection: "column", gap: 10 },
   row: { display: "flex", gap: 10 },
   input: {
-    flex: 1, background: "#0D1220", border: "1px solid #232B42", borderRadius: 10,
-    padding: "11px 12px", fontSize: 13.5, color: "#F5F5F0", outline: "none",
+    flex: 1, background: color.surfaceInset, border: `1px solid ${color.border}`, borderRadius: radius.sm,
+    padding: "11px 12px", fontSize: 13.5, color: color.textPrimary, outline: "none", fontFamily: font.body,
   },
   btn: {
-    background: "linear-gradient(180deg, #E0BC4A, #C9A227)", color: "#0A0E1A", border: "none",
-    borderRadius: 10, padding: "11px 0", fontSize: 13.5, fontWeight: 800, cursor: "pointer", marginTop: 2,
+    background: color.goldGradient, color: color.goldOn, border: "none",
+    borderRadius: radius.sm, padding: "11px 0", fontSize: 13.5, fontWeight: 800, cursor: "pointer", fontFamily: font.body,
   },
+  tabRow: { display: "flex", gap: 6, marginBottom: 14, overflowX: "auto" },
+  tabBtn: {
+    flex: "1 0 auto", background: color.surfaceInset, border: `1px solid ${color.border}`, color: color.textMuted,
+    borderRadius: radius.sm, padding: "9px 10px", fontSize: 11.5, fontWeight: 700, cursor: "pointer",
+    whiteSpace: "nowrap", fontFamily: font.body,
+  },
+  tabBtnActive: { background: color.goldGradient, color: color.goldOn, border: "none" },
   matchList: { display: "flex", flexDirection: "column", gap: 8, marginBottom: 14 },
-  featuredRow: {
-    display: "flex", alignItems: "flex-start", gap: 10, cursor: "pointer", flex: 1, minWidth: 0,
-  },
-  matchRowWithDelete: {
-    display: "flex", alignItems: "flex-start", gap: 8,
-  },
+  featuredRow: { display: "flex", alignItems: "flex-start", gap: 10, cursor: "pointer", flex: 1, minWidth: 0 },
+  matchRowWithDelete: { display: "flex", alignItems: "flex-start", gap: 8 },
   deleteBtn: {
-    flexShrink: 0, marginTop: 14, width: 34, height: 34, borderRadius: 10,
-    background: "rgba(181,69,61,0.12)", border: "1px solid rgba(181,69,61,0.4)",
-    color: "#E08A82", fontSize: 15, cursor: "pointer",
+    flexShrink: 0, marginTop: 14, width: 34, height: 34, borderRadius: radius.sm,
+    background: color.redBg, border: `1px solid ${color.redBorder}`,
+    color: color.red, fontSize: 15, cursor: "pointer",
   },
-  featuredCheckbox: { width: 20, height: 20, marginTop: 14, flexShrink: 0, accentColor: "#C9A227" },
-  featuredSaveBox: { marginTop: 4, marginBottom: 14 },
+  featuredCheckbox: { width: 20, height: 20, marginTop: 14, flexShrink: 0, accentColor: color.gold },
   previewTable: { display: "flex", flexDirection: "column", gap: 6, marginTop: 12, marginBottom: 12 },
-  previewRow: {
-    display: "flex", alignItems: "center", gap: 8, background: "#0D1220",
-    border: "1px solid #1c2338", borderRadius: 10, padding: "9px 12px", width: "100%",
-    cursor: "pointer", textAlign: "left", fontFamily: "inherit",
-  },
-  previewRank: { fontSize: 12, fontWeight: 800, color: "#C9A227", width: 26, flexShrink: 0 },
-  previewName: { fontSize: 13, fontWeight: 700, color: "#F5F5F0", flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
-  previewPts: { fontSize: 12, color: "#8B93A8", flexShrink: 0 },
-  previewBonus: { fontSize: 12, fontWeight: 700, flexShrink: 0, width: 46, textAlign: "right" },
-  previewTotal: { fontSize: 13.5, fontWeight: 800, color: "#E0BC4A", flexShrink: 0, width: 52, textAlign: "right" },
   finalizeBtn: {
-    width: "100%", background: "rgba(63,168,92,0.15)", border: "1px solid #3FA85C", color: "#A9E0B8",
-    borderRadius: 10, padding: "12px 0", fontSize: 13.5, fontWeight: 800, cursor: "pointer",
+    width: "100%", background: color.greenBg, border: `1px solid #3FA85C`, color: color.green,
+    borderRadius: radius.sm, padding: "12px 0", fontSize: 13.5, fontWeight: 800, cursor: "pointer", fontFamily: font.body,
   },
 };

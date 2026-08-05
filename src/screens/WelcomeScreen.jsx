@@ -4,6 +4,7 @@ import { getCurrentSeason, getCurrentGameweek, loadUserPredictions, loadUserJoke
 import { listMatches, listenLiveGameweekScores, listGameweekScores } from "../services/adminService";
 import { getUserPublicProfiles } from "../services/profilesService";
 import useNow from "../hooks/useNow";
+import { getMatchStatus } from "../utils/matchStatus";
 import { color, font, radius, shadow } from "../matchdayTheme";
 import CinematicBackdrop from "../components/CinematicBackdrop";
 import AppHeader from "../components/AppHeader";
@@ -11,17 +12,17 @@ import TopTabNav from "../components/TopTabNav";
 import BottomTabBar from "../components/BottomTabBar";
 import PremiumCard from "../components/PremiumCard";
 import PremiumButton from "../components/PremiumButton";
-import PremiumCrest from "../components/PremiumCrest";
+import ClubLogo from "../components/ClubLogo";
+import CompetitionLogo from "../components/CompetitionLogo";
 import SplitFlapClock from "../components/SplitFlapClock";
 import MatchRailCard from "../components/MatchRailCard";
 import Pill from "../components/Pill";
 
 const LOCK_MS = 30 * 60 * 1000;
 
-// Home — reconstruit pe sistemul vizual premium (PremiumCrest/
-// SplitFlapClock/MatchRailCard/PremiumButton/PremiumCard cu lock).
-// NICIO logică nouă: aceleași apeluri către predictionsService/
-// adminService/profilesService ca înainte, doar afișarea s-a schimbat.
+// Home — reconstruit pe sistemul vizual premium. NICIO logică nouă:
+// aceleași apeluri către predictionsService/adminService/profilesService
+// ca înainte, doar afișarea s-a schimbat.
 export default function WelcomeScreen({ user, profile, isAdmin, onOpenAdmin, onOpenPredictions, onOpenLeaderboard }) {
   const now = useNow(1000); // tick la 1s — countdown-ul hero cere secunde, nu doar minute
 
@@ -138,14 +139,17 @@ export default function WelcomeScreen({ user, profile, isAdmin, onOpenAdmin, onO
     }
   }, [gameweek, matches]);
 
-  const notYetLocked = matches
-    .filter((m) => (m.kickoffAt?.toMillis ? m.kickoffAt.toMillis() : Infinity) - LOCK_MS > now)
-    .sort((a, b) => a.kickoffAt.toMillis() - b.kickoffAt.toMillis());
-
+  // FIX: meciul principal (hero) trebuie să fie mereu primul meci al
+  // etapei (cronologic), indiferent dacă e deja live/blocat/terminat —
+  // NU se mai schimbă la alt meci doar pentru că primul a pornit. Doar
+  // conținutul din interiorul hero-ului se adaptează la starea reală
+  // (getMatchStatus), nu meciul afișat.
+  const allSorted = matches.slice().sort((a, b) => a.kickoffAt.toMillis() - b.kickoffAt.toMillis());
   const featuredIds = gameweek?.featuredMatchIds || [];
-  const derbyMatch = notYetLocked.find((m) => featuredIds.includes(m.id));
-  const heroMatch = derbyMatch || notYetLocked[0] || null;
-  const railMatches = notYetLocked.filter((m) => m.id !== heroMatch?.id).slice(0, 6);
+  const derbyMatch = allSorted.find((m) => featuredIds.includes(m.id));
+  const heroMatch = derbyMatch || allSorted[0] || null;
+  const heroStatus = heroMatch ? getMatchStatus(heroMatch, now) : null;
+  const railMatches = allSorted.filter((m) => m.id !== heroMatch?.id);
 
   const remainingMs = heroMatch ? heroMatch.kickoffAt.toMillis() - LOCK_MS - now : 0;
 
@@ -210,28 +214,39 @@ export default function WelcomeScreen({ user, profile, isAdmin, onOpenAdmin, onO
             heroMatch ? (
               <>
                 <div style={s.stakes}>{gameweek.title}{derbyMatch && heroMatch === derbyMatch ? " · Derby-ul etapei" : ""}</div>
-                {derbyMatch && heroMatch === derbyMatch && (
-                  <div style={{ marginBottom: 8 }}><Pill tone="gold">★ Derby-ul etapei</Pill></div>
-                )}
+                <div style={{ display: "flex", justifyContent: "center", gap: 8, marginBottom: 8, flexWrap: "wrap" }}>
+                  {heroMatch.competition && (
+                    <div style={s.compPill}>
+                      <CompetitionLogo name={heroMatch.competition} size={14} />
+                    </div>
+                  )}
+                  {derbyMatch && heroMatch === derbyMatch && <Pill tone="gold">★ Derby-ul etapei</Pill>}
+                  {heroStatus === "live" && <Pill tone="green">● LIVE</Pill>}
+                  {heroStatus === "finished" && <Pill tone="gold">Final</Pill>}
+                </div>
 
                 <div style={s.matchup}>
                   <div style={s.side}>
-                    <PremiumCrest teamName={heroMatch.homeTeam} size={60} />
+                    <ClubLogo teamName={heroMatch.homeTeam} size={60} />
                     <span style={s.tname}>{heroMatch.homeTeam}</span>
                   </div>
                   <span style={s.vsx}>VS</span>
                   <div style={s.side}>
-                    <PremiumCrest teamName={heroMatch.awayTeam} size={60} />
+                    <ClubLogo teamName={heroMatch.awayTeam} size={60} />
                     <span style={s.tname}>{heroMatch.awayTeam}</span>
                   </div>
                 </div>
 
-                <div style={s.flapWrap}><SplitFlapClock remainingMs={remainingMs} /></div>
+                {heroStatus === "scheduled" && <div style={s.flapWrap}><SplitFlapClock remainingMs={remainingMs} /></div>}
+                {heroStatus === "live" && <div style={s.liveNote}>Meciul este în desfășurare</div>}
+                {heroStatus === "finished" && (
+                  <div style={s.finalScore}>{heroMatch.realScoreA} – {heroMatch.realScoreB}</div>
+                )}
 
                 <div style={s.ctaWrap}><PremiumButton onClick={onOpenPredictions}>Pronosticuri</PremiumButton></div>
               </>
             ) : (
-              <div style={s.centerNote}>Toate meciurile etapei sunt blocate.</div>
+              <div style={s.centerNote}>Etapa asta nu are încă meciuri adăugate.</div>
             )
           )}
         </div>
@@ -252,8 +267,8 @@ export default function WelcomeScreen({ user, profile, isAdmin, onOpenAdmin, onO
                     homeTeam={m.homeTeam}
                     awayTeam={m.awayTeam}
                     kickoffAt={m.kickoffAt}
-                    isLive={m.status === "live"}
-                    isLocked={(m.kickoffAt?.toMillis ? m.kickoffAt.toMillis() : Infinity) - LOCK_MS <= now}
+                    competition={m.competition}
+                    status={getMatchStatus(m, now)}
                     onClick={onOpenPredictions}
                   />
                 ))}
@@ -332,6 +347,12 @@ const s = {
   tname: { fontFamily: font.display, fontWeight: 600, fontSize: 11.5, textTransform: "uppercase", letterSpacing: "0.02em", color: color.textPrimary },
   vsx: { fontFamily: font.display, fontSize: 10, color: color.textFaint, fontWeight: 700, paddingTop: 21 },
   flapWrap: { margin: "24px 0" },
+  liveNote: { fontSize: 12, color: "#8BD957", fontWeight: 700, margin: "20px 0", fontFamily: font.body },
+  finalScore: { fontFamily: font.display, fontSize: 42, fontWeight: 800, color: color.textPrimary, margin: "16px 0" },
+  compPill: {
+    width: 26, height: 26, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center",
+    background: color.surfaceElevated, border: `1px solid ${color.border}`,
+  },
   ctaWrap: { width: "100%", maxWidth: 300 },
 
   sectionLabel: {

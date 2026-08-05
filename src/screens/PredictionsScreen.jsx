@@ -11,9 +11,7 @@ import {
 } from "../services/predictionsService";
 import { listMatches } from "../services/adminService";
 import MatchPredictionCard from "../components/MatchPredictionCard";
-import PageHeader from "../components/PageHeader";
-import EmptyState from "../components/EmptyState";
-import { color, font, layout } from "../theme";
+import { color, font, radius } from "../matchdayTheme";
 import useNow from "../hooks/useNow";
 
 export default function PredictionsScreen({ user, onBack }) {
@@ -176,7 +174,7 @@ export default function PredictionsScreen({ user, onBack }) {
 
   if (loadState === "loading") {
     return (
-      <div style={layout.page}>
+      <div style={s.page}>
         <div style={s.centerBox}>Se încarcă etapa…</div>
       </div>
     );
@@ -184,7 +182,7 @@ export default function PredictionsScreen({ user, onBack }) {
 
   if (loadState === "error") {
     return (
-      <div style={layout.page}>
+      <div style={s.page}>
         <div style={s.centerBox}>
           <p style={s.errorText}>Eroare la încărcare: {loadError}</p>
           <button style={s.retryBtn} onClick={load}>Încearcă din nou</button>
@@ -196,10 +194,10 @@ export default function PredictionsScreen({ user, onBack }) {
 
   if (loadState === "empty") {
     return (
-      <div style={layout.page}>
-        <div style={layout.wrap}>
-          <PageHeader title="Pronosticuri" onBack={onBack} />
-          <EmptyState icon="📅" title="Nu există o etapă activă în această săptămână." />
+      <div style={s.page}>
+        <div style={s.wrap}>
+          <PageHead title="Pronosticuri" onBack={onBack} />
+          <div style={s.emptyState}>Nu există o etapă activă în această săptămână.</div>
         </div>
       </div>
     );
@@ -214,19 +212,14 @@ export default function PredictionsScreen({ user, onBack }) {
   const jokerMatchLocked = jokerMatch ? isMatchLocked(jokerMatch) : false;
 
   return (
-    <div style={layout.page}>
-      <div style={layout.wrap}>
-        <PageHeader
-          eyebrow={season?.name}
-          title={gameweek.title}
-          subtitle={`${matches.length} meciuri`}
-          onBack={onBack}
-        />
+    <div style={s.page}>
+      <div style={s.wrap}>
+        <PageHead eyebrow={season?.name} title={gameweek.title} subtitle={`${matches.length} meciuri`} onBack={onBack} />
 
         {jokerError && <div style={s.jokerErrorBanner}>Joker: {jokerError}</div>}
 
         {matches.length === 0 ? (
-          <EmptyState icon="📅" title="Etapa asta nu are încă meciuri adăugate." />
+          <div style={s.emptyState}>Etapa asta nu are încă meciuri adăugate.</div>
         ) : (
           <div style={s.matchList}>
             {matches.map((m) => {
@@ -268,43 +261,48 @@ export default function PredictionsScreen({ user, onBack }) {
   );
 }
 
+// Header inline, pe matchdayTheme — înlocuiește PageHeader (rămas pe
+// theme.js vechi) doar pentru acest ecran.
+function PageHead({ eyebrow, title, subtitle, onBack }) {
+  return (
+    <div style={s.head}>
+      <button type="button" onClick={onBack} style={s.backBtn} aria-label="Înapoi">‹</button>
+      <div>
+        {eyebrow && <div style={s.headEyebrow}>{eyebrow}</div>}
+        <div style={s.headTitle}>{title}</div>
+        {subtitle && <div style={s.headSubtitle}>{subtitle}</div>}
+      </div>
+    </div>
+  );
+}
+
 const s = {
-  centerBox: {
-    textAlign: "center",
-    color: color.textMuted,
-    fontSize: 13.5,
-    padding: "40px 16px",
+  page: { minHeight: "100vh", background: color.bgBase },
+  wrap: { maxWidth: 480, margin: "0 auto", padding: "18px 16px 40px" },
+
+  head: { display: "flex", alignItems: "center", gap: 12, marginBottom: 20 },
+  backBtn: {
+    width: 32, height: 32, borderRadius: "50%", background: color.surfaceElevated, border: `1px solid ${color.border}`,
+    color: color.textPrimary, fontSize: 18, cursor: "pointer", flexShrink: 0,
   },
-  errorText: { color: color.red, fontSize: 13, marginBottom: 14 },
+  headEyebrow: { fontSize: 10, fontWeight: 700, letterSpacing: "0.09em", textTransform: "uppercase", color: color.textFaint, fontFamily: font.body },
+  headTitle: { fontFamily: font.display, fontSize: 19, fontWeight: 700, color: color.textPrimary },
+  headSubtitle: { fontSize: 11.5, color: color.textSecondary, marginTop: 2, fontFamily: font.body },
+
+  centerBox: { textAlign: "center", color: color.textSecondary, fontSize: 13.5, padding: "40px 16px", fontFamily: font.body },
+  emptyState: { textAlign: "center", color: color.textSecondary, fontSize: 13, padding: "40px 16px", fontFamily: font.body },
+  errorText: { color: "#F0555A", fontSize: 13, marginBottom: 14, fontFamily: font.body },
   retryBtn: {
-    background: color.goldGradient,
-    color: color.goldOn,
-    border: "none",
-    borderRadius: 10,
-    padding: "10px 20px",
-    fontSize: 13,
-    fontWeight: 800,
-    cursor: "pointer",
-    marginRight: 8,
-    fontFamily: font.body,
+    background: color.goldGradient, color: color.goldOn, border: "none", borderRadius: 10,
+    padding: "10px 20px", fontSize: 13, fontWeight: 800, cursor: "pointer", marginRight: 8, fontFamily: font.body,
   },
   backLink: {
-    background: "none",
-    border: "none",
-    color: color.textMuted,
-    fontSize: 12.5,
-    cursor: "pointer",
-    textDecoration: "underline",
-    fontFamily: font.body,
+    background: "none", border: "none", color: color.textSecondary, fontSize: 12.5,
+    cursor: "pointer", textDecoration: "underline", fontFamily: font.body,
   },
   jokerErrorBanner: {
-    fontSize: 11.5,
-    color: color.red,
-    background: color.redBg,
-    border: `1px solid ${color.redBorder}`,
-    borderRadius: 10,
-    padding: "8px 12px",
-    marginBottom: 14,
+    fontSize: 11.5, color: "#F0555A", background: "rgba(240,85,90,0.1)", border: "1px solid rgba(240,85,90,0.3)",
+    borderRadius: 10, padding: "8px 12px", marginBottom: 14, fontFamily: font.body,
   },
   matchList: { display: "flex", flexDirection: "column", gap: 10 },
 };

@@ -1,43 +1,52 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { logout } from "../services/authService";
 import { getCurrentSeason, getCurrentGameweek, loadUserPredictions, loadUserJoker } from "../services/predictionsService";
 import { listMatches, listenLiveGameweekScores, listGameweekScores } from "../services/adminService";
 import { getUserPublicProfiles } from "../services/profilesService";
-import { color, font, layout, radius, shadow } from "../theme";
 import useNow from "../hooks/useNow";
-import SectionCard from "../components/SectionCard";
-import StatusBadge from "../components/StatusBadge";
-import PlayerRankRow from "../components/PlayerRankRow";
-import MatchCompactCard from "../components/MatchCompactCard";
-import EmptyState from "../components/EmptyState";
+import { color, font, radius, shadow } from "../matchdayTheme";
+import CinematicBackdrop from "../components/CinematicBackdrop";
+import AppHeader from "../components/AppHeader";
+import TopTabNav from "../components/TopTabNav";
+import BottomTabBar from "../components/BottomTabBar";
+import PremiumCard from "../components/PremiumCard";
+import PremiumButton from "../components/PremiumButton";
+import PremiumCrest from "../components/PremiumCrest";
+import SplitFlapClock from "../components/SplitFlapClock";
+import MatchRailCard from "../components/MatchRailCard";
+import Pill from "../components/Pill";
 
-function formatCountdown(ms) {
-  if (ms <= 0) return "Blocat";
-  const totalMin = Math.floor(ms / 60000);
-  const h = Math.floor(totalMin / 60);
-  const m = totalMin % 60;
-  if (h > 0) return `${h}h ${m}min`;
-  return `${m} min`;
-}
+const LOCK_MS = 30 * 60 * 1000;
 
+// Home — reconstruit pe sistemul vizual premium (PremiumCrest/
+// SplitFlapClock/MatchRailCard/PremiumButton/PremiumCard cu lock).
+// NICIO logică nouă: aceleași apeluri către predictionsService/
+// adminService/profilesService ca înainte, doar afișarea s-a schimbat.
 export default function WelcomeScreen({ user, profile, isAdmin, onOpenAdmin, onOpenPredictions, onOpenLeaderboard }) {
-  const now = useNow(30000); // reface countdown-ul + "următorul lock" la fiecare 30s, fără polling Firestore
+  const now = useNow(1000); // tick la 1s — countdown-ul hero cere secunde, nu doar minute
 
-  const [menuOpen, setMenuOpen] = useState(false);
   const [loading, setLoading] = useState(true);
-  // Eroare CRITICĂ (sezon/etapă/meciuri) — blochează hero-ul, are Retry.
   const [criticalError, setCriticalError] = useState("");
-  // Eroare SECUNDARĂ (Joker/predicții/clasament/profile) — restul Home-ului
-  // tot funcționează, doar acea secțiune arată o notă discretă.
   const [statsError, setStatsError] = useState("");
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [toast, setToast] = useState("");
 
   const [gameweek, setGameweek] = useState(null);
   const [matches, setMatches] = useState([]);
   const [predictedCount, setPredictedCount] = useState(0);
   const [ownJoker, setOwnJoker] = useState(null);
-  const [top3, setTop3] = useState([]);
   const [ownRow, setOwnRow] = useState(null);
   const [profiles, setProfiles] = useState({});
+
+  // Istoric de ranguri, DOAR din sesiunea curentă — folosit ca să
+  // detectăm real depășiri în clasament (nu inventăm evenimente vechi,
+  // nu există un jurnal de activitate persistat în date).
+  const prevRanksRef = useRef(null);
+  const [feed, setFeed] = useState([]);
+
+  function pushFeed(text, icon) {
+    setFeed((prev) => [{ id: `${Date.now()}-${Math.random()}`, text, icon, ts: Date.now() }, ...prev].slice(0, 6));
+  }
 
   function load() {
     let unsub = null;
@@ -45,6 +54,8 @@ export default function WelcomeScreen({ user, profile, isAdmin, onOpenAdmin, onO
       setLoading(true);
       setCriticalError("");
       setStatsError("");
+      prevRanksRef.current = null;
+      setFeed([]);
 
       let season, gw, m;
       try {
@@ -63,8 +74,6 @@ export default function WelcomeScreen({ user, profile, isAdmin, onOpenAdmin, onO
       }
       setLoading(false);
 
-      // De-aici încolo — date secundare. O eroare aici NU blochează restul
-      // Home-ului (hero-ul + CTA-ul principal rămân funcționale).
       try {
         const preds = await loadUserPredictions(user.uid, m.map((x) => x.id));
         setPredictedCount(Object.keys(preds).length);
@@ -84,16 +93,31 @@ export default function WelcomeScreen({ user, profile, isAdmin, onOpenAdmin, onO
         }
       } catch (err) {
         console.error("Eroare la statisticile personale:", err);
-        setStatsError("Unele statistici nu s-au putut încărca. " + (err.message || err.code || ""));
+        setStatsError("Unele statistici nu s-au putut încărca.");
       }
     })();
 
     async function applyRows(rows) {
       const sorted = [...rows].sort((a, b) => (a.rank ?? 999) - (b.rank ?? 999));
-      setTop3(sorted.slice(0, 3));
       setOwnRow(sorted.find((r) => r.uid === user.uid) || null);
       const p = await getUserPublicProfiles(sorted.map((r) => r.uid));
       setProfiles((prev) => ({ ...prev, ...p }));
+
+      // Depășiri reale, detectate din diff-ul față de ultimul snapshot LIVE
+      // primit în sesiunea curentă (nu față de un istoric persistat).
+      const prevRanks = prevRanksRef.current;
+      if (prevRanks) {
+        sorted.forEach((r) => {
+          const before = prevRanks[r.uid];
+          if (before !== undefined && r.rank < before) {
+            const meName = p[r.uid]?.nickname || r.uid;
+            pushFeed(`${meName} a urcat pe locul #${r.rank}`, "medal");
+          }
+        });
+      }
+      const nextRanks = {};
+      sorted.forEach((r) => { nextRanks[r.uid] = r.rank; });
+      prevRanksRef.current = nextRanks;
     }
 
     return () => { if (unsub) unsub(); };
@@ -101,197 +125,236 @@ export default function WelcomeScreen({ user, profile, isAdmin, onOpenAdmin, onO
 
   useEffect(load, [user.uid]);
 
-  // Următorul meci neblocat — recalculat la fiecare tick (`now`) din
-  // `matches` (stocate în state), nu doar o dată la încărcare. Așa avansează
-  // singur către următorul meci în momentul în care cel curent se blochează,
-  // fără refresh manual.
+  // Mesaje statice de feed (derby) — derivate din datele reale deja
+  // încărcate, adăugate o singură dată per etapă, nu inventate.
+  const staticFeedRef = useRef(false);
+  useEffect(() => {
+    if (staticFeedRef.current || !gameweek || matches.length === 0) return;
+    staticFeedRef.current = true;
+    const featuredIds = gameweek.featuredMatchIds || [];
+    const derby = matches.find((m) => featuredIds.includes(m.id));
+    if (derby) {
+      pushFeed(`Derby-ul etapei: ${derby.homeTeam} – ${derby.awayTeam}`, "star");
+    }
+  }, [gameweek, matches]);
+
   const notYetLocked = matches
-    .filter((m) => (m.kickoffAt?.toMillis ? m.kickoffAt.toMillis() : Infinity) - 1800000 > now)
+    .filter((m) => (m.kickoffAt?.toMillis ? m.kickoffAt.toMillis() : Infinity) - LOCK_MS > now)
     .sort((a, b) => a.kickoffAt.toMillis() - b.kickoffAt.toMillis());
-  const nextLockMatch = notYetLocked[0] || null;
-  const lockCountdown = nextLockMatch ? formatCountdown(nextLockMatch.kickoffAt.toMillis() - 1800000 - now) : null;
+
+  const featuredIds = gameweek?.featuredMatchIds || [];
+  const derbyMatch = notYetLocked.find((m) => featuredIds.includes(m.id));
+  const heroMatch = derbyMatch || notYetLocked[0] || null;
+  const railMatches = notYetLocked.filter((m) => m.id !== heroMatch?.id).slice(0, 6);
+
+  const remainingMs = heroMatch ? heroMatch.kickoffAt.toMillis() - LOCK_MS - now : 0;
+
+  function handleComingSoon(label) {
+    setToast(`${label} — în curând`);
+    setTimeout(() => setToast(""), 1800);
+  }
+
+  function handleTopTab(id) {
+    if (id === "matchday") return;
+    if (id === "clasament") return onOpenLeaderboard();
+    handleComingSoon(id === "dueluri" ? "Dueluri" : id === "zaruri" ? "Zaruri" : "Profil");
+  }
+
+  function handleBottomTab(id) {
+    if (id === "home") return;
+    if (id === "pronosticuri" || id === "meciuri") return onOpenPredictions();
+    if (id === "jucatori") return onOpenLeaderboard();
+    if (id === "meniu") return setMenuOpen((v) => !v);
+  }
 
   if (criticalError) {
     return (
-      <div style={layout.page}>
-        <div style={layout.wrap}>
-          <div style={s.errorBox}>
-            <p style={s.errorTitle}>Nu s-a putut încărca Home</p>
-            <p style={s.errorText}>{criticalError}</p>
-            <button style={s.retryBtn} onClick={load} type="button">Încearcă din nou</button>
-          </div>
+      <div style={{ minHeight: "100vh", background: color.bgBase }}>
+        <div style={s.errorWrap}>
+          <p style={s.errorTitle}>Nu s-a putut încărca Home</p>
+          <p style={s.errorText}>{criticalError}</p>
+          <PremiumButton onClick={load}>Încearcă din nou</PremiumButton>
         </div>
       </div>
     );
   }
 
   return (
-    <div style={layout.page}>
-      <div style={layout.wrap}>
-        <div style={s.headerRow}>
-          <div>
-            <div style={s.eyebrow}>Liga Băieților</div>
-            <h1 style={s.h1}>
-              {gameweek ? gameweek.title : "Bun venit"}
-              {gameweek?.status !== "completed" && gameweek && (
-                <StatusBadge tone="live" dot>LIVE</StatusBadge>
-              )}
-            </h1>
-          </div>
-          <div style={{ position: "relative" }}>
-            <button style={s.menuBtn} onClick={() => setMenuOpen((v) => !v)} type="button" aria-label="Meniu">
-              ⋯
-            </button>
-            {menuOpen && (
-              <div style={s.menu}>
-                {isAdmin && (
-                  <button style={s.menuItem} onClick={onOpenAdmin} type="button">⚙️ Panou Admin</button>
-                )}
-                <button style={{ ...s.menuItem, color: color.red }} onClick={logout} type="button">
-                  Deconectează-te
-                </button>
-              </div>
-            )}
-          </div>
-        </div>
+    <div style={{ minHeight: "100vh", background: color.bgBase, paddingBottom: 96 }}>
+      {/* ── HERO — singura zonă cu atmosferă cinematică (76vh) ── */}
+      <CinematicBackdrop crowd rain style={{ height: "76vh", display: "flex", flexDirection: "column" }}>
+        <AppHeader
+          nickname={profile?.nickname || "Jucător"}
+          points={(ownRow?.totalPoints ?? profile?.seasonPoints ?? 0).toLocaleString("ro-RO")}
+          avatarInitial={(profile?.nickname || "?").charAt(0).toUpperCase()}
+          hasNotification={feed.length > 0}
+          onAvatarClick={() => setMenuOpen((v) => !v)}
+          onBellClick={() => setMenuOpen((v) => !v)}
+        />
+        <TopTabNav active="matchday" onChange={handleTopTab} />
 
-        {/* Card principal — următorul lock */}
-        <SectionCard style={s.heroCard}>
-          {nextLockMatch ? (
-            <>
-              <div style={s.heroLabel}>URMĂTORUL LOCK</div>
-              <MatchCompactCard
-                homeTeam={nextLockMatch.homeTeam}
-                awayTeam={nextLockMatch.awayTeam}
-                right={<span style={s.heroCountdown}>{lockCountdown}</span>}
-              />
-            </>
-          ) : (
-            <div style={s.heroLabel}>
-              {loading ? "Se încarcă…" : gameweek ? "Toate meciurile etapei sunt blocate." : "Nu există o etapă activă în această săptămână."}
+        {menuOpen && (
+          <div style={s.menu}>
+            {isAdmin && <button style={s.menuItem} onClick={onOpenAdmin} type="button">⚙️ Panou Admin</button>}
+            <button style={{ ...s.menuItem, color: "#E5534B" }} onClick={logout} type="button">Deconectează-te</button>
+          </div>
+        )}
+
+        {toast && <div style={s.toast}>{toast}</div>}
+
+        <div style={s.heroBody}>
+          {loading && <div style={s.centerNote}>Se încarcă…</div>}
+          {!loading && !gameweek && <div style={s.centerNote}>Nu există o etapă activă în această săptămână.</div>}
+
+          {!loading && gameweek && (
+            heroMatch ? (
+              <>
+                <div style={s.stakes}>{gameweek.title}{derbyMatch && heroMatch === derbyMatch ? " · Derby-ul etapei" : ""}</div>
+                {derbyMatch && heroMatch === derbyMatch && (
+                  <div style={{ marginBottom: 8 }}><Pill tone="gold">★ Derby-ul etapei</Pill></div>
+                )}
+
+                <div style={s.matchup}>
+                  <div style={s.side}>
+                    <PremiumCrest teamName={heroMatch.homeTeam} size={60} />
+                    <span style={s.tname}>{heroMatch.homeTeam}</span>
+                  </div>
+                  <span style={s.vsx}>VS</span>
+                  <div style={s.side}>
+                    <PremiumCrest teamName={heroMatch.awayTeam} size={60} />
+                    <span style={s.tname}>{heroMatch.awayTeam}</span>
+                  </div>
+                </div>
+
+                <div style={s.flapWrap}><SplitFlapClock remainingMs={remainingMs} /></div>
+
+                <div style={s.ctaWrap}><PremiumButton onClick={onOpenPredictions}>Pronosticuri</PremiumButton></div>
+              </>
+            ) : (
+              <div style={s.centerNote}>Toate meciurile etapei sunt blocate.</div>
+            )
+          )}
+        </div>
+      </CinematicBackdrop>
+
+      {/* ── restul scenei — fundal plat, nu mai concurează cu hero-ul ── */}
+      {!loading && gameweek && (
+        <div style={s.wrap}>
+          {statsError && <div style={s.statsErrorNote}>{statsError}</div>}
+
+          {railMatches.length > 0 && (
+            <div style={s.railSection}>
+              <div style={s.sectionLabel}>Etapa continuă</div>
+              <div style={s.rail}>
+                {railMatches.map((m) => (
+                  <MatchRailCard
+                    key={m.id}
+                    homeTeam={m.homeTeam}
+                    awayTeam={m.awayTeam}
+                    kickoffAt={m.kickoffAt}
+                    isLive={m.status === "live"}
+                    isLocked={(m.kickoffAt?.toMillis ? m.kickoffAt.toMillis() : Infinity) - LOCK_MS <= now}
+                    onClick={onOpenPredictions}
+                  />
+                ))}
+              </div>
             </div>
           )}
-          <button style={s.ctaBtn} onClick={onOpenPredictions}>Pronosticuri</button>
-        </SectionCard>
 
-        {gameweek && (
-          <>
-            {statsError && <div style={s.statsErrorNote}>{statsError}</div>}
-
-            {/* Statistici personale */}
-            <SectionCard title="Punctele mele">
-              <div style={s.statsGrid}>
-                <div style={s.statBox}>
-                  <span style={s.statValue}>{ownRow ? `#${ownRow.rank}` : "–"}</span>
-                  <span style={s.statLabel}>Poziție</span>
-                </div>
-                <div style={s.statBox}>
-                  <span style={s.statValue}>{ownRow ? `${ownRow.totalPoints}p` : "–"}</span>
-                  <span style={s.statLabel}>Total etapă</span>
-                </div>
-                <div style={s.statBox}>
-                  <span style={s.statValue}>{predictedCount}/{matches.length}</span>
-                  <span style={s.statLabel}>Pontate</span>
-                </div>
-                <div style={s.statBox}>
-                  <span style={s.statValue}>{ownJoker ? "🃏" : "—"}</span>
-                  <span style={s.statLabel}>{ownJoker ? "Joker activ" : "Fără Joker"}</span>
-                </div>
+          {feed.length > 0 && (
+            <div style={s.feedSection}>
+              <div style={s.sectionLabel}>Live</div>
+              <div style={s.feedList}>
+                {feed.map((f) => (
+                  <div key={f.id} style={s.feedRow}>
+                    <span style={s.feedMark}><FeedIcon name={f.icon} /></span>
+                    <span style={s.feedText}>{f.text}</span>
+                  </div>
+                ))}
               </div>
-            </SectionCard>
+            </div>
+          )}
 
-            {/* Top 3 live */}
-            <SectionCard
-              title="Clasament"
-              right={
-                top3.length > 0 && gameweek.status !== "completed" ? (
-                  <StatusBadge tone="live" dot>LIVE</StatusBadge>
-                ) : null
-              }
-            >
-              {top3.length === 0 ? (
-                <EmptyState icon="🏆" title="Încă niciun rezultat introdus" />
-              ) : (
-                <div style={s.rankList}>
-                  {top3.map((r) => (
-                    <PlayerRankRow
-                      key={r.uid}
-                      rank={r.rank}
-                      nickname={profiles[r.uid]?.nickname || r.uid}
-                      avatarId={profiles[r.uid]?.avatarId}
-                      totalPoints={r.totalPoints}
-                      top3
-                      onClick={onOpenLeaderboard}
-                    />
-                  ))}
-                </div>
-              )}
-              <button style={s.seeAllBtn} onClick={onOpenLeaderboard} type="button">Vezi clasamentul complet →</button>
-            </SectionCard>
-          </>
-        )}
-      </div>
+          <div style={s.sectionLabel}>Explorează</div>
+          <div style={s.shortcutsGrid}>
+            <PremiumCard tone="gold" title="Clasament" subtitle="Competiție" onClick={onOpenLeaderboard} />
+            <PremiumCard tone="purple" title="Dueluri" subtitle="Rivalitate" locked lockCondition="În curând" onClick={() => handleComingSoon("Dueluri")} />
+            <PremiumCard tone="green" title="Zaruri" subtitle="Risc" locked lockCondition="În curând" onClick={() => handleComingSoon("Zaruri")} />
+            <PremiumCard tone="blue" title="Echipa Etapei" subtitle="Prestigiu" locked lockCondition="După primul meci" onClick={() => handleComingSoon("Echipa Etapei")} />
+          </div>
+        </div>
+      )}
+
+      <BottomTabBar active="home" onChange={handleBottomTab} />
     </div>
   );
 }
 
+function FeedIcon({ name }) {
+  const common = { width: 12, height: 12, viewBox: "0 0 24 24", fill: "none", stroke: color.goldLight, strokeWidth: 1.6, strokeLinecap: "round", strokeLinejoin: "round" };
+  if (name === "medal") {
+    return <svg {...common}><circle cx="12" cy="14" r="6" /><path d="M9 8L7 2M15 8l2-6" /></svg>;
+  }
+  if (name === "star") {
+    return <svg {...common}><path d="M12 3l2.6 5.9L21 9.6l-4.6 4.3L17.6 21 12 17.6 6.4 21l1.2-7.1L3 9.6l6.4-.7L12 3z" /></svg>;
+  }
+  return <svg {...common}><path d="M7 4h10v4a5 5 0 01-10 0V4z" /><path d="M12 13v4M9 20h6M10 17h4" /></svg>;
+}
+
 const s = {
-  headerRow: { display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 16 },
-  eyebrow: { fontSize: 11, fontWeight: 700, color: color.gold, letterSpacing: "0.06em", textTransform: "uppercase" },
-  h1: {
-    fontSize: 21, fontWeight: 700, color: color.textPrimary, margin: "2px 0 0", fontFamily: font.display,
-    display: "flex", alignItems: "center", gap: 8,
+  wrap: { maxWidth: 480, margin: "0 auto", padding: "24px 16px 0" },
+  centerNote: { textAlign: "center", color: color.textSecondary, fontSize: 13.5, padding: "50px 16px" },
+  statsErrorNote: {
+    fontSize: 11, color: color.textFaint, background: color.surfaceInset, border: `1px solid ${color.border}`,
+    borderRadius: radius.sm, padding: "8px 12px", marginBottom: 14,
   },
-  menuBtn: {
-    width: 36, height: 36, borderRadius: radius.sm, background: color.surfaceInset,
-    border: `1px solid ${color.border}`, color: color.textMuted, fontSize: 18, fontWeight: 800, cursor: "pointer",
-  },
+
   menu: {
-    position: "absolute", top: 42, right: 0, background: color.surfaceElevated,
+    position: "absolute", top: 62, right: 16, background: color.surfaceElevated,
     border: `1px solid ${color.border}`, borderRadius: radius.md, boxShadow: shadow.elevated,
-    overflow: "hidden", zIndex: 10, minWidth: 170,
+    overflow: "hidden", zIndex: 60, minWidth: 180,
   },
   menuItem: {
     display: "block", width: "100%", textAlign: "left", background: "none", border: "none",
-    color: color.textSecondary, fontSize: 13, fontWeight: 600, padding: "12px 14px", cursor: "pointer", fontFamily: font.body,
+    color: color.textPrimary, fontSize: 13, fontWeight: 600, padding: "12px 14px", cursor: "pointer", fontFamily: font.body,
   },
-  heroCard: { background: color.surfaceElevated, border: `1px solid rgba(201,162,39,0.25)` },
-  heroLabel: { fontSize: 10.5, fontWeight: 800, color: color.textFaint, letterSpacing: "0.06em", marginBottom: 10 },
-  heroCountdown: {
-    fontFamily: font.display, fontSize: 15, fontWeight: 700, color: color.goldLight,
-    background: "rgba(201,162,39,0.14)", border: "1px solid rgba(201,162,39,0.35)",
-    borderRadius: radius.pill, padding: "3px 10px",
+  toast: {
+    position: "fixed", left: "50%", top: 92, transform: "translateX(-50%)", zIndex: 70,
+    background: color.surfaceElevated, border: `1px solid ${color.goldBorder}`, color: color.goldLight,
+    borderRadius: radius.pill, padding: "8px 16px", fontSize: 12, fontWeight: 700, fontFamily: font.body,
+    boxShadow: shadow.elevated,
   },
-  ctaBtn: {
-    width: "100%", marginTop: 16, background: color.goldGradient, color: color.goldOn, border: "none",
-    borderRadius: radius.sm, padding: "14px 0", fontSize: 14.5, fontWeight: 800, cursor: "pointer", fontFamily: font.body,
+
+  heroBody: { flex: 1, display: "flex", flexDirection: "column", justifyContent: "center", alignItems: "center", padding: "10px 22px 26px", textAlign: "center" },
+  stakes: { fontSize: 10, fontWeight: 700, letterSpacing: "0.16em", color: color.goldLight, textTransform: "uppercase", marginBottom: 16, fontFamily: font.body },
+  matchup: { display: "flex", alignItems: "flex-start", justifyContent: "center", gap: 22, marginBottom: 6 },
+  side: { display: "flex", flexDirection: "column", alignItems: "center", gap: 9, width: 92 },
+  tname: { fontFamily: font.display, fontWeight: 600, fontSize: 11.5, textTransform: "uppercase", letterSpacing: "0.02em", color: color.textPrimary },
+  vsx: { fontFamily: font.display, fontSize: 10, color: color.textFaint, fontWeight: 700, paddingTop: 21 },
+  flapWrap: { margin: "24px 0" },
+  ctaWrap: { width: "100%", maxWidth: 300 },
+
+  sectionLabel: {
+    fontSize: 10, fontWeight: 700, letterSpacing: "0.09em", textTransform: "uppercase",
+    color: color.textFaint, marginBottom: 12, fontFamily: font.body,
   },
-  statsErrorNote: {
-    fontSize: 11, color: color.textFaint, background: color.surfaceInset, border: `1px solid ${color.borderSubtle}`,
-    borderRadius: radius.sm, padding: "8px 12px", marginBottom: 10,
+
+  railSection: { marginBottom: 30 },
+  rail: { display: "flex", gap: 9, overflowX: "auto", paddingBottom: 4 },
+
+  feedSection: { marginBottom: 30 },
+  feedList: { display: "flex", flexDirection: "column" },
+  feedRow: { display: "flex", alignItems: "center", gap: 12, padding: "10px 0" },
+  feedMark: {
+    width: 27, height: 27, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0,
+    background: "radial-gradient(circle at 35% 30%, rgba(212,175,55,0.22), rgba(212,175,55,0.06))", border: "1px solid rgba(212,175,55,0.32)",
+    boxShadow: shadow.rim,
   },
-  // 2x2, mereu — aplicația e mobile-only (max 480px), 4 coloane înghesuiau
-  // textul la 9px indiferent de lățime; 2x2 lasă loc de respirat.
-  statsGrid: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 },
-  statBox: {
-    display: "flex", flexDirection: "column", alignItems: "center", gap: 4, padding: "12px 6px",
-    background: color.surfaceInset, borderRadius: radius.sm,
-  },
-  statValue: { fontSize: 18, fontWeight: 700, color: color.textPrimary, fontFamily: font.display },
-  statLabel: { fontSize: 10.5, color: color.textFaint, fontWeight: 600, textAlign: "center" },
-  rankList: { display: "flex", flexDirection: "column", gap: 6, marginBottom: 10 },
-  seeAllBtn: {
-    width: "100%", background: "none", border: "none", color: color.gold, fontSize: 12.5,
-    fontWeight: 700, cursor: "pointer", padding: "6px 0 0", fontFamily: font.body,
-  },
-  errorBox: {
-    background: color.surface, border: `1px solid ${color.redBorder}`, borderRadius: radius.lg,
-    padding: "24px 18px", textAlign: "center", marginTop: 40,
-  },
-  errorTitle: { fontSize: 15, fontWeight: 700, color: color.textPrimary, margin: "0 0 8px" },
-  errorText: { fontSize: 12.5, color: color.red, margin: "0 0 16px", lineHeight: 1.5 },
-  retryBtn: {
-    background: color.goldGradient, color: color.goldOn, border: "none", borderRadius: radius.sm,
-    padding: "10px 20px", fontSize: 13, fontWeight: 800, cursor: "pointer", fontFamily: font.body,
-  },
+  feedText: { fontSize: 12.5, color: color.textSecondary, fontFamily: font.body },
+
+  shortcutsGrid: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 20 },
+
+  errorWrap: { maxWidth: 420, margin: "80px auto", textAlign: "center", padding: "0 20px" },
+  errorTitle: { fontSize: 16, fontWeight: 700, color: color.textPrimary, marginBottom: 8, fontFamily: font.body },
+  errorText: { fontSize: 12.5, color: "#E5534B", marginBottom: 18, fontFamily: font.body },
 };

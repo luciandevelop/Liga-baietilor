@@ -13,7 +13,7 @@ import BottomTabBar from "../components/BottomTabBar";
 import PremiumCard from "../components/PremiumCard";
 import PremiumButton from "../components/PremiumButton";
 import ClubLogo from "../components/ClubLogo";
-import CompetitionLogo from "../components/CompetitionLogo";
+import CompetitionBadge from "../components/CompetitionBadge";
 import SplitFlapClock from "../components/SplitFlapClock";
 import MatchRailCard from "../components/MatchRailCard";
 import Pill from "../components/Pill";
@@ -148,7 +148,7 @@ export default function WelcomeScreen({ user, profile, isAdmin, onOpenAdmin, onO
   const featuredIds = gameweek?.featuredMatchIds || [];
   const derbyMatch = allSorted.find((m) => featuredIds.includes(m.id));
   const heroMatch = derbyMatch || allSorted[0] || null;
-  const heroStatus = heroMatch ? getMatchStatus(heroMatch, now) : null;
+  const heroStatus = heroMatch ? getMatchStatus(heroMatch) : null;
   const railMatches = allSorted.filter((m) => m.id !== heroMatch?.id);
 
   const remainingMs = heroMatch ? heroMatch.kickoffAt.toMillis() - LOCK_MS - now : 0;
@@ -215,14 +215,13 @@ export default function WelcomeScreen({ user, profile, isAdmin, onOpenAdmin, onO
               <>
                 <div style={s.stakes}>{gameweek.title}{derbyMatch && heroMatch === derbyMatch ? " · Derby-ul etapei" : ""}</div>
                 <div style={{ display: "flex", justifyContent: "center", gap: 8, marginBottom: 8, flexWrap: "wrap" }}>
-                  {heroMatch.competition && (
-                    <div style={s.compPill}>
-                      <CompetitionLogo name={heroMatch.competition} size={14} />
-                    </div>
-                  )}
+                  <CompetitionBadge match={heroMatch} size="md" />
                   {derbyMatch && heroMatch === derbyMatch && <Pill tone="gold">★ Derby-ul etapei</Pill>}
                   {heroStatus === "live" && <Pill tone="green">● LIVE</Pill>}
+                  {heroStatus === "paused" && <Pill tone="gold">Pauză</Pill>}
                   {heroStatus === "finished" && <Pill tone="gold">Final</Pill>}
+                  {heroStatus === "postponed" && <Pill tone="gold">Amânat</Pill>}
+                  {heroStatus === "cancelled" && <Pill tone="gold">Anulat</Pill>}
                 </div>
 
                 <div style={s.matchup}>
@@ -238,10 +237,17 @@ export default function WelcomeScreen({ user, profile, isAdmin, onOpenAdmin, onO
                 </div>
 
                 {heroStatus === "scheduled" && <div style={s.flapWrap}><SplitFlapClock remainingMs={remainingMs} /></div>}
-                {heroStatus === "live" && <div style={s.liveNote}>Meciul este în desfășurare</div>}
+                {heroStatus === "live" && (
+                  <div style={s.liveNote}>
+                    {Math.max(1, Math.floor((now - heroMatch.kickoffAt.toMillis()) / 60000))}' · în desfășurare
+                  </div>
+                )}
+                {heroStatus === "paused" && <div style={s.liveNote}>Meciul e la pauză</div>}
                 {heroStatus === "finished" && (
                   <div style={s.finalScore}>{heroMatch.realScoreA} – {heroMatch.realScoreB}</div>
                 )}
+                {heroStatus === "postponed" && <div style={s.liveNote}>Meci amânat — dată nouă în curând</div>}
+                {heroStatus === "cancelled" && <div style={s.liveNote}>Meci anulat</div>}
 
                 <div style={s.ctaWrap}><PremiumButton onClick={onOpenPredictions}>Pronosticuri</PremiumButton></div>
               </>
@@ -262,19 +268,29 @@ export default function WelcomeScreen({ user, profile, isAdmin, onOpenAdmin, onO
               <div style={s.sectionLabel}>Etapa continuă</div>
               <div style={s.rail}>
                 {railMatches.map((m) => (
-                  <MatchRailCard
-                    key={m.id}
-                    homeTeam={m.homeTeam}
-                    awayTeam={m.awayTeam}
-                    kickoffAt={m.kickoffAt}
-                    competition={m.competition}
-                    status={getMatchStatus(m, now)}
-                    onClick={onOpenPredictions}
-                  />
+                  <MatchRailCard key={m.id} match={m} onClick={onOpenPredictions} />
                 ))}
               </div>
             </div>
           )}
+
+          {(() => {
+            const recentResults = matches
+              .filter((m) => getMatchStatus(m) === "finished")
+              .sort((a, b) => b.kickoffAt.toMillis() - a.kickoffAt.toMillis())
+              .slice(0, 4);
+            if (recentResults.length === 0) return null;
+            return (
+              <div style={s.railSection}>
+                <div style={s.sectionLabel}>Ultimele rezultate</div>
+                <div style={s.rail}>
+                  {recentResults.map((m) => (
+                    <MatchRailCard key={m.id} match={m} onClick={onOpenPredictions} />
+                  ))}
+                </div>
+              </div>
+            );
+          })()}
 
           {feed.length > 0 && (
             <div style={s.feedSection}>
@@ -349,10 +365,6 @@ const s = {
   flapWrap: { margin: "24px 0" },
   liveNote: { fontSize: 12, color: "#8BD957", fontWeight: 700, margin: "20px 0", fontFamily: font.body },
   finalScore: { fontFamily: font.display, fontSize: 42, fontWeight: 800, color: color.textPrimary, margin: "16px 0" },
-  compPill: {
-    width: 26, height: 26, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center",
-    background: color.surfaceElevated, border: `1px solid ${color.border}`,
-  },
   ctaWrap: { width: "100%", maxWidth: 300 },
 
   sectionLabel: {

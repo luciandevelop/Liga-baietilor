@@ -1,8 +1,10 @@
 import { useState } from "react";
-import MatchCard from "./MatchCard";
+import MatchCompactCard from "./MatchCompactCard";
 import NumericStepper from "./NumericStepper";
+import { MATCH_STATUSES, MATCH_STATUS_LABEL, MATCH_STATUS_TONE, getMatchStatus } from "../utils/matchStatus";
+import { color, font, radius } from "../theme";
 
-export default function MatchResultCard({ match, onSave, disabled }) {
+export default function MatchResultCard({ match, onSave, onChangeStatus, disabled }) {
   const [scoreA, setScoreA] = useState(match.realScoreA ?? 0);
   const [scoreB, setScoreB] = useState(match.realScoreB ?? 0);
   const [corners, setCorners] = useState(match.realCorners ?? 0);
@@ -10,6 +12,8 @@ export default function MatchResultCard({ match, onSave, disabled }) {
   const [saving, setSaving] = useState(false);
   const [status, setStatus] = useState("idle"); // idle | success | error
   const [error, setError] = useState("");
+  const [statusSaving, setStatusSaving] = useState(false);
+  const [statusError, setStatusError] = useState("");
 
   async function handleSave() {
     setSaving(true);
@@ -32,31 +36,70 @@ export default function MatchResultCard({ match, onSave, disabled }) {
     }
   }
 
+  // Orice tranziție e permisă, fără flux impus — status și scor rămân
+  // independente (schimbarea statusului NU atinge realScoreA/B/etc).
+  async function handleStatusClick(newStatus) {
+    if (newStatus === matchStatus || statusSaving || disabled) return;
+    setStatusSaving(true);
+    setStatusError("");
+    try {
+      await onChangeStatus(newStatus);
+    } catch (err) {
+      console.error(err);
+      setStatusError(err.message || err.code);
+    } finally {
+      setStatusSaving(false);
+    }
+  }
+
   const hasResult = match.realScoreA !== null && match.realScoreA !== undefined;
+  const matchStatus = getMatchStatus(match);
 
   return (
-    <div style={s.wrap}>
-      <MatchCard homeTeam={match.homeTeam} awayTeam={match.awayTeam} kickoffAt={match.kickoffAt} status={match.status} />
-      <div style={s.box}>
-        {hasResult && <div style={s.hasResultTag}>Rezultat salvat — poate fi corectat</div>}
-        <div style={s.row}>
-          <div style={s.field}>
-            <span style={s.label}>SCOR</span>
-            <div style={s.scoreInputs}>
-              <NumericStepper value={scoreA} onChange={(v) => setScoreA(v)} disabled={disabled || saving} />
-              <span style={s.dash}>–</span>
-              <NumericStepper value={scoreB} onChange={(v) => setScoreB(v)} disabled={disabled || saving} />
-            </div>
-          </div>
+    <div style={s.card}>
+      <MatchCompactCard
+        homeTeam={match.homeTeam}
+        awayTeam={match.awayTeam}
+        right={hasResult ? <span style={s.savedTag}>Salvat</span> : null}
+      />
+
+      <div style={s.statusRow}>
+        {MATCH_STATUSES.map((st) => {
+          const tone = MATCH_STATUS_TONE[st];
+          const active = st === matchStatus;
+          return (
+            <button
+              key={st}
+              type="button"
+              disabled={disabled || statusSaving}
+              onClick={() => handleStatusClick(st)}
+              style={{
+                ...s.statusBtn,
+                background: active ? tone.bg : "transparent",
+                color: active ? tone.fg : color.textMuted,
+                border: `1px solid ${active ? tone.fg : color.border}`,
+              }}
+            >
+              {MATCH_STATUS_LABEL[st]}
+            </button>
+          );
+        })}
+      </div>
+      {statusError && <div style={s.err}>{statusError}</div>}
+
+      <div style={s.inputsBox}>
+        <div style={s.scoreRow}>
+          <NumericStepper value={scoreA} onChange={(v) => setScoreA(v)} disabled={disabled || saving} />
+          <span style={s.dash}>–</span>
+          <NumericStepper value={scoreB} onChange={(v) => setScoreB(v)} disabled={disabled || saving} />
         </div>
-        <div style={s.row}>
-          <NumericStepper label="CORNERE TOTALE" value={corners} onChange={(v) => setCorners(v)} disabled={disabled || saving} />
-          <NumericStepper label="CARTONAȘE TOTALE" value={cards} onChange={(v) => setCards(v)} disabled={disabled || saving} />
+        <div style={s.smallRow}>
+          <NumericStepper label="CORNERE" value={corners} onChange={(v) => setCorners(v)} disabled={disabled || saving} />
+          <NumericStepper label="CARTONAȘE" value={cards} onChange={(v) => setCards(v)} disabled={disabled || saving} />
         </div>
         <button type="button" style={s.saveBtn} disabled={disabled || saving} onClick={handleSave}>
-          {saving ? "Se salvează…" : "Salvează rezultat"}
+          {saving ? "…" : status === "success" ? "✓ Salvat" : "Salvează"}
         </button>
-        {status === "success" && <div style={s.ok}>✓ Salvat</div>}
         {status === "error" && <div style={s.err}>{error}</div>}
       </div>
     </div>
@@ -64,35 +107,25 @@ export default function MatchResultCard({ match, onSave, disabled }) {
 }
 
 const s = {
-  wrap: { display: "flex", flexDirection: "column" },
-  box: {
-    background: "#0D1220", border: "1px solid #1c2338", borderTop: "none",
-    borderRadius: "0 0 14px 14px", padding: 12, marginTop: -1,
+  card: {
+    background: color.surface, border: `1px solid ${color.border}`, borderRadius: radius.lg, padding: "12px 12px 14px",
   },
-  hasResultTag: {
-    fontSize: 10.5, color: "#A9E0B8", background: "rgba(63,168,92,0.1)",
-    border: "1px solid rgba(63,168,92,0.3)", borderRadius: 8, padding: "4px 8px",
-    marginBottom: 10, textAlign: "center",
+  savedTag: {
+    fontSize: 9.5, fontWeight: 800, color: color.green, background: color.greenBg,
+    border: `1px solid ${color.greenBorder}`, borderRadius: 999, padding: "3px 8px", whiteSpace: "nowrap",
   },
-  row: { display: "flex", justifyContent: "center", gap: 10, marginBottom: 10 },
-  field: { display: "flex", flexDirection: "column", alignItems: "center", gap: 6 },
-  label: { fontSize: 10.5, fontWeight: 800, letterSpacing: "0.05em", color: "#C9A227" },
-  scoreInputs: { display: "flex", alignItems: "center", gap: 10 },
-  scoreInput: {
-    width: 52, height: 42, background: "#161D33", border: "1px solid #2A3350",
-    borderRadius: 10, color: "#F5F5F0", fontSize: 18, fontWeight: 800, textAlign: "center", outline: "none",
+  inputsBox: { marginTop: 12, paddingTop: 12, borderTop: `1px solid ${color.borderSubtle}` },
+  statusRow: { display: "flex", flexWrap: "wrap", gap: 5, marginTop: 10 },
+  statusBtn: {
+    fontSize: 9.5, fontWeight: 700, letterSpacing: "0.02em", borderRadius: 999, padding: "4px 9px",
+    cursor: "pointer", fontFamily: font.body, whiteSpace: "nowrap",
   },
-  dash: { fontSize: 15, color: "#4A5268", fontWeight: 800 },
-  smallField: { flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 6, maxWidth: 130 },
-  smallLabel: { fontSize: 9.5, fontWeight: 700, letterSpacing: "0.04em", color: "#6B7390" },
-  smallInput: {
-    width: "100%", height: 36, background: "#161D33", border: "1px solid #2A3350",
-    borderRadius: 10, color: "#F5F5F0", fontSize: 14, fontWeight: 700, textAlign: "center", outline: "none",
-  },
+  scoreRow: { display: "flex", alignItems: "center", justifyContent: "center", gap: 16 },
+  dash: { fontSize: 16, color: color.textFaint, fontWeight: 800, fontFamily: font.display },
+  smallRow: { display: "flex", justifyContent: "center", gap: 20, marginTop: 14 },
   saveBtn: {
-    width: "100%", background: "linear-gradient(180deg, #E0BC4A, #C9A227)", color: "#0A0E1A",
-    border: "none", borderRadius: 10, padding: "10px 0", fontSize: 12.5, fontWeight: 800, cursor: "pointer",
+    width: "100%", marginTop: 14, background: color.goldGradient, color: color.goldOn,
+    border: "none", borderRadius: radius.sm, padding: "10px 0", fontSize: 12.5, fontWeight: 800, cursor: "pointer", fontFamily: font.body,
   },
-  ok: { marginTop: 8, fontSize: 11.5, color: "#A9E0B8", textAlign: "center" },
-  err: { marginTop: 8, fontSize: 11.5, color: "#E08A82", textAlign: "center" },
+  err: { marginTop: 8, fontSize: 11.5, color: color.red, textAlign: "center" },
 };

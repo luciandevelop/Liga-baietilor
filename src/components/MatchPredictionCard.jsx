@@ -1,14 +1,8 @@
 import NumericStepper from "./NumericStepper";
 import ClubLogo from "./ClubLogo";
-import CompetitionLogo from "./CompetitionLogo";
-import { getMatchStatus, MATCH_STATUS_LABEL } from "../utils/matchStatus";
+import CompetitionBadge from "./CompetitionBadge";
+import { getMatchStatus, MATCH_STATUS_LABEL, MATCH_STATUS_TONE } from "../utils/matchStatus";
 import { color, font, radius, shadow } from "../matchdayTheme";
-
-const STATUS_TONE = {
-  scheduled: { bg: "rgba(255,255,255,0.06)", fg: color.textSecondary },
-  live: { bg: "rgba(139,217,87,0.16)", fg: color.green },
-  finished: { bg: "rgba(255,255,255,0.07)", fg: color.textSecondary },
-};
 
 function formatKickoff(match) {
   const d = match.kickoffAt?.toDate ? match.kickoffAt.toDate() : null;
@@ -33,13 +27,13 @@ export default function MatchPredictionCard({
 }) {
   const p = prediction || {};
   const status = getMatchStatus(match);
-  const tone = STATUS_TONE[status];
+  const tone = MATCH_STATUS_TONE[status];
 
   return (
     <div style={{ ...s.card, ...(isJoker ? s.cardJoker : {}), ...(isFeatured ? s.cardFeatured : {}) }}>
       <div style={s.headRow}>
         <div style={s.headLeft}>
-          {match.competition && <CompetitionLogo name={match.competition} size={18} />}
+          <CompetitionBadge match={match} size="sm" />
           <span style={{ ...s.statusBadge, background: tone.bg, color: tone.fg }}>{MATCH_STATUS_LABEL[status]}</span>
         </div>
         <div style={s.badgeCol}>
@@ -118,17 +112,17 @@ const s = {
   card: {
     background: color.surface,
     border: `1px solid ${color.border}`,
-    borderRadius: radius.lg,
-    padding: "14px 14px 16px",
+    borderRadius: radius.md,
+    padding: "12px 12px 13px",
     boxShadow: shadow.sm,
   },
   cardFeatured: { border: "1px solid rgba(212,175,55,0.4)" },
   cardJoker: { border: "1px solid rgba(139,217,87,0.4)" },
 
-  headRow: { display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 },
-  headLeft: { display: "flex", alignItems: "center", gap: 8 },
-  statusBadge: { fontSize: 9.5, fontWeight: 700, letterSpacing: "0.03em", padding: "3px 8px", borderRadius: 999, fontFamily: font.body },
-  badgeCol: { display: "flex", gap: 4, alignItems: "center" },
+  headRow: { display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 9 },
+  headLeft: { display: "flex", alignItems: "center", gap: 8, minWidth: 0 },
+  statusBadge: { fontSize: 9.5, fontWeight: 700, letterSpacing: "0.03em", padding: "3px 8px", borderRadius: 999, fontFamily: font.body, flexShrink: 0 },
+  badgeCol: { display: "flex", gap: 4, alignItems: "center", flexShrink: 0 },
   featuredBadge: {
     fontSize: 9.5, fontWeight: 800, color: color.goldLight, background: color.goldBg,
     border: `1px solid ${color.goldBorder}`, borderRadius: 999, padding: "2px 7px", whiteSpace: "nowrap",
@@ -138,35 +132,35 @@ const s = {
     border: `1px solid ${color.greenBorder}`, borderRadius: 999, padding: "2px 7px", whiteSpace: "nowrap",
   },
 
-  matchRow: { display: "flex", alignItems: "flex-start", justifyContent: "center", gap: 14, marginBottom: 4 },
-  teamCol: { display: "flex", flexDirection: "column", alignItems: "center", gap: 6, width: 86 },
+  matchRow: { display: "flex", alignItems: "flex-start", justifyContent: "center", gap: 12, marginBottom: 2 },
+  teamCol: { display: "flex", flexDirection: "column", alignItems: "center", gap: 5, width: 84 },
   teamName: {
     fontSize: 11.5, color: color.textPrimary, fontWeight: 700, fontFamily: font.body,
-    textAlign: "center", whiteSpace: "normal", lineHeight: 1.2,
+    textAlign: "center", whiteSpace: "normal", lineHeight: 1.15,
   },
-  vs: { fontSize: 10.5, color: color.textFaint, paddingTop: 14, fontFamily: font.body },
-  kickoff: { textAlign: "center", fontSize: 10.5, color: color.textFaint, fontFamily: font.body, marginBottom: 10 },
+  vs: { fontSize: 10, color: color.textFaint, paddingTop: 12, fontFamily: font.body },
+  kickoff: { textAlign: "center", fontSize: 10, color: color.textFaint, fontFamily: font.body, marginBottom: 8 },
 
-  inputsBox: { paddingTop: 12, borderTop: `1px solid ${color.borderSubtle}` },
-  scoreRow: { display: "flex", alignItems: "center", justifyContent: "center", gap: 16 },
-  dash: { fontSize: 16, color: color.textFaint, fontWeight: 800, fontFamily: font.display },
-  smallRow: { display: "flex", justifyContent: "center", gap: 20, marginTop: 14 },
-  actionsRow: { display: "flex", gap: 8, marginTop: 14 },
+  inputsBox: { paddingTop: 9, borderTop: `1px solid ${color.borderSubtle}` },
+  scoreRow: { display: "flex", alignItems: "center", justifyContent: "center", gap: 14 },
+  dash: { fontSize: 15, color: color.textFaint, fontWeight: 800, fontFamily: font.display },
+  smallRow: { display: "flex", justifyContent: "center", gap: 18, marginTop: 10 },
+  actionsRow: { display: "flex", gap: 8, marginTop: 10 },
   jokerBtn: {
     flex: 1, background: color.surfaceInset, border: `1px solid ${color.border}`, color: color.textSecondary,
-    borderRadius: radius.sm, padding: "10px 0", fontSize: 11.5, fontWeight: 700, cursor: "pointer", fontFamily: font.body,
+    borderRadius: radius.sm, padding: "8px 0", fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: font.body,
   },
   jokerBtnActive: { background: color.greenBg, border: `1px solid ${color.greenBorder}`, color: color.green },
   jokerBtnDisabled: { opacity: 0.4, cursor: "not-allowed" },
   saveBtn: {
     flex: 1, background: color.goldGradient, color: color.goldOn, border: "none",
-    borderRadius: radius.sm, padding: "10px 0", fontSize: 12.5, fontWeight: 800, cursor: "pointer", fontFamily: font.body,
+    borderRadius: radius.sm, padding: "8px 0", fontSize: 12, fontWeight: 800, cursor: "pointer", fontFamily: font.body,
   },
-  saveErr: { marginTop: 8, fontSize: 11.5, color: "#F0555A", textAlign: "center", fontFamily: font.body },
+  saveErr: { marginTop: 6, fontSize: 11, color: "#F0555A", textAlign: "center", fontFamily: font.body },
 
-  lockedBox: { paddingTop: 12, borderTop: `1px solid ${color.borderSubtle}`, textAlign: "center" },
-  lockedScore: { fontSize: 24, fontWeight: 700, color: color.textPrimary, fontFamily: font.display },
-  lockedMeta: { fontSize: 11.5, color: color.textSecondary, margin: "4px 0 8px", fontFamily: font.body },
+  lockedBox: { paddingTop: 9, borderTop: `1px solid ${color.borderSubtle}`, textAlign: "center" },
+  lockedScore: { fontSize: 21, fontWeight: 700, color: color.textPrimary, fontFamily: font.display },
+  lockedMeta: { fontSize: 11, color: color.textSecondary, margin: "3px 0 7px", fontFamily: font.body },
   lockedTag: {
     display: "inline-block", fontSize: 9.5, fontWeight: 800, letterSpacing: "0.05em", color: "#F0555A",
     background: "rgba(240,85,90,0.12)", border: "1px solid rgba(240,85,90,0.35)", borderRadius: 999, padding: "3px 10px",

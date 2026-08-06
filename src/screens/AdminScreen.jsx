@@ -10,6 +10,7 @@ import {
   setFeaturedMatches,
   deleteMatch,
   saveMatchResult,
+  updateMatchStatus,
   previewGameweekResults,
   publishLiveScores,
   finalizeGameweek,
@@ -279,6 +280,11 @@ export default function AdminScreen({ onBack }) {
     }
   }
 
+  async function handleChangeStatus(matchId, newStatus) {
+    await updateMatchStatus(matchId, newStatus);
+    await refreshMatches(selectedGameweekId);
+  }
+
   async function recomputeAndPublish() {
     setPreviewLoading(true);
     setPreviewMessage("");
@@ -476,6 +482,7 @@ export default function AdminScreen({ onBack }) {
                       key={m.id}
                       match={m}
                       onSave={(values) => handleSaveResult(m.id, values)}
+                      onChangeStatus={(newStatus) => handleChangeStatus(m.id, newStatus)}
                       disabled={currentGameweek?.status === "completed"}
                     />
                   ))}

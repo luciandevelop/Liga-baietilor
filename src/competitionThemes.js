@@ -81,14 +81,14 @@ export const COMPETITION_THEMES = {
   },
   "la-liga": {
     name: "LaLiga",
-    primaryColor: "#FF4B44",
-    secondaryColor: "#FFB238",
+    primaryColor: "#FFC72C",
+    secondaryColor: "#C8102E",
     accentColor: "#1D2B53",
-    borderColor: "rgba(255,75,68,0.4)",
-    glowColor: "rgba(255,75,68,0.3)",
-    backgroundGradient: "linear-gradient(135deg, rgba(255,75,68,0.18), rgba(255,178,56,0.04))",
-    badgeBackground: "rgba(255,75,68,0.18)",
-    badgeTextColor: "#FF8A85",
+    borderColor: "rgba(255,199,44,0.4)",
+    glowColor: "rgba(255,199,44,0.3)",
+    backgroundGradient: "linear-gradient(135deg, rgba(255,199,44,0.18), rgba(200,16,46,0.06))",
+    badgeBackground: "rgba(255,199,44,0.18)",
+    badgeTextColor: "#FFDD7A",
     pattern: "diagonal",
   },
   "bundesliga": {
@@ -105,14 +105,14 @@ export const COMPETITION_THEMES = {
   },
   "serie-a": {
     name: "Serie A",
-    primaryColor: "#00A8E8",
-    secondaryColor: "#003459",
+    primaryColor: "#16213E",
+    secondaryColor: "#4A6FA5",
     accentColor: "#7FDBFF",
-    borderColor: "rgba(0,168,232,0.4)",
-    glowColor: "rgba(0,168,232,0.3)",
-    backgroundGradient: "linear-gradient(135deg, rgba(0,168,232,0.18), rgba(0,52,89,0.06))",
-    badgeBackground: "rgba(0,168,232,0.18)",
-    badgeTextColor: "#6FD0F5",
+    borderColor: "rgba(74,111,165,0.4)",
+    glowColor: "rgba(22,33,62,0.4)",
+    backgroundGradient: "linear-gradient(135deg, rgba(74,111,165,0.16), rgba(22,33,62,0.12))",
+    badgeBackground: "rgba(74,111,165,0.18)",
+    badgeTextColor: "#8FB1DC",
     pattern: "diagonal",
   },
   "ligue-1": {
@@ -141,14 +141,26 @@ export const COMPETITION_THEMES = {
   },
   "superliga": {
     name: "SuperLiga",
-    primaryColor: "#FCD116",
+    primaryColor: "#8B1E3F",
     secondaryColor: "#002B7F",
-    accentColor: "#CE1126",
-    borderColor: "rgba(252,209,22,0.4)",
-    glowColor: "rgba(252,209,22,0.3)",
-    backgroundGradient: "linear-gradient(135deg, rgba(252,209,22,0.18), rgba(0,43,127,0.08))",
-    badgeBackground: "rgba(252,209,22,0.18)",
-    badgeTextColor: "#F5DD6E",
+    accentColor: "#FCD116",
+    borderColor: "rgba(139,30,63,0.4)",
+    glowColor: "rgba(139,30,63,0.3)",
+    backgroundGradient: "linear-gradient(135deg, rgba(139,30,63,0.2), rgba(0,43,127,0.06))",
+    badgeBackground: "rgba(139,30,63,0.2)",
+    badgeTextColor: "#E888A3",
+    pattern: "diagonal",
+  },
+  "primeira-liga": {
+    name: "Liga Portugal",
+    primaryColor: "#046A38",
+    secondaryColor: "#DA020E",
+    accentColor: "#FFE900",
+    borderColor: "rgba(4,106,56,0.4)",
+    glowColor: "rgba(4,106,56,0.3)",
+    backgroundGradient: "linear-gradient(135deg, rgba(4,106,56,0.2), rgba(218,2,14,0.06))",
+    badgeBackground: "rgba(4,106,56,0.2)",
+    badgeTextColor: "#5CD98E",
     pattern: "diagonal",
   },
 };
@@ -169,4 +181,42 @@ export const NEUTRAL_COMPETITION_THEME = {
 
 export function getCompetitionTheme(slug) {
   return COMPETITION_THEMES[slug] || NEUTRAL_COMPETITION_THEME;
+}
+
+// Rezolvă un nume liber de competiție (scris de admin la import, ex.
+// "Champions League", "Europa League") la un preset existent — folosește
+// aceeași normalizare ca lookup.js pentru cluburi (slugify), plus câteva
+// alias-uri uzuale. Dacă nu găsește nimic, întoarce null — apelantul
+// decide fallback-ul (nu inventăm o culoare aleatorie).
+const COMPETITION_NAME_ALIASES = {
+  "champions-league": "uefa-champions-league",
+  "ucl": "uefa-champions-league",
+  "europa-league": "uefa-europa-league",
+  "uel": "uefa-europa-league",
+  "conference-league": "uefa-conference-league",
+  "uecl": "uefa-conference-league",
+  "club-world-cup": "fifa-club-world-cup",
+  "cwc": "fifa-club-world-cup",
+  "premier-league": "english-premier-league",
+  "epl": "english-premier-league",
+  "laliga": "la-liga",
+  "superliga-romania": "superliga",
+  "liga-1": "superliga",
+  "liga-i": "superliga",
+  "liga-portugal": "primeira-liga",
+};
+
+export function resolveCompetitionPreset(rawName) {
+  if (!rawName) return null;
+  const slug = rawName
+    .toLowerCase()
+    .trim()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "");
+  const resolvedSlug = COMPETITION_THEMES[slug] ? slug : COMPETITION_NAME_ALIASES[slug];
+  if (!resolvedSlug) return null;
+  return { id: resolvedSlug, ...COMPETITION_THEMES[resolvedSlug] };
 }

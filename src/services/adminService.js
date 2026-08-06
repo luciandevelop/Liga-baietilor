@@ -17,6 +17,7 @@ import {
 } from "firebase/firestore";
 import { db } from "../firebase";
 import { computeMatchPoints, computeRankingBonuses } from "./scoringEngine";
+import { resolveCompetitionPreset } from "../competitionThemes";
 
 // Aceeași regulă de lock ca în predictionsService.LOCK_MINUTES_BEFORE_KICKOFF
 // (30 min înainte de kickoff) — NU importată de-acolo intenționat, ca să nu
@@ -211,7 +212,9 @@ export async function listGameweeks(seasonId) {
   return list.sort((a, b) => Number(a.number) - Number(b.number));
 }
 
-export async function createMatch({ gameweekId, homeTeam, awayTeam, kickoffAt }) {
+const VALID_MATCH_STATUSES = ["scheduled", "live", "paused", "finished", "postponed", "cancelled"];
+
+export async function createMatch({ gameweekId, homeTeam, awayTeam, kickoffAt, competitionId, competitionName, competitionColor }) {
   const ref = await addDoc(collection(db, "matches"), {
     gameweekId,
     homeTeam,
@@ -222,9 +225,30 @@ export async function createMatch({ gameweekId, homeTeam, awayTeam, kickoffAt })
     realCorners: null,
     realCards: null,
     status: "scheduled",
+    // Competiția e denormalizată direct pe meci (nu doar un id de căutat
+    // în altă parte) — cerut explicit, ca fiecare meci să-și poarte
+    // singur identitatea vizuală. NU stocăm un URL de logo aici: fișierele
+    // din assets/ primesc alt hash la fiecare build Vite, deci un URL
+    // salvat în Firestore ar deveni stale la următorul deploy. Logo-ul se
+    // rezolvă mereu live, din competitionId, via CompetitionLogo.
+    competitionId: competitionId ?? null,
+    competitionName: competitionName ?? null,
+    competitionColor: competitionColor ?? null,
     createdAt: serverTimestamp(),
   });
   return ref.id;
+}
+
+// Schimbă statusul unui meci — ORICE tranziție e permisă, fără validare
+// de "flux" (Programat→Live→Final etc nu e impusă). Statusul și scorul
+// rămân independente: asta doar scrie câmpul `status`, nu atinge
+// realScoreA/B/Corners/Cards (acelea rămân responsabilitatea
+// saveMatchResult, apelată separat).
+export async function updateMatchStatus(matchId, status) {
+  if (!VALID_MATCH_STATUSES.includes(status)) {
+    throw new Error(`Status invalid: "${status}". Valorile permise: ${VALID_MATCH_STATUSES.join(", ")}.`);
+  }
+  await updateDoc(doc(db, "matches", matchId), { status });
 }
 
 export async function listMatches(gameweekId) {
@@ -236,11 +260,29 @@ export async function listMatches(gameweekId) {
 
 // Parsează text lipit, un meci pe linie, format:
 // "Echipa Gazdă - Echipa Oaspete | 2026-09-16 21:00"
-// Returnează un array de {homeTeam, awayTeam, kickoffAt} sau aruncă eroare
-// cu numărul liniei greșite, ca userul să știe exact ce să corecteze.
+// Suportă opțional antete de competiție ("# Champions League") — orice
+// meci de sub un antet primește competiția aceea, până la următorul antet
+// sau până la finalul textului. Fără niciun antet, meciurile rămân fără
+// competiție (comportament vechi, neschimbat — retrocompatibil).
+// Returnează un array de {homeTeam, awayTeam, kickoffAt, competitionId,
+// competitionName, competitionColor} sau aruncă eroare cu numărul liniei
+// greșite, ca userul să știe exact ce să corecteze.
 export function parseMatchesText(text) {
   const lines = text.split("\n").map((l) => l.trim()).filter(Boolean);
-  return lines.map((line, i) => {
+  let current = null; // { id, name, color } | null
+
+  const out = [];
+  lines.forEach((line, i) => {
+    if (line.startsWith("#")) {
+      const name = line.slice(1).trim();
+      if (!name) throw new Error(`Linia ${i + 1}: antet de competiție gol ("#" fără nume).`);
+      const preset = resolveCompetitionPreset(name);
+      current = preset
+        ? { id: preset.id, name: preset.name, color: preset.primaryColor }
+        : { id: null, name, color: null }; // nume necunoscut — păstrăm numele scris, fără culoare presetată
+      return;
+    }
+
     const [teamsPart, timePart] = line.split("|").map((p) => p && p.trim());
     if (!teamsPart || !timePart) {
       throw new Error(`Linia ${i + 1}: format greșit, lipsește "|" (echipe | dată oră).`);
@@ -253,8 +295,16 @@ export function parseMatchesText(text) {
     if (isNaN(new Date(kickoffAt).getTime())) {
       throw new Error(`Linia ${i + 1}: data/ora nu e validă ("${timePart}").`);
     }
-    return { homeTeam, awayTeam, kickoffAt };
+    out.push({
+      homeTeam,
+      awayTeam,
+      kickoffAt,
+      competitionId: current?.id ?? null,
+      competitionName: current?.name ?? null,
+      competitionColor: current?.color ?? null,
+    });
   });
+  return out;
 }
 
 // Creează toate meciurile dintr-un text lipit, dintr-o dată, pentru o etapă.

@@ -258,28 +258,164 @@ export async function listMatches(gameweekId) {
   return list.sort((a, b) => a.kickoffAt.toMillis() - b.kickoffAt.toMillis());
 }
 
+// Toate meciurile din toate etapele — DOAR pentru Health Check (citire
+// pură, fără filtru de etapă). Nu e folosită de niciun alt ecran.
+export async function listAllMatches() {
+  const snap = await getDocs(collection(db, "matches"));
+  return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+}
+
+// Corectează manual un meci deja existent — kickoffAt (text "YYYY-MM-DD
+// HH:mm", ora de perete România, parsată cu ACELAȘI parser strict folosit
+// la import) și/sau competiția. NU rulează automat, NU șterge/recreează
+// nimic — un singur updateDoc, cu exact câmpurile date. Fiecare parametru
+// e opțional — trimiți doar ce vrei să corectezi.
+export async function updateMatch(matchId, { kickoffAtWallClock, competitionId, competitionName, competitionColor } = {}) {
+  const patch = {};
+  if (kickoffAtWallClock !== undefined) {
+    const utcDate = parseWallClockDateTime(kickoffAtWallClock, "Corecție manuală");
+    patch.kickoffAt = Timestamp.fromDate(utcDate);
+  }
+  if (competitionId !== undefined) patch.competitionId = competitionId || null;
+  if (competitionName !== undefined) patch.competitionName = competitionName || null;
+  if (competitionColor !== undefined) patch.competitionColor = competitionColor || null;
+  if (Object.keys(patch).length === 0) return;
+  await updateDoc(doc(db, "matches", matchId), patch);
+}
+
+// ── Health Check — DOAR detectare, nu modifică nimic ──
+// Verifică o listă de meciuri deja salvate și semnalează probleme
+// probabile. Fiecare regulă e euristică și explicată în text — admin
+// decide, nimic nu se corectează singur.
+const SEASON_YEAR_MIN = 2025;
+const SEASON_YEAR_MAX = 2028;
+
+export function runMatchHealthCheck(matches) {
+  const now = Date.now();
+  const issues = [];
+  const dupGroups = new Map();
+
+  matches.forEach((m) => {
+    const problems = [];
+    const kickoffMs = m.kickoffAt?.toMillis ? m.kickoffAt.toMillis() : null;
+
+    if (kickoffMs === null) {
+      problems.push("Nu are deloc o dată/oră de start salvată.");
+    } else {
+      const kickoffDate = new Date(kickoffMs);
+
+      // dată din trecut + status încă "Programat"
+      if (kickoffMs < now && (!m.status || m.status === "scheduled")) {
+        problems.push("Data e deja în trecut, dar statusul e tot „Programat” — probabil trebuia actualizat manual sau data e greșită.");
+      }
+
+      // dată imposibilă / în afara intervalului rezonabil al sezonului
+      const year = kickoffDate.getUTCFullYear();
+      if (year < SEASON_YEAR_MIN || year > SEASON_YEAR_MAX) {
+        problems.push(`Anul salvat (${year}) e în afara intervalului rezonabil pentru acest sezon (${SEASON_YEAR_MIN}–${SEASON_YEAR_MAX}).`);
+      }
+
+      // oră suspect de devreme dimineața, în România — fereastra tipică
+      // în care cade o oră de seară interpretată greșit ca UTC (vechiul
+      // bug). NU e o certitudine, doar un semnal de verificat manual.
+      const bucharestParts = getZonedParts(kickoffDate, BUCHAREST_TZ);
+      if (bucharestParts.hour >= 0 && bucharestParts.hour <= 4) {
+        const hh = String(bucharestParts.hour).padStart(2, "0");
+        const mm = String(bucharestParts.minute).padStart(2, "0");
+        problems.push(`Ora afișată (${hh}:${mm}, România) e foarte devreme dimineața — posibil efect al vechiului bug de fus orar. Verifică manual ora reală a meciului.`);
+      }
+
+      // grupare pentru detectarea duplicatelor
+      const key = `${(m.homeTeam || "").toLowerCase()}|${(m.awayTeam || "").toLowerCase()}|${kickoffMs}`;
+      if (!dupGroups.has(key)) dupGroups.set(key, []);
+      dupGroups.get(key).push(m);
+    }
+
+    // competiție lipsă
+    if (!m.competitionId && !m.competitionName) {
+      problems.push("Nu are competiție salvată (competitionId/competitionName lipsă).");
+    }
+
+    if (problems.length > 0) {
+      issues.push({ match: m, problems });
+    }
+  });
+
+  // meciuri identice — adăugate separat, ca să apară grupul complet
+  dupGroups.forEach((group) => {
+    if (group.length > 1) {
+      group.forEach((m) => {
+        issues.push({
+          match: m,
+          problems: [`Duplicat — există ${group.length} meciuri identice (aceleași echipe, aceeași oră salvată).`],
+        });
+      });
+    }
+  });
+
+  return issues;
+}
+
+// Parsează strict "YYYY-MM-DD HH:mm" și construiește instantul UTC real
+// din ora de perete Bucharest (folosind zonedTimeToUtc, deja testat mai
+// sus pentru granițele săptămânii). ACESTA ERA BUG-UL DE DATĂ GREȘITĂ:
+// codul vechi făcea `new Date("2026-08-06T21:00")` — un string FĂRĂ fus
+// orar explicit — a cărui interpretare depinde de fusul dispozitivului
+// care rulează codul, nu e garantat Bucharest. Rezultatul putea aluneca
+// pe ziua următoare (sau anterioară) în funcție de fus/oră, exact
+// simptomul raportat (meci real pe 6 august, afișat pe 7 august).
+// Acum ora de perete introdusă de admin e mereu interpretată explicit ca
+// Europe/Bucharest, indiferent de dispozitiv.
+function parseWallClockDateTime(str, context) {
+  const m = /^(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2})$/.exec(str);
+  if (!m) {
+    throw new Error(`${context}: formatul datei/orei trebuie să fie "YYYY-MM-DD HH:mm" (ex: 2026-08-06 21:00), am primit "${str}".`);
+  }
+  const [, yStr, moStr, dStr, hStr, miStr] = m;
+  const y = Number(yStr), mo = Number(moStr), d = Number(dStr), h = Number(hStr), mi = Number(miStr);
+  if (mo < 1 || mo > 12) throw new Error(`${context}: lună invalidă ("${moStr}").`);
+  const daysInMonth = new Date(Date.UTC(y, mo, 0)).getUTCDate();
+  if (d < 1 || d > daysInMonth) throw new Error(`${context}: zi invalidă ("${dStr}") pentru luna ${moStr}.`);
+  if (h < 0 || h > 23) throw new Error(`${context}: oră invalidă ("${hStr}").`);
+  if (mi < 0 || mi > 59) throw new Error(`${context}: minut invalid ("${miStr}").`);
+  return zonedTimeToUtc(y, mo, d, h, mi, 0, 0, BUCHAREST_TZ);
+}
+
 // Parsează text lipit, un meci pe linie, format:
 // "Echipa Gazdă - Echipa Oaspete | 2026-09-16 21:00"
 // Suportă opțional antete de competiție ("# Champions League") — orice
 // meci de sub un antet primește competiția aceea, până la următorul antet
 // sau până la finalul textului. Fără niciun antet, meciurile rămân fără
 // competiție (comportament vechi, neschimbat — retrocompatibil).
-// Returnează un array de {homeTeam, awayTeam, kickoffAt, competitionId,
-// competitionName, competitionColor} sau aruncă eroare cu numărul liniei
-// greșite, ca userul să știe exact ce să corecteze.
+//
+// Validează la parsare (cerut explicit): dată/oră (aruncă eroare, blochează
+// importul — o dată invalidă nu poate fi stocată sensibil), competiție
+// necunoscută (avertisment, NU blochează — poate fi o competiție nouă,
+// legitimă, doar încă neadăugată în presetări), duplicate evidente ÎN
+// ACELAȘI text lipit (aceleași echipe + aceeași oră exactă — avertisment,
+// meciul al doilea e sărit, nu creat a doua oară).
+//
+// Returnează { matches, warnings } — kickoffAt e acum un Date real
+// (instant UTC corect), nu un string.
 export function parseMatchesText(text) {
   const lines = text.split("\n").map((l) => l.trim()).filter(Boolean);
   let current = null; // { id, name, color } | null
 
-  const out = [];
+  const matches = [];
+  const warnings = [];
+  const seenKeys = new Set();
+
   lines.forEach((line, i) => {
     if (line.startsWith("#")) {
       const name = line.slice(1).trim();
       if (!name) throw new Error(`Linia ${i + 1}: antet de competiție gol ("#" fără nume).`);
       const preset = resolveCompetitionPreset(name);
-      current = preset
-        ? { id: preset.id, name: preset.name, color: preset.primaryColor }
-        : { id: null, name, color: null }; // nume necunoscut — păstrăm numele scris, fără culoare presetată
+      if (preset) {
+        current = { id: preset.id, name: preset.name, color: preset.primaryColor };
+      } else {
+        current = { id: null, name, color: null };
+        warnings.push(`Linia ${i + 1}: competiție necunoscută "${name}" — salvată fără culoare/logo presetat.`);
+      }
       return;
     }
 
@@ -291,11 +427,16 @@ export function parseMatchesText(text) {
     if (!homeTeam || !awayTeam) {
       throw new Error(`Linia ${i + 1}: lipsește " - " între echipe.`);
     }
-    const kickoffAt = timePart.replace(" ", "T");
-    if (isNaN(new Date(kickoffAt).getTime())) {
-      throw new Error(`Linia ${i + 1}: data/ora nu e validă ("${timePart}").`);
+    const kickoffAt = parseWallClockDateTime(timePart, `Linia ${i + 1}`);
+
+    const dupKey = `${homeTeam.toLowerCase()}|${awayTeam.toLowerCase()}|${kickoffAt.getTime()}`;
+    if (seenKeys.has(dupKey)) {
+      warnings.push(`Linia ${i + 1}: duplicat evident (${homeTeam} - ${awayTeam}, aceeași oră) — nu a fost adăugat a doua oară.`);
+      return;
     }
-    out.push({
+    seenKeys.add(dupKey);
+
+    matches.push({
       homeTeam,
       awayTeam,
       kickoffAt,
@@ -304,16 +445,30 @@ export function parseMatchesText(text) {
       competitionColor: current?.color ?? null,
     });
   });
-  return out;
+  return { matches, warnings };
 }
 
 // Creează toate meciurile dintr-un text lipit, dintr-o dată, pentru o etapă.
+// Verifică suplimentar duplicate față de meciurile DEJA existente în etapă
+// (nu doar în interiorul textului curent) — aceleași echipe + aceeași oră.
 export async function bulkCreateMatches(gameweekId, text) {
-  const parsed = parseMatchesText(text);
+  const { matches: parsed, warnings } = parseMatchesText(text);
+  const existing = await listMatches(gameweekId);
+  const existingKeys = new Set(
+    existing.map((m) => `${m.homeTeam.toLowerCase()}|${m.awayTeam.toLowerCase()}|${m.kickoffAt.toMillis()}`)
+  );
+
+  let created = 0;
   for (const m of parsed) {
+    const key = `${m.homeTeam.toLowerCase()}|${m.awayTeam.toLowerCase()}|${m.kickoffAt.getTime()}`;
+    if (existingKeys.has(key)) {
+      warnings.push(`${m.homeTeam} - ${m.awayTeam}: există deja în etapă la aceeași oră — nu a fost adăugat din nou.`);
+      continue;
+    }
     await createMatch({ gameweekId, ...m });
+    created++;
   }
-  return parsed.length;
+  return { created, warnings };
 }
 
 // Șterge TOT (sezoane, etape, meciuri) — folosit doar pentru curățarea

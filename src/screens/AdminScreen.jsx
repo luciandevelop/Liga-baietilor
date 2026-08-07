@@ -20,7 +20,8 @@ import {
 } from "../services/adminService";
 import { getUserPublicProfiles } from "../services/profilesService";
 import { getCurrentSeason, getCurrentGameweek } from "../services/predictionsService";
-import { resolveCompetitionPreset } from "../competitionThemes";
+import { COMPETITION_THEMES } from "../competitionThemes";
+import CompetitionLogo from "../components/CompetitionLogo";
 import MatchCard from "../components/MatchCard";
 import MatchResultCard from "../components/MatchResultCard";
 import PlayerBreakdownModal from "../components/PlayerBreakdownModal";
@@ -93,7 +94,7 @@ export default function AdminScreen({ onBack }) {
   const [healthLoading, setHealthLoading] = useState(false);
   const [healthError, setHealthError] = useState("");
   const [editingMatchId, setEditingMatchId] = useState("");
-  const [editDraft, setEditDraft] = useState({ kickoffAtWallClock: "", competitionName: "" });
+  const [editDraft, setEditDraft] = useState({ kickoffAtWallClock: "", competitionSlug: "" });
   const [editSaving, setEditSaving] = useState(false);
   const [editMessage, setEditMessage] = useState("");
 
@@ -379,8 +380,11 @@ export default function AdminScreen({ onBack }) {
           .format(d)
           .replace(",", "")
       : "";
+    // căutăm slug-ul curent după numele deja salvat, ca select-ul să
+    // pornească pe opțiunea corectă dacă meciul are deja o competiție
+    const currentSlug = Object.entries(COMPETITION_THEMES).find(([, t]) => t.name === m.competitionName)?.[0] || "";
     setEditingMatchId(m.id);
-    setEditDraft({ kickoffAtWallClock: wallClock, competitionName: m.competitionName || "" });
+    setEditDraft({ kickoffAtWallClock: wallClock, competitionSlug: currentSlug });
     setEditMessage("");
   }
 
@@ -388,12 +392,13 @@ export default function AdminScreen({ onBack }) {
     setEditSaving(true);
     setEditMessage("");
     try {
-      const preset = editDraft.competitionName ? resolveCompetitionPreset(editDraft.competitionName) : null;
+      const preset = editDraft.competitionSlug ? COMPETITION_THEMES[editDraft.competitionSlug] : null;
       await updateMatch(matchId, {
         kickoffAtWallClock: editDraft.kickoffAtWallClock || undefined,
-        competitionName: editDraft.competitionName || undefined,
-        competitionId: editDraft.competitionName ? (preset?.id ?? null) : undefined,
-        competitionColor: editDraft.competitionName ? (preset?.primaryColor ?? null) : undefined,
+        // slug ales direct dintr-o listă — fără nicio ghicire de nume
+        competitionName: editDraft.competitionSlug ? preset?.name ?? undefined : undefined,
+        competitionId: editDraft.competitionSlug ? editDraft.competitionSlug : undefined,
+        competitionColor: editDraft.competitionSlug ? preset?.primaryColor ?? undefined : undefined,
       });
       setEditingMatchId("");
       setEditMessage("Corectat.");
@@ -703,13 +708,27 @@ export default function AdminScreen({ onBack }) {
                               onChange={(e) => setEditDraft((d) => ({ ...d, kickoffAtWallClock: e.target.value }))}
                               placeholder="2026-08-06 21:00"
                             />
-                            <label style={s.editLabel}>Competiție (nume)</label>
-                            <input
-                              style={s.editInput}
-                              value={editDraft.competitionName}
-                              onChange={(e) => setEditDraft((d) => ({ ...d, competitionName: e.target.value }))}
-                              placeholder="Champions League"
-                            />
+                            <label style={s.editLabel}>Competiție</label>
+                            <div style={s.compPickerGrid}>
+                              {Object.entries(COMPETITION_THEMES).map(([slug, theme]) => {
+                                const active = editDraft.competitionSlug === slug;
+                                return (
+                                  <button
+                                    key={slug}
+                                    type="button"
+                                    onClick={() => setEditDraft((d) => ({ ...d, competitionSlug: slug }))}
+                                    style={{
+                                      ...s.compPickerItem,
+                                      border: `1px solid ${active ? theme.primaryColor : color.border}`,
+                                      background: active ? `${theme.primaryColor}22` : color.surface,
+                                    }}
+                                  >
+                                    <CompetitionLogo name={slug} size={18} />
+                                    <span style={{ ...s.compPickerLabel, color: active ? theme.primaryColor : color.textMuted }}>{theme.name}</span>
+                                  </button>
+                                );
+                              })}
+                            </div>
                             <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
                               <button style={s.btn} disabled={editSaving} onClick={() => handleSaveMatchEdit(m.id)} type="button">
                                 {editSaving ? "Se salvează…" : "Salvează corecția"}
@@ -823,6 +842,11 @@ const s = {
     background: color.surface, border: `1px solid ${color.border}`, borderRadius: radius.sm,
     padding: "8px 10px", fontSize: 12.5, color: color.textPrimary, fontFamily: font.body,
   },
+  compPickerGrid: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6 },
+  compPickerItem: {
+    display: "flex", alignItems: "center", gap: 6, borderRadius: radius.sm, padding: "7px 8px", cursor: "pointer",
+  },
+  compPickerLabel: { fontSize: 10.5, fontWeight: 700, fontFamily: font.body, textAlign: "left" },
   tabRow: { display: "flex", gap: 6, marginBottom: 14, overflowX: "auto" },
   tabBtn: {
     flex: "1 0 auto", background: color.surfaceInset, border: `1px solid ${color.border}`, color: color.textMuted,

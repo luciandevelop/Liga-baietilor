@@ -43,10 +43,13 @@ export default function App() {
       const data = await ensureUserProfile(u, u.displayName || consumePendingNickname());
       if (requestRef.current !== myRequestId) return; // cerere învechită, ignorăm
       setProfile(data);
-      setProfileState(needsNicknamePrompt(data) ? "needs-nickname" : "ready");
+      // Verificăm admin ÎNAINTE de a decide profileState — altfel linkul
+      // "Continuă ca Admin" din NicknameScreen ar apărea cu o mică
+      // întârziere la primul randare (isAdmin încă false).
       const adminStatus = await checkIsAdmin(u.uid);
       if (requestRef.current !== myRequestId) return;
       setIsAdmin(adminStatus);
+      setProfileState(needsNicknamePrompt(data, u.displayName) ? "needs-nickname" : "ready");
     } catch (err) {
       if (requestRef.current !== myRequestId) return; // cerere învechită, ignorăm
       console.error("Profil indisponibil:", err);
@@ -116,20 +119,24 @@ export default function App() {
     );
   }
 
+  // Verificat ÎNAINTE de blocarea de nickname — admin trebuie să poată
+  // intra în panou chiar dacă nu și-a ales încă nickname-ul (cerut explicit).
+  if (view === "admin" && isAdmin) {
+    return <AdminScreen onBack={() => setView("welcome")} />;
+  }
+
   if (profileState === "needs-nickname") {
     return (
       <NicknameScreen
         user={user}
+        isAdmin={isAdmin}
+        onOpenAdmin={() => setView("admin")}
         onDone={(updated) => {
           setProfile((prev) => ({ ...prev, ...updated }));
           setProfileState("ready");
         }}
       />
     );
-  }
-
-  if (view === "admin" && isAdmin) {
-    return <AdminScreen onBack={() => setView("welcome")} />;
   }
 
   if (view === "predictions") {

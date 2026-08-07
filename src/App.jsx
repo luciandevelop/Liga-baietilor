@@ -1,18 +1,21 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { onAuthStateChanged } from "firebase/auth";
 import { auth } from "./firebase";
-import { ensureUserProfile, translateAuthError, logout, consumePendingNickname } from "./services/authService";
+import { ensureUserProfile, translateAuthError, logout, consumePendingNickname, needsNicknamePrompt } from "./services/authService";
 import { checkIsAdmin } from "./services/adminService";
 import AuthScreen from "./screens/AuthScreen";
 import WelcomeScreen from "./screens/WelcomeScreen";
 import AdminScreen from "./screens/AdminScreen";
 import PredictionsScreen from "./screens/PredictionsScreen";
 import LeaderboardScreen from "./screens/LeaderboardScreen";
+import NicknameScreen from "./screens/NicknameScreen";
 
-// profileState: "idle" | "checking" | "ready" | "error"
+// profileState: "idle" | "checking" | "ready" | "needs-nickname" | "error"
 // Stare centrală, unică — nimic altceva din aplicație nu mai apelează
 // ensureUserProfile. WelcomeScreen NU mai afișează nimic doar pentru că
 // există un user Firebase Auth — trebuie explicit profileState === "ready".
+// "needs-nickname" blochează TOATĂ aplicația (inclusiv Admin) până la
+// alegerea definitivă a nickname-ului — vezi needsNicknamePrompt().
 export default function App() {
   const [user, setUser] = useState(null);
   const [authChecked, setAuthChecked] = useState(false);
@@ -40,7 +43,7 @@ export default function App() {
       const data = await ensureUserProfile(u, u.displayName || consumePendingNickname());
       if (requestRef.current !== myRequestId) return; // cerere învechită, ignorăm
       setProfile(data);
-      setProfileState("ready");
+      setProfileState(needsNicknamePrompt(data) ? "needs-nickname" : "ready");
       const adminStatus = await checkIsAdmin(u.uid);
       if (requestRef.current !== myRequestId) return;
       setIsAdmin(adminStatus);
@@ -110,6 +113,18 @@ export default function App() {
           </div>
         </div>
       </div>
+    );
+  }
+
+  if (profileState === "needs-nickname") {
+    return (
+      <NicknameScreen
+        user={user}
+        onDone={(updated) => {
+          setProfile((prev) => ({ ...prev, ...updated }));
+          setProfileState("ready");
+        }}
+      />
     );
   }
 

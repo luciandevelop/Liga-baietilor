@@ -136,7 +136,7 @@ export default function LeaderboardScreen({ onBack, user }) {
                 ) : (
                   <StatusBadge tone="gold">FINAL</StatusBadge>
                 )}
-                <span style={s.bonusNote}>{gwLive ? "Bonus provizoriu" : "Bonus final"}</span>
+                <span style={s.bonusNote}>{gwLive ? "Bonus poziție la închiderea etapei" : "Bonus final"}</span>
               </div>
             )}
             {gwRows.map((r) => (
@@ -149,6 +149,7 @@ export default function LeaderboardScreen({ onBack, user }) {
                 rankingBonus={r.rankingBonus}
                 totalPoints={r.totalPoints}
                 top3={r.rank <= 3}
+                showBonus={!gwLive}
                 onClick={() => setOpenUid(r.uid)}
               />
             ))}
@@ -178,6 +179,7 @@ export default function LeaderboardScreen({ onBack, user }) {
           avatarId={gwProfiles[openUid]?.avatarId}
           row={openRow}
           isOwn={isOwnOpenRow}
+          showBonus={!gwLive}
           ownPredictions={isOwnOpenRow ? ownPredictions : null}
           ownJokerMatchId={isOwnOpenRow ? ownJokerMatchId : null}
           onClose={() => setOpenUid("")}

@@ -41,6 +41,7 @@ export default function WelcomeScreen({ user, profile, isAdmin, onOpenAdmin, onO
   const [criticalError, setCriticalError] = useState("");
   const [statsError, setStatsError] = useState("");
   const [menuOpen, setMenuOpen] = useState(false);
+  const [resultsOpen, setResultsOpen] = useState(false);
   const [toast, setToast] = useState("");
 
   const [gameweek, setGameweek] = useState(null);
@@ -141,12 +142,25 @@ export default function WelcomeScreen({ user, profile, isAdmin, onOpenAdmin, onO
     if (derby) pushFeed(`Derby-ul etapei: ${derby.homeTeam} – ${derby.awayTeam}`, "star");
   }, [gameweek, matches]);
 
-  // Meciul principal e mereu primul cronologic — nu se schimbă la altul
-  // doar pentru că a pornit; doar conținutul se adaptează la status.
+  // Meciul principal (hero) — prioritate STRICTĂ, cerută explicit:
+  //   1. primul meci LIVE (sau Pauză — tot "în desfășurare")
+  //   2. dacă nu există → primul PROGRAMAT (cel mai apropiat)
+  //   3. dacă toate sunt FINAL/altceva → ultimul meci TERMINAT
+  // Derby-ul are prioritate DOAR în interiorul bucket-ului ales — nu mai
+  // poate scoate în față un meci FINAL cât timp mai există LIVE/PROGRAMAT.
   const allSorted = matches.slice().sort((a, b) => a.kickoffAt.toMillis() - b.kickoffAt.toMillis());
   const featuredIds = gameweek?.featuredMatchIds || [];
-  const derbyMatch = allSorted.find((m) => featuredIds.includes(m.id));
-  const heroMatch = derbyMatch || allSorted[0] || null;
+
+  const liveBucket = allSorted.filter((m) => ["live", "paused"].includes(getMatchStatus(m)));
+  const scheduledBucket = allSorted.filter((m) => getMatchStatus(m) === "scheduled");
+  const finishedBucket = allSorted
+    .filter((m) => getMatchStatus(m) === "finished")
+    .slice()
+    .sort((a, b) => b.kickoffAt.toMillis() - a.kickoffAt.toMillis()); // cel mai recent primul
+
+  const heroPool = liveBucket.length ? liveBucket : scheduledBucket.length ? scheduledBucket : finishedBucket;
+  const derbyMatch = heroPool.find((m) => featuredIds.includes(m.id));
+  const heroMatch = derbyMatch || heroPool[0] || allSorted[0] || null;
   const heroStatus = heroMatch ? getMatchStatus(heroMatch) : null;
   const railMatches = allSorted.filter((m) => m.id !== heroMatch?.id && getMatchStatus(m) !== "finished");
   const remainingMs = heroMatch ? heroMatch.kickoffAt.toMillis() - LOCK_MS - now : 0;
@@ -305,17 +319,24 @@ export default function WelcomeScreen({ user, profile, isAdmin, onOpenAdmin, onO
 
           {recentResults.length > 0 && (
             <div style={s.railSection}>
-              <div style={s.sectionLabel}>Ultime rezultate</div>
-              <div style={s.resultsList}>
-                {recentResults.map((m) => (
-                  <button key={m.id} type="button" onClick={onOpenPredictions} style={s.resultRow}>
-                    <ClubLogo teamName={m.homeTeam} size={24} />
-                    <span style={s.resultName}>{m.homeTeam}</span>
-                    <span style={s.resultScore}>{m.realScoreA} – {m.realScoreB}</span>
-                    <span style={s.resultName}>{m.awayTeam}</span>
-                    <ClubLogo teamName={m.awayTeam} size={24} />
-                  </button>
-                ))}
+              <button type="button" onClick={() => setResultsOpen((v) => !v)} style={s.accordionHeader}>
+                <span style={s.sectionLabel}>Ultimele rezultate ({recentResults.length})</span>
+                <span style={{ ...s.accordionChevron, transform: resultsOpen ? "rotate(180deg)" : "rotate(0deg)" }}>▾</span>
+              </button>
+              <div style={{ ...s.accordionBody, gridTemplateRows: resultsOpen ? "1fr" : "0fr" }}>
+                <div style={{ overflow: "hidden" }}>
+                  <div style={s.resultsList}>
+                    {recentResults.map((m) => (
+                      <button key={m.id} type="button" onClick={onOpenPredictions} style={s.resultRow}>
+                        <ClubLogo teamName={m.homeTeam} size={24} />
+                        <span style={s.resultName}>{m.homeTeam}</span>
+                        <span style={s.resultScore}>{m.realScoreA} – {m.realScoreB}</span>
+                        <span style={s.resultName}>{m.awayTeam}</span>
+                        <ClubLogo teamName={m.awayTeam} size={24} />
+                      </button>
+                    ))}
+                  </div>
+                </div>
               </div>
             </div>
           )}
@@ -435,6 +456,13 @@ const s = {
 
   railSection: { marginBottom: 22 },
   rail: { display: "flex", gap: 9, overflowX: "auto", paddingBottom: 4 },
+
+  accordionHeader: {
+    display: "flex", alignItems: "center", justifyContent: "space-between", width: "100%",
+    background: "none", border: "none", padding: 0, marginBottom: 0, cursor: "pointer",
+  },
+  accordionChevron: { color: color.textFaint, fontSize: 13, transition: "transform 220ms ease", marginBottom: 10 },
+  accordionBody: { display: "grid", transition: "grid-template-rows 260ms ease" },
 
   resultsList: { display: "flex", flexDirection: "column", gap: 1, background: color.surface, borderRadius: radius.lg, overflow: "hidden", border: `1px solid ${color.border}` },
   resultRow: {

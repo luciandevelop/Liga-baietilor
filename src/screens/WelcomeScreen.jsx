@@ -15,6 +15,7 @@ import PremiumCard from "../components/PremiumCard";
 import PremiumButton from "../components/PremiumButton";
 import ClubLogo from "../components/ClubLogo";
 import CompetitionBadge from "../components/CompetitionBadge";
+import { getCompetitionTheme } from "../competitionThemes";
 import SplitFlapClock from "../components/SplitFlapClock";
 import MatchRailCard from "../components/MatchRailCard";
 import Pill from "../components/Pill";
@@ -162,6 +163,7 @@ export default function WelcomeScreen({ user, profile, isAdmin, onOpenAdmin, onO
   const featuredMatch = heroPool.find((m) => featuredIds.includes(m.id));
   const heroMatch = featuredMatch || heroPool[0] || allSorted[0] || null;
   const heroStatus = heroMatch ? getMatchStatus(heroMatch, now) : null;
+  const heroTheme = heroMatch ? getCompetitionTheme(heroMatch.competitionId) : null;
   // Rail-ul "Urmează" — doar meciuri care CHIAR urmează: statusul real
   // (nu cel brut din Firestore) trebuie să fie "scheduled". Un meci rămas
   // pe status "scheduled" în bază dar cu ora deja trecută e tratat LIVE
@@ -249,7 +251,14 @@ export default function WelcomeScreen({ user, profile, isAdmin, onOpenAdmin, onO
             heroMatch ? (
               <>
                 <div style={{ display: "flex", justifyContent: "center", gap: 8, marginBottom: 6, flexWrap: "wrap" }}>
-                  <CompetitionBadge match={heroMatch} size="md" />
+                  <div style={{
+                    padding: "5px 12px", borderRadius: 999,
+                    border: `1px solid ${heroTheme.borderColor}`,
+                    boxShadow: `0 0 14px ${heroTheme.glowColor}`,
+                    background: heroTheme.badgeBackground,
+                  }}>
+                    <CompetitionBadge match={heroMatch} size="md" />
+                  </div>
                 </div>
                 <div style={{ display: "flex", justifyContent: "center", gap: 6, marginBottom: 6, flexWrap: "wrap" }}>
                   {featuredMatch && heroMatch === featuredMatch && <span style={s.motwBadge}>⭐ Meciul Săptămânii · Punctaj Dublu</span>}

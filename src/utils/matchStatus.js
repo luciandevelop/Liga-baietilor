@@ -22,9 +22,23 @@ export const MATCH_STATUS_TONE = {
   cancelled: { bg: "rgba(139,146,165,0.14)", fg: "#8B92A5" },
 };
 
-// `match.status` ar trebui să existe mereu (createMatch îl setează), dar
-// tratăm și cazul unui document vechi/incomplet — fallback la "scheduled",
-// nu la o presupunere bazată pe oră.
-export function getMatchStatus(match) {
-  return MATCH_STATUSES.includes(match?.status) ? match.status : "scheduled";
+// `match.status` e sursa principală (setat/schimbat liber din Admin).
+// SINGURA excepție: dacă statusul e încă "scheduled" (implicit, neatins
+// de admin) ȘI ora de start a trecut deja ȘI nu există rezultat real —
+// afișăm LIVE. Asta NU reintroduce deducerea generală a statusului din
+// oră (Final/Amânat/Anulat rămân mereu explicite, controlate doar din
+// Admin) — acoperă exclusiv golul dintre "meciul chiar a-nceput" și
+// "adminul a apucat să apese butonul Live".
+// `now` are valoare implicită Date.now() — apelurile existente (ex. din
+// Admin/MatchResultCard) rămân neschimbate și continuă să funcționeze.
+export function getMatchStatus(match, now = Date.now()) {
+  const explicit = MATCH_STATUSES.includes(match?.status) ? match.status : "scheduled";
+  if (explicit !== "scheduled") return explicit;
+
+  const hasResult = match.realScoreA !== null && match.realScoreA !== undefined;
+  if (hasResult) return "scheduled"; // caz neobișnuit (rezultat fără status Final) — nu presupunem nimic în plus
+
+  const kickoffMs = match.kickoffAt?.toMillis ? match.kickoffAt.toMillis() : null;
+  if (kickoffMs !== null && now >= kickoffMs) return "live";
+  return "scheduled";
 }

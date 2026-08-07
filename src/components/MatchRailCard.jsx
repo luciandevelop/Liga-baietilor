@@ -67,13 +67,19 @@ export default function MatchRailCard({ match, now, emphasizeCountdown = false, 
         <div style={s.bottomRow}>
           {emphasizeCountdown ? (
             <div>
-              <div style={s.lockLabel}>Se blochează în</div>
-              {countdown && <span style={s.countdownBig}>{countdown}</span>}
+              {countdown ? (
+                <>
+                  <div style={s.lockLabel}>Se blochează în</div>
+                  <span style={s.countdownBig}>{countdown}</span>
+                </>
+              ) : (
+                <span style={s.lockedTag}>Blocat</span>
+              )}
             </div>
           ) : (
             <>
               <span style={s.time}>{timeLabel}</span>
-              {countdown && <span style={s.countdown}>peste {countdown}</span>}
+              {countdown ? <span style={s.countdown}>peste {countdown}</span> : <span style={s.lockedTag}>Blocat</span>}
             </>
           )}
         </div>
@@ -108,5 +114,9 @@ const s = {
   countdownBig: { fontSize: 13, color: color.goldLight, fontWeight: 800, fontFamily: font.display },
   time: { fontSize: 11, color: color.textSecondary, fontWeight: 600, fontFamily: font.body },
   countdown: { fontSize: 10, color: color.goldLight, fontWeight: 700, fontFamily: font.body },
+  lockedTag: {
+    fontSize: 9.5, fontWeight: 800, letterSpacing: "0.03em", color: "#F0555A",
+    background: "rgba(240,85,90,0.13)", borderRadius: 999, padding: "3px 9px", fontFamily: font.body,
+  },
   score: { fontSize: 16, color: color.textPrimary, fontWeight: 800, fontFamily: font.display },
 };

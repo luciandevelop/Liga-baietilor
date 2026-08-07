@@ -6,22 +6,15 @@ import {
   signOut,
   updateProfile,
 } from "firebase/auth";
-import { doc, getDoc, setDoc, serverTimestamp } from "firebase/firestore";
+import { doc, getDoc, setDoc, collection, query, where, getDocs, serverTimestamp } from "firebase/firestore";
 import { auth, db, googleProvider } from "../firebase";
 
-// BUG REPARAT — cauza reală a "Jucător nou" pentru conturile email/parolă:
-// createUserWithEmailAndPassword() declanșează onAuthStateChanged() în
-// App.jsx aproape imediat ce contul e creat — ÎNAINTE ca linia următoare,
-// updateProfile(displayName), să apuce să se termine. App.jsx citește
-// u.displayName exact în acel interval și găsește null, deci
-// ensureUserProfile scrie definitiv "Jucător nou" (scrierea e o singură
-// dată, "dacă nu există deja"). Pentru Google, displayName vine deja
-// populat odată cu răspunsul OAuth — nicio cursă, de-asta funcționa doar
-// acolo.
-//
-// Fix: nickname-ul tastat la înregistrare e reținut sincron, ÎNAINTE de
-// apelul async care poate declanșa cursa — App.jsx îl poate citi
-// indiferent de ordinea reală a evenimentelor.
+// BUG REPARAT (sprint anterior) — cauza reală a "Jucător nou" pentru
+// conturile email/parolă: createUserWithEmailAndPassword() declanșează
+// onAuthStateChanged() în App.jsx aproape imediat ce contul e creat —
+// ÎNAINTE ca linia următoare, updateProfile(displayName), să apuce să se
+// termine. Fix păstrat: nickname-ul tastat la înregistrare e reținut
+// sincron, înainte de apelul async care poate declanșa cursa.
 let pendingNickname = null;
 
 export function consumePendingNickname() {
@@ -43,12 +36,92 @@ export class ProfileSaveError extends Error {
   }
 }
 
+// Eroare dedicată — nickname deja folosit de alt cont.
+export class NicknameTakenError extends Error {
+  constructor(nickname) {
+    super(`Nickname-ul "${nickname}" este deja folosit.`);
+    this.name = "NicknameTakenError";
+    this.code = "nickname-taken";
+  }
+}
+
+function normalizeNickname(raw) {
+  return (raw || "").trim();
+}
+function nicknameLowerOf(raw) {
+  return normalizeNickname(raw).toLowerCase();
+}
+
+// Validare — aceleași reguli peste tot unde se alege un nickname (picker
+// obligatoriu SAU înregistrare cu email). Lungime rezonabilă, fără
+// caractere care ar putea crea confuzie vizuală/tehnică.
+export function validateNickname(raw) {
+  const n = normalizeNickname(raw);
+  if (n.length < 2) return "Nickname-ul trebuie să aibă cel puțin 2 caractere.";
+  if (n.length > 20) return "Nickname-ul poate avea cel mult 20 de caractere.";
+  if (!/^[a-zA-Z0-9ăâîșțĂÂÎȘȚ _.-]+$/.test(n)) return "Nickname-ul conține caractere nepermise.";
+  return null;
+}
+
+// Interoghează users după nicknameLower — SINGURUL mod de a garanta
+// unicitatea, fără a atinge firestore.rules (users e deja citibil de orice
+// user autentificat). La scara asta (grup de prieteni, ~11 useri, nu
+// sute simultan) fereastra de cursă (doi useri salvând EXACT în aceeași
+// clipă același nickname) e neglijabilă — nu am adăugat o colecție
+// separată de rezervări, care ar fi cerut o modificare de
+// firestore.rules pe care nu o pot verifica orb, fără fișierul tău real.
+async function isNicknameTaken(nicknameLower, excludeUid) {
+  const snap = await getDocs(query(collection(db, "users"), where("nicknameLower", "==", nicknameLower)));
+  return snap.docs.some((d) => d.id !== excludeUid);
+}
+
+// Alege DEFINITIV nickname-ul unui user — singurul loc din toată
+// aplicația unde users/{uid}.nickname se poate scrie DUPĂ crearea
+// profilului. Nu există (și nu trebuie construită) o funcție de
+// schimbare ulterioară.
+export async function claimNickname(uid, rawNickname) {
+  const nickname = normalizeNickname(rawNickname);
+  const err = validateNickname(nickname);
+  if (err) throw new Error(err);
+
+  const nicknameLower = nicknameLowerOf(nickname);
+  const taken = await isNicknameTaken(nicknameLower, uid);
+  if (taken) throw new NicknameTakenError(nickname);
+
+  await setDoc(doc(db, "users", uid), { nickname, nicknameLower, nicknameSet: true }, { merge: true });
+  return { nickname, nicknameLower, nicknameSet: true };
+}
+
+// Decide dacă profilul ARE NEVOIE de pickerul obligatoriu de nickname.
+//   - nicknameSet === true  → NICIODATĂ (indiferent de restul câmpurilor)
+//   - fără nickname deloc   → da
+//   - exact "Jucător nou"   → da (victimă directă a bug-ului vechi)
+//   - conține spațiu        → probabil numele complet de la Google
+//     (displayName), nu un nickname ales — euristică, documentată clar,
+//     necesară pentru migrarea conturilor EXISTENTE create înainte de
+//     acest sprint (nu există alt semnal disponibil pentru ele)
+export function needsNicknamePrompt(profile) {
+  if (!profile) return true;
+  if (profile.nicknameSet === true) return false;
+  const n = normalizeNickname(profile.nickname);
+  if (!n) return true;
+  if (n === "Jucător nou") return true;
+  if (/\s/.test(n)) return true;
+  return false;
+}
+
 // Creează/actualizează profilul în Firestore (public + privat, separate).
 // NU se mai apelează din registerWithEmail/loginWithEmail/loginWithGoogle —
 // e responsabilitatea EXCLUSIVĂ a App.jsx, apelată o singură dată per
-// schimbare de stare de autentificare (vezi App.jsx). Asta elimină race-ul
-// dintre onAuthStateChanged și scrierea în Firestore, și previne apelurile
-// duplicate care existau înainte (authService + WelcomeScreen independent).
+// schimbare de stare de autentificare (vezi App.jsx).
+//
+// SCHIMBARE ACEST SPRINT: nu se mai inventează NICIUN nickname la creare
+// — nici din displayName, nici "Jucător nou". Dacă `nickname` nu e dat
+// explicit (cazul Google — vine null), profilul se creează cu
+// nickname:null, nicknameSet:false, iar App.jsx va deschide obligatoriu
+// ecranul de alegere. Dacă `nickname` e dat (cazul Email, ales la
+// înregistrare), se scrie direct ca DEFINITIV (nicknameSet:true) — exact
+// comportamentul cerut, păstrat neschimbat pentru fluxul email.
 export async function ensureUserProfile(user, nickname) {
   const publicRef = doc(db, "users", user.uid);
   const privateRef = doc(db, "users", user.uid, "private", "profile");
@@ -56,9 +129,12 @@ export async function ensureUserProfile(user, nickname) {
   try {
     const publicSnap = await getDoc(publicRef);
     if (!publicSnap.exists()) {
+      const chosen = normalizeNickname(nickname);
       await setDoc(publicRef, {
         uid: user.uid,
-        nickname: nickname || user.displayName || "Jucător nou",
+        nickname: chosen || null,
+        nicknameLower: chosen ? nicknameLowerOf(chosen) : null,
+        nicknameSet: Boolean(chosen),
         avatarId: null,
         seasonPoints: 0,
         gameweeksPlayed: 0,
@@ -113,9 +189,8 @@ export async function logout() {
   await signOut(auth);
 }
 
-// Traduce codurile de eroare (Firebase Auth SAU ProfileSaveError) în mesaje
-// înțelese, în română. Funcționează identic pentru ambele tipuri de erori,
-// pentru că ProfileSaveError expune acum `.code`.
+// Traduce codurile de eroare (Firebase Auth SAU ProfileSaveError/
+// NicknameTakenError) în mesaje înțelese, în română.
 export function translateAuthError(code) {
   const map = {
     "auth/invalid-email": "Adresa de email nu e validă.",
@@ -130,6 +205,7 @@ export function translateAuthError(code) {
     "auth/network-request-failed": "Problemă de conexiune. Verifică internetul și încearcă din nou.",
     "permission-denied": "Nu s-a putut salva profilul (permisiuni Firestore). Contactează admin-ul.",
     "profile-save-failed": "Contul de autentificare există, dar profilul nu a putut fi salvat. Verifică conexiunea și încearcă din nou.",
+    "nickname-taken": "Acest nickname este deja folosit. Alege altul.",
   };
   return map[code] || "A apărut o eroare neașteptată. Încearcă din nou.";
 }

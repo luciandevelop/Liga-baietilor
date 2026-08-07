@@ -9,6 +9,27 @@ import {
 import { doc, getDoc, setDoc, serverTimestamp } from "firebase/firestore";
 import { auth, db, googleProvider } from "../firebase";
 
+// BUG REPARAT — cauza reală a "Jucător nou" pentru conturile email/parolă:
+// createUserWithEmailAndPassword() declanșează onAuthStateChanged() în
+// App.jsx aproape imediat ce contul e creat — ÎNAINTE ca linia următoare,
+// updateProfile(displayName), să apuce să se termine. App.jsx citește
+// u.displayName exact în acel interval și găsește null, deci
+// ensureUserProfile scrie definitiv "Jucător nou" (scrierea e o singură
+// dată, "dacă nu există deja"). Pentru Google, displayName vine deja
+// populat odată cu răspunsul OAuth — nicio cursă, de-asta funcționa doar
+// acolo.
+//
+// Fix: nickname-ul tastat la înregistrare e reținut sincron, ÎNAINTE de
+// apelul async care poate declanșa cursa — App.jsx îl poate citi
+// indiferent de ordinea reală a evenimentelor.
+let pendingNickname = null;
+
+export function consumePendingNickname() {
+  const n = pendingNickname;
+  pendingNickname = null;
+  return n;
+}
+
 // Eroare dedicată pentru probleme de Firestore. Păstrează codul original al
 // erorii care a cauzat eșecul (ex: "permission-denied", "unavailable"), sau
 // un cod generic "profile-save-failed" dacă eroarea originală nu are cod —
@@ -66,6 +87,7 @@ export async function ensureUserProfile(user, nickname) {
 // Doar autentificare — NU ating Firestore aici. Dacă asta reușește, contul
 // Auth există garantat; profilul se creează separat, în App.jsx.
 export async function registerWithEmail(email, password, nickname) {
+  pendingNickname = nickname || null;
   const cred = await createUserWithEmailAndPassword(auth, email, password);
   if (nickname) {
     await updateProfile(cred.user, { displayName: nickname });

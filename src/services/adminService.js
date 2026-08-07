@@ -774,6 +774,20 @@ export function listenLiveGameweekScores(gameweekId, onRows) {
   const q = query(collection(db, "gameweekLiveScores"), where("gameweekId", "==", gameweekId));
   return onSnapshot(q, (snap) => {
     const rows = snap.docs.map((d) => d.data());
+    // BUG REPARAT: lipsea complet sortarea aici — Firestore întoarce
+    // documentele în ordine arbitrară (nu garantat după rank), deci
+    // locul 2 putea apărea înaintea locului 1 doar pentru că документul
+    // lui avea un ID "mai mic". Aceeași regulă de sortare ca la
+    // listGameweekScores (rank salvat, cu fallback la totalPoints pentru
+    // rânduri fără rank încă).
+    rows.sort((a, b) => {
+      const aHasRank = typeof a.rank === "number";
+      const bHasRank = typeof b.rank === "number";
+      if (aHasRank && bHasRank) return a.rank - b.rank;
+      if (aHasRank) return -1;
+      if (bHasRank) return 1;
+      return (b.totalPoints || 0) - (a.totalPoints || 0);
+    });
     onRows(rows);
   });
 }

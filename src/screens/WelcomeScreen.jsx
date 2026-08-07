@@ -138,8 +138,8 @@ export default function WelcomeScreen({ user, profile, isAdmin, onOpenAdmin, onO
     if (staticFeedRef.current || !gameweek || matches.length === 0) return;
     staticFeedRef.current = true;
     const featuredIds = gameweek.featuredMatchIds || [];
-    const derby = matches.find((m) => featuredIds.includes(m.id));
-    if (derby) pushFeed(`Derby-ul etapei: ${derby.homeTeam} – ${derby.awayTeam}`, "star");
+    const motw = matches.find((m) => featuredIds.includes(m.id));
+    if (motw) pushFeed(`Meciul Săptămânii: ${motw.homeTeam} – ${motw.awayTeam} (Punctaj Dublu)`, "star");
   }, [gameweek, matches]);
 
   // Meciul principal (hero) — prioritate STRICTĂ, cerută explicit:
@@ -151,18 +151,22 @@ export default function WelcomeScreen({ user, profile, isAdmin, onOpenAdmin, onO
   const allSorted = matches.slice().sort((a, b) => a.kickoffAt.toMillis() - b.kickoffAt.toMillis());
   const featuredIds = gameweek?.featuredMatchIds || [];
 
-  const liveBucket = allSorted.filter((m) => ["live", "paused"].includes(getMatchStatus(m)));
-  const scheduledBucket = allSorted.filter((m) => getMatchStatus(m) === "scheduled");
+  const liveBucket = allSorted.filter((m) => ["live", "paused"].includes(getMatchStatus(m, now)));
+  const scheduledBucket = allSorted.filter((m) => getMatchStatus(m, now) === "scheduled");
   const finishedBucket = allSorted
-    .filter((m) => getMatchStatus(m) === "finished")
+    .filter((m) => getMatchStatus(m, now) === "finished")
     .slice()
     .sort((a, b) => b.kickoffAt.toMillis() - a.kickoffAt.toMillis()); // cel mai recent primul
 
   const heroPool = liveBucket.length ? liveBucket : scheduledBucket.length ? scheduledBucket : finishedBucket;
-  const derbyMatch = heroPool.find((m) => featuredIds.includes(m.id));
-  const heroMatch = derbyMatch || heroPool[0] || allSorted[0] || null;
-  const heroStatus = heroMatch ? getMatchStatus(heroMatch) : null;
-  const railMatches = allSorted.filter((m) => m.id !== heroMatch?.id && getMatchStatus(m) !== "finished");
+  const featuredMatch = heroPool.find((m) => featuredIds.includes(m.id));
+  const heroMatch = featuredMatch || heroPool[0] || allSorted[0] || null;
+  const heroStatus = heroMatch ? getMatchStatus(heroMatch, now) : null;
+  // Rail-ul "Urmează" — doar meciuri care CHIAR urmează: statusul real
+  // (nu cel brut din Firestore) trebuie să fie "scheduled". Un meci rămas
+  // pe status "scheduled" în bază dar cu ora deja trecută e tratat LIVE
+  // de getMatchStatus și dispare automat de-aici, cum a fost cerut.
+  const railMatches = allSorted.filter((m) => m.id !== heroMatch?.id && getMatchStatus(m, now) === "scheduled");
   const remainingMs = heroMatch ? heroMatch.kickoffAt.toMillis() - LOCK_MS - now : 0;
 
   const predictedCount = Object.keys(predictions).length;
@@ -177,13 +181,12 @@ export default function WelcomeScreen({ user, profile, isAdmin, onOpenAdmin, onO
   function handleTopTab(id) {
     if (id === "matchday") return;
     if (id === "clasament") return onOpenLeaderboard();
-    handleComingSoon(id === "dueluri" ? "Dueluri" : id === "zaruri" ? "Zaruri" : "Profil");
+    if (id === "profil") return setMenuOpen((v) => !v);
   }
 
   function handleBottomTab(id) {
     if (id === "home") return;
     if (id === "pronosticuri") return onOpenPredictions();
-    if (id === "speciale") return handleComingSoon("Speciale");
     if (id === "clasament") return onOpenLeaderboard();
     if (id === "profil") return setMenuOpen((v) => !v);
   }
@@ -201,7 +204,7 @@ export default function WelcomeScreen({ user, profile, isAdmin, onOpenAdmin, onO
   }
 
   const recentResults = matches
-    .filter((m) => getMatchStatus(m) === "finished")
+    .filter((m) => getMatchStatus(m, now) === "finished")
     .sort((a, b) => b.kickoffAt.toMillis() - a.kickoffAt.toMillis())
     .slice(0, 5);
 
@@ -249,7 +252,7 @@ export default function WelcomeScreen({ user, profile, isAdmin, onOpenAdmin, onO
                   <CompetitionBadge match={heroMatch} size="md" />
                 </div>
                 <div style={{ display: "flex", justifyContent: "center", gap: 6, marginBottom: 6, flexWrap: "wrap" }}>
-                  {derbyMatch && heroMatch === derbyMatch && <Pill tone="gold">★ Derby-ul etapei</Pill>}
+                  {featuredMatch && heroMatch === featuredMatch && <span style={s.motwBadge}>⭐ Meciul Săptămânii · Punctaj Dublu</span>}
                   {heroStatus === "live" && <Pill tone="green">● LIVE</Pill>}
                   {heroStatus === "paused" && <Pill tone="gold">Pauză</Pill>}
                   {heroStatus === "finished" && <Pill tone="gold">Final</Pill>}
@@ -269,10 +272,13 @@ export default function WelcomeScreen({ user, profile, isAdmin, onOpenAdmin, onO
                   </div>
                 </div>
 
-                {heroStatus === "scheduled" && <div style={s.flapWrap}><SplitFlapClock remainingMs={remainingMs} /></div>}
-                {heroStatus === "live" && (
-                  <div style={s.liveNote}>{Math.max(1, Math.floor((now - heroMatch.kickoffAt.toMillis()) / 60000))}' · în desfășurare</div>
+                {heroStatus === "scheduled" && (
+                  <div style={s.flapWrap}>
+                    <div style={s.lockLabel}>Se blochează în</div>
+                    <SplitFlapClock remainingMs={remainingMs} />
+                  </div>
                 )}
+                {heroStatus === "live" && <div style={s.liveNote}>LIVE · rezultat neintrodus încă</div>}
                 {heroStatus === "paused" && <div style={s.liveNote}>Meciul e la pauză</div>}
                 {heroStatus === "finished" && <div style={s.finalScore}>{heroMatch.realScoreA} – {heroMatch.realScoreB}</div>}
                 {heroStatus === "postponed" && <div style={s.liveNote}>Meci amânat — dată nouă în curând</div>}
@@ -310,8 +316,15 @@ export default function WelcomeScreen({ user, profile, isAdmin, onOpenAdmin, onO
             <div style={s.railSection}>
               <div style={s.sectionLabel}>Urmează</div>
               <div style={s.rail}>
-                {railMatches.map((m) => (
-                  <MatchRailCard key={m.id} match={m} now={now} onClick={onOpenPredictions} />
+                {railMatches.map((m, i) => (
+                  <MatchRailCard
+                    key={m.id}
+                    match={m}
+                    now={now}
+                    emphasizeCountdown={i < 3}
+                    isFeatured={featuredIds.includes(m.id)}
+                    onClick={onOpenPredictions}
+                  />
                 ))}
               </div>
             </div>
@@ -438,9 +451,15 @@ const s = {
   tname: { fontFamily: font.display, fontWeight: 600, fontSize: 10.5, textTransform: "uppercase", letterSpacing: "0.02em", color: color.textPrimary },
   vsx: { fontFamily: font.display, fontSize: 9, color: color.textFaint, fontWeight: 700, paddingTop: 14 },
   flapWrap: { margin: "12px 0 14px", transform: "scale(0.82)" },
+  lockLabel: { fontSize: 10, fontWeight: 700, color: color.textFaint, letterSpacing: "0.04em", textTransform: "uppercase", marginBottom: 6, fontFamily: font.body },
   liveNote: { fontSize: 11.5, color: "#8BD957", fontWeight: 700, margin: "12px 0", fontFamily: font.body },
   finalScore: { fontFamily: font.display, fontSize: 30, fontWeight: 800, color: color.textPrimary, margin: "8px 0 12px" },
   ctaWrap: { width: "100%", maxWidth: 280 },
+  motwBadge: {
+    display: "inline-flex", alignItems: "center", gap: 5, fontSize: 10.5, fontWeight: 800, color: "#241B05",
+    background: "linear-gradient(180deg, #FFF6D9, #D4AF37)", padding: "4px 10px", borderRadius: 999,
+    fontFamily: font.body, boxShadow: "0 0 12px rgba(212,175,55,0.45)",
+  },
 
   sectionLabel: {
     fontSize: 10, fontWeight: 700, letterSpacing: "0.09em", textTransform: "uppercase",

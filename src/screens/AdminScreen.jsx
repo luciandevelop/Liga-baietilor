@@ -14,9 +14,13 @@ import {
   previewGameweekResults,
   publishLiveScores,
   finalizeGameweek,
+  listAllMatches,
+  runMatchHealthCheck,
+  updateMatch,
 } from "../services/adminService";
 import { getUserPublicProfiles } from "../services/profilesService";
 import { getCurrentSeason, getCurrentGameweek } from "../services/predictionsService";
+import { resolveCompetitionPreset } from "../competitionThemes";
 import MatchCard from "../components/MatchCard";
 import MatchResultCard from "../components/MatchResultCard";
 import PlayerBreakdownModal from "../components/PlayerBreakdownModal";
@@ -52,6 +56,7 @@ const TABS = [
   { id: "results", label: "Rezultate" },
   { id: "live", label: "Live" },
   { id: "featured", label: "Săptămânii" },
+  { id: "health", label: "Health Check" },
   { id: "config", label: "Config" },
 ];
 
@@ -82,6 +87,15 @@ export default function AdminScreen({ onBack }) {
   const [featuredIds, setFeaturedIds] = useState([]);
   const [featuredSaving, setFeaturedSaving] = useState(false);
   const [featuredMessage, setFeaturedMessage] = useState("");
+
+  // ── Health Check — doar detectare, nimic automat ──
+  const [healthIssues, setHealthIssues] = useState(null); // null = neîncă rulat
+  const [healthLoading, setHealthLoading] = useState(false);
+  const [healthError, setHealthError] = useState("");
+  const [editingMatchId, setEditingMatchId] = useState("");
+  const [editDraft, setEditDraft] = useState({ kickoffAtWallClock: "", competitionName: "" });
+  const [editSaving, setEditSaving] = useState(false);
+  const [editMessage, setEditMessage] = useState("");
 
   const [deletingMatchId, setDeletingMatchId] = useState("");
   const [deleteMessage, setDeleteMessage] = useState("");
@@ -343,16 +357,77 @@ export default function AdminScreen({ onBack }) {
     }
   }
 
+  async function handleRunHealthCheck() {
+    setHealthLoading(true);
+    setHealthError("");
+    setEditMessage("");
+    try {
+      const all = await listAllMatches();
+      setHealthIssues(runMatchHealthCheck(all));
+    } catch (err) {
+      console.error(err);
+      setHealthError(err.message || err.code);
+    } finally {
+      setHealthLoading(false);
+    }
+  }
+
+  function startEditingMatch(m) {
+    const d = m.kickoffAt?.toDate ? m.kickoffAt.toDate() : null;
+    const wallClock = d
+      ? new Intl.DateTimeFormat("sv-SE", { timeZone: "Europe/Bucharest", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false })
+          .format(d)
+          .replace(",", "")
+      : "";
+    setEditingMatchId(m.id);
+    setEditDraft({ kickoffAtWallClock: wallClock, competitionName: m.competitionName || "" });
+    setEditMessage("");
+  }
+
+  async function handleSaveMatchEdit(matchId) {
+    setEditSaving(true);
+    setEditMessage("");
+    try {
+      const preset = editDraft.competitionName ? resolveCompetitionPreset(editDraft.competitionName) : null;
+      await updateMatch(matchId, {
+        kickoffAtWallClock: editDraft.kickoffAtWallClock || undefined,
+        competitionName: editDraft.competitionName || undefined,
+        competitionId: editDraft.competitionName ? (preset?.id ?? null) : undefined,
+        competitionColor: editDraft.competitionName ? (preset?.primaryColor ?? null) : undefined,
+      });
+      setEditingMatchId("");
+      setEditMessage("Corectat.");
+      await handleRunHealthCheck();
+    } catch (err) {
+      console.error(err);
+      setEditMessage("Eroare: " + err.message);
+    } finally {
+      setEditSaving(false);
+    }
+  }
+
+  async function handleDeleteFromHealthCheck(m) {
+    if (!window.confirm(`Ștergi definitiv meciul ${m.homeTeam} - ${m.awayTeam}?`)) return;
+    try {
+      await deleteMatch(m.id, m.gameweekId);
+      await handleRunHealthCheck();
+    } catch (err) {
+      console.error(err);
+      setEditMessage("Eroare la ștergere: " + err.message);
+    }
+  }
+
   async function handleImportMatches(e) {
     e.preventDefault();
     if (!selectedGameweekId || !matchesText.trim()) return;
     setLoading(true);
     setMessage("");
     try {
-      const count = await bulkCreateMatches(selectedGameweekId, matchesText);
+      const { created, warnings } = await bulkCreateMatches(selectedGameweekId, matchesText);
       setMatchesText("");
       await refreshMatches(selectedGameweekId);
-      setMessage(`${count} meciuri importate.`);
+      const warnText = warnings.length ? ` ⚠️ ${warnings.length} avertismente:\n${warnings.join("\n")}` : "";
+      setMessage(`${created} meciuri importate.${warnText}`);
     } catch (err) {
       console.error(err);
       setMessage("Eroare la import: " + err.message);
@@ -588,6 +663,73 @@ export default function AdminScreen({ onBack }) {
               </>
             )}
 
+            {/* ── Health Check — doar detectare + corecție manuală ────── */}
+            {tab === "health" && (
+              <SectionCard title="Health Check — meciuri deja salvate">
+                <p style={s.hint}>
+                  Verifică meciurile deja existente în Firestore (toate etapele) — nu modifică nimic automat, doar
+                  semnalează probleme probabile.
+                </p>
+                <button style={s.btn} disabled={healthLoading} onClick={handleRunHealthCheck} type="button">
+                  {healthLoading ? "Se verifică…" : "Rulează Health Check"}
+                </button>
+                {healthError && <div style={{ ...s.message, background: "rgba(240,85,90,0.1)", borderColor: "rgba(240,85,90,0.3)", color: "#F0555A" }}>{healthError}</div>}
+                {editMessage && <div style={s.message}>{editMessage}</div>}
+
+                {healthIssues !== null && (
+                  <p style={{ ...s.hint, marginTop: 12 }}>
+                    {healthIssues.length === 0 ? "Nicio problemă găsită." : `${healthIssues.length} meciuri cu probleme.`}
+                  </p>
+                )}
+
+                {healthIssues && healthIssues.length > 0 && (
+                  <div style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 10 }}>
+                    {healthIssues.map(({ match: m, problems }) => (
+                      <div key={m.id} style={s.healthCard}>
+                        <div style={s.healthTop}>
+                          <span style={s.healthTeams}>{m.homeTeam} - {m.awayTeam}</span>
+                          <span style={s.healthGw}>etapă: {m.gameweekId}</span>
+                        </div>
+                        <ul style={s.healthList}>
+                          {problems.map((p, i) => <li key={i} style={s.healthItem}>{p}</li>)}
+                        </ul>
+
+                        {editingMatchId === m.id ? (
+                          <div style={s.editBox}>
+                            <label style={s.editLabel}>Dată/oră (România, YYYY-MM-DD HH:mm)</label>
+                            <input
+                              style={s.editInput}
+                              value={editDraft.kickoffAtWallClock}
+                              onChange={(e) => setEditDraft((d) => ({ ...d, kickoffAtWallClock: e.target.value }))}
+                              placeholder="2026-08-06 21:00"
+                            />
+                            <label style={s.editLabel}>Competiție (nume)</label>
+                            <input
+                              style={s.editInput}
+                              value={editDraft.competitionName}
+                              onChange={(e) => setEditDraft((d) => ({ ...d, competitionName: e.target.value }))}
+                              placeholder="Champions League"
+                            />
+                            <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+                              <button style={s.btn} disabled={editSaving} onClick={() => handleSaveMatchEdit(m.id)} type="button">
+                                {editSaving ? "Se salvează…" : "Salvează corecția"}
+                              </button>
+                              <button style={s.btnGhost} onClick={() => setEditingMatchId("")} type="button">Anulează</button>
+                            </div>
+                          </div>
+                        ) : (
+                          <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+                            <button style={s.btnGhost} onClick={() => startEditingMatch(m)} type="button">Corectează manual</button>
+                            <button style={{ ...s.btnGhost, color: "#F0555A" }} onClick={() => handleDeleteFromHealthCheck(m)} type="button">Șterge meciul</button>
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </SectionCard>
+            )}
+
             {/* ── Import / Config ───────────────────────────────────── */}
             {tab === "config" && (
               <SectionCard title="Import meciuri">
@@ -643,6 +785,7 @@ const s = {
   message: {
     background: color.greenBg, border: `1px solid ${color.greenBorder}`,
     color: color.green, borderRadius: radius.sm, padding: "10px 14px", fontSize: 12.5, marginBottom: 16,
+    whiteSpace: "pre-line",
   },
   select: {
     width: "100%", background: color.surfaceInset, border: `1px solid ${color.border}`, borderRadius: radius.sm,
@@ -661,6 +804,24 @@ const s = {
   btn: {
     background: color.goldGradient, color: color.goldOn, border: "none",
     borderRadius: radius.sm, padding: "11px 0", fontSize: 13.5, fontWeight: 800, cursor: "pointer", fontFamily: font.body,
+  },
+  btnGhost: {
+    background: "none", border: `1px solid ${color.border}`, color: color.textMuted,
+    borderRadius: radius.sm, padding: "8px 14px", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: font.body,
+  },
+  healthCard: {
+    background: color.surfaceInset, border: "1px solid rgba(240,147,12,0.3)", borderRadius: radius.sm, padding: 12,
+  },
+  healthTop: { display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 },
+  healthTeams: { fontSize: 13, fontWeight: 700, color: color.textPrimary, fontFamily: font.body },
+  healthGw: { fontSize: 10, color: color.textFaint, fontFamily: font.body },
+  healthList: { margin: "0 0 0", paddingLeft: 18 },
+  healthItem: { fontSize: 11.5, color: "#F0A94E", fontFamily: font.body, marginBottom: 3, lineHeight: 1.4 },
+  editBox: { marginTop: 8, display: "flex", flexDirection: "column", gap: 6 },
+  editLabel: { fontSize: 10, color: color.textFaint, fontWeight: 700, fontFamily: font.body },
+  editInput: {
+    background: color.surface, border: `1px solid ${color.border}`, borderRadius: radius.sm,
+    padding: "8px 10px", fontSize: 12.5, color: color.textPrimary, fontFamily: font.body,
   },
   tabRow: { display: "flex", gap: 6, marginBottom: 14, overflowX: "auto" },
   tabBtn: {

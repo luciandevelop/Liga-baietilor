@@ -12,11 +12,6 @@ const ICONS = {
       <path d="M4 10h16M9 3v4M15 3v4" stroke={c} strokeWidth="1.6" strokeLinecap="round" />
     </svg>
   ),
-  speciale: (c) => (
-    <svg width="19" height="19" viewBox="0 0 24 24" fill="none">
-      <path d="M12 3l2.6 5.9L21 9.6l-4.6 4.3L17.6 21 12 17.6 6.4 21l1.2-7.1L3 9.6l6.4-.7L12 3z" stroke={c} strokeWidth="1.6" strokeLinejoin="round" />
-    </svg>
-  ),
   clasament: (c) => (
     <svg width="19" height="19" viewBox="0 0 24 24" fill="none">
       <path d="M7 4h10v5a5 5 0 01-10 0V4z" stroke={c} strokeWidth="1.6" />
@@ -35,7 +30,6 @@ const ICONS = {
 const ITEMS = [
   { id: "home", label: "Home" },
   { id: "pronosticuri", label: "Pronosticuri" },
-  { id: "speciale", label: "Speciale" },
   { id: "clasament", label: "Clasament" },
   { id: "profil", label: "Profil" },
 ];

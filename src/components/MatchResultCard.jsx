@@ -1,7 +1,9 @@
 import { useState } from "react";
 import MatchCompactCard from "./MatchCompactCard";
 import NumericStepper from "./NumericStepper";
+import CompetitionBadge from "./CompetitionBadge";
 import { MATCH_STATUSES, MATCH_STATUS_LABEL, MATCH_STATUS_TONE, getMatchStatus } from "../utils/matchStatus";
+import { getCompetitionTheme } from "../competitionThemes";
 import { color, font, radius } from "../theme";
 
 export default function MatchResultCard({ match, onSave, onChangeStatus, disabled }) {
@@ -54,9 +56,15 @@ export default function MatchResultCard({ match, onSave, onChangeStatus, disable
 
   const hasResult = match.realScoreA !== null && match.realScoreA !== undefined;
   const matchStatus = getMatchStatus(match);
+  // Aceeași identitate ca în Home — o singură sursă (competitionThemes.js).
+  const theme = getCompetitionTheme(match.competitionId);
 
   return (
-    <div style={s.card}>
+    <div style={{ ...s.card, border: `1px solid ${theme.borderColor}`, boxShadow: `0 8px 20px -10px ${theme.glowColor}` }}>
+      <div style={{ height: 2, margin: "-12px -12px 10px", background: `linear-gradient(90deg, ${theme.primaryColor}, ${theme.secondaryColor})` }} />
+      <div style={{ marginBottom: 8 }}>
+        <CompetitionBadge match={match} size="sm" />
+      </div>
       <MatchCompactCard
         homeTeam={match.homeTeam}
         awayTeam={match.awayTeam}
@@ -108,7 +116,7 @@ export default function MatchResultCard({ match, onSave, onChangeStatus, disable
 
 const s = {
   card: {
-    background: color.surface, border: `1px solid ${color.border}`, borderRadius: radius.lg, padding: "12px 12px 14px",
+    background: color.surface, borderRadius: radius.lg, padding: "12px 12px 14px", overflow: "hidden",
   },
   savedTag: {
     fontSize: 9.5, fontWeight: 800, color: color.green, background: color.greenBg,

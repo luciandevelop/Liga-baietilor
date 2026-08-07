@@ -2,6 +2,7 @@ import NumericStepper from "./NumericStepper";
 import ClubLogo from "./ClubLogo";
 import CompetitionBadge from "./CompetitionBadge";
 import { getMatchStatus, MATCH_STATUS_LABEL, MATCH_STATUS_TONE } from "../utils/matchStatus";
+import { getCompetitionTheme } from "../competitionThemes";
 import { color, font, radius, shadow } from "../matchdayTheme";
 
 function formatKickoff(match) {
@@ -28,16 +29,39 @@ export default function MatchPredictionCard({
   const p = prediction || {};
   const status = getMatchStatus(match);
   const tone = MATCH_STATUS_TONE[status];
+  // Identitate competiție — aceeași sursă unică (competitionThemes.js),
+  // aplicată ca fundal/glow implicit. Featured/Joker rămân stări
+  // speciale, cu prioritate vizuală peste identitatea de competiție.
+  const theme = getCompetitionTheme(match.competitionId);
 
   return (
-    <div style={{ ...s.card, ...(isJoker ? s.cardJoker : {}), ...(isFeatured ? s.cardFeatured : {}) }}>
+    <div
+      style={{
+        ...s.card,
+        border: `1px solid ${isFeatured ? "rgba(212,175,55,0.55)" : theme.borderColor}`,
+        background: isFeatured
+          ? "linear-gradient(155deg, rgba(212,175,55,0.14), rgba(212,175,55,0.02))"
+          : `${theme.backgroundGradient}, ${color.surface}`,
+        boxShadow: isFeatured
+          ? "0 0 22px rgba(212,175,55,0.3), 0 8px 20px -10px rgba(0,0,0,0.4)"
+          : `0 8px 20px -10px ${theme.glowColor}, ${shadow.sm}`,
+        padding: isFeatured ? "14px 14px 15px" : "12px 12px 13px",
+        ...(isJoker ? s.cardJoker : {}),
+      }}
+    >
+      <div style={{
+        height: isFeatured ? 3 : 2, margin: isFeatured ? "-14px -14px 11px" : "-12px -12px 10px",
+        background: isFeatured
+          ? "linear-gradient(90deg, #FFF6D9, #D4AF37)"
+          : `linear-gradient(90deg, ${theme.primaryColor}, ${theme.secondaryColor})`,
+      }} />
+      {isFeatured && <div style={s.motwBanner}>⭐ Meciul Săptămânii · Punctaj Dublu</div>}
       <div style={s.headRow}>
         <div style={s.headLeft}>
           <CompetitionBadge match={match} size="sm" />
           <span style={{ ...s.statusBadge, background: tone.bg, color: tone.fg }}>{MATCH_STATUS_LABEL[status]}</span>
         </div>
         <div style={s.badgeCol}>
-          {isFeatured && <span style={s.featuredBadge}>⭐ ×2</span>}
           {isJoker && <span style={s.jokerBadge}>🃏 ×2</span>}
         </div>
       </div>
@@ -111,22 +135,22 @@ export default function MatchPredictionCard({
 const s = {
   card: {
     background: color.surface,
-    border: `1px solid ${color.border}`,
     borderRadius: radius.md,
     padding: "12px 12px 13px",
     boxShadow: shadow.sm,
+    overflow: "hidden",
   },
-  cardFeatured: { border: "1px solid rgba(212,175,55,0.4)" },
   cardJoker: { border: "1px solid rgba(139,217,87,0.4)" },
+  motwBanner: {
+    fontSize: 10, fontWeight: 800, color: "#241B05", textAlign: "center",
+    background: "linear-gradient(180deg,#FFF6D9,#D4AF37)", borderRadius: 999,
+    padding: "3px 10px", marginBottom: 9, display: "inline-block", fontFamily: font.body,
+  },
 
   headRow: { display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 9 },
   headLeft: { display: "flex", alignItems: "center", gap: 8, minWidth: 0 },
   statusBadge: { fontSize: 9.5, fontWeight: 700, letterSpacing: "0.03em", padding: "3px 8px", borderRadius: 999, fontFamily: font.body, flexShrink: 0 },
   badgeCol: { display: "flex", gap: 4, alignItems: "center", flexShrink: 0 },
-  featuredBadge: {
-    fontSize: 9.5, fontWeight: 800, color: color.goldLight, background: color.goldBg,
-    border: `1px solid ${color.goldBorder}`, borderRadius: 999, padding: "2px 7px", whiteSpace: "nowrap",
-  },
   jokerBadge: {
     fontSize: 9.5, fontWeight: 800, color: color.green, background: color.greenBg,
     border: `1px solid ${color.greenBorder}`, borderRadius: 999, padding: "2px 7px", whiteSpace: "nowrap",

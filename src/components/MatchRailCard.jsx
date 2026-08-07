@@ -2,6 +2,7 @@ import { usePrefersReducedMotion } from "../motion";
 import CompetitionBadge from "./CompetitionBadge";
 import ClubLogo from "./ClubLogo";
 import { getMatchStatus, MATCH_STATUS_LABEL, MATCH_STATUS_TONE } from "../utils/matchStatus";
+import { getCompetitionTheme } from "../competitionThemes";
 import { color, font, radius, shadow } from "../matchdayTheme";
 
 const LOCK_MS = 30 * 60 * 1000;
@@ -23,6 +24,11 @@ export default function MatchRailCard({ match, now, emphasizeCountdown = false, 
   const reduced = usePrefersReducedMotion();
   const status = getMatchStatus(match, now);
   const tone = MATCH_STATUS_TONE[status];
+  // Identitatea competiției — SINGURA sursă: competitionThemes.js, citită
+  // prin match.competitionId. Meciul Săptămânii (isFeatured) rămâne auriu
+  // (tratament separat, intenționat), restul cardurilor iau exact
+  // culorile competiției — nu mai există gradient/bordură generice.
+  const theme = getCompetitionTheme(match.competitionId);
   const timeLabel = match.kickoffAt?.toDate
     ? match.kickoffAt.toDate().toLocaleTimeString("ro-RO", { hour: "2-digit", minute: "2-digit" })
     : "";
@@ -38,15 +44,19 @@ export default function MatchRailCard({ match, now, emphasizeCountdown = false, 
       onPointerLeave={(e) => { e.currentTarget.style.transform = "scale(1)"; }}
       style={{
         flexShrink: 0, minWidth: isFeatured ? 232 : 208, textAlign: "left", borderRadius: radius.lg,
-        padding: isFeatured ? 15 : 14,
+        overflow: "hidden",
         background: isFeatured
           ? "linear-gradient(155deg, rgba(212,175,55,0.16), rgba(212,175,55,0.03))"
-          : "linear-gradient(155deg, rgba(255,255,255,0.045), rgba(255,255,255,0.015))",
-        border: `1px solid ${isFeatured ? "rgba(212,175,55,0.5)" : color.border}`,
-        boxShadow: isFeatured ? `0 0 18px rgba(212,175,55,0.28), ${shadow.card}` : `${shadow.card}, ${shadow.rim}`,
+          : `${theme.backgroundGradient}, ${color.surface}`,
+        border: `1px solid ${isFeatured ? "rgba(212,175,55,0.5)" : theme.borderColor}`,
+        boxShadow: isFeatured ? `0 0 18px rgba(212,175,55,0.28), ${shadow.card}` : `0 10px 22px -10px ${theme.glowColor}, ${shadow.card}`,
         cursor: "pointer", transition: "transform 90ms cubic-bezier(.4,0,.2,1)",
       }}
     >
+      {/* separator/accent — o singură linie subțire, culoarea competiției */}
+      <div style={{ height: 2, width: "100%", background: isFeatured ? "linear-gradient(90deg,#FFF6D9,#D4AF37)" : `linear-gradient(90deg, ${theme.primaryColor}, ${theme.secondaryColor})` }} />
+
+      <div style={{ padding: isFeatured ? 15 : 14 }}>
       {isFeatured && <div style={s.motwTag}>⭐ Meciul Săptămânii · ×2</div>}
 
       <div style={s.topRow}>
@@ -89,6 +99,7 @@ export default function MatchRailCard({ match, now, emphasizeCountdown = false, 
           <span style={s.score}>{match.realScoreA} – {match.realScoreB}</span>
         </div>
       )}
+      </div>
     </button>
   );
 }

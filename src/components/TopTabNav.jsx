@@ -14,21 +14,6 @@ const ICONS = {
       <path d="M12 14v3M9 20h6M10 17h4" stroke={c} strokeWidth="1.6" strokeLinecap="round" />
     </svg>
   ),
-  dueluri: (c) => (
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
-      <path d="M4 4l7 7M20 4l-7 7M4 20l16-16M9 15l-5 5" stroke={c} strokeWidth="1.6" strokeLinecap="round" />
-    </svg>
-  ),
-  zaruri: (c) => (
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
-      <rect x="4" y="4" width="16" height="16" rx="3" stroke={c} strokeWidth="1.6" />
-      <circle cx="9" cy="9" r="1.2" fill={c} />
-      <circle cx="15" cy="15" r="1.2" fill={c} />
-      <circle cx="15" cy="9" r="1.2" fill={c} />
-      <circle cx="9" cy="15" r="1.2" fill={c} />
-      <circle cx="12" cy="12" r="1.2" fill={c} />
-    </svg>
-  ),
   profil: (c) => (
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
       <circle cx="12" cy="8" r="3.5" stroke={c} strokeWidth="1.6" />
@@ -40,8 +25,6 @@ const ICONS = {
 const TABS = [
   { id: "matchday", label: "Matchday" },
   { id: "clasament", label: "Clasament" },
-  { id: "dueluri", label: "Dueluri" },
-  { id: "zaruri", label: "Zaruri" },
   { id: "profil", label: "Profil" },
 ];
 

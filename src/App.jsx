@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { onAuthStateChanged } from "firebase/auth";
 import { auth } from "./firebase";
-import { ensureUserProfile, translateAuthError, logout } from "./services/authService";
+import { ensureUserProfile, translateAuthError, logout, consumePendingNickname } from "./services/authService";
 import { checkIsAdmin } from "./services/adminService";
 import AuthScreen from "./screens/AuthScreen";
 import WelcomeScreen from "./screens/WelcomeScreen";
@@ -32,7 +32,12 @@ export default function App() {
     setProfileState("checking");
     setProfileError("");
     try {
-      const data = await ensureUserProfile(u, u.displayName);
+      // u.displayName poate fi încă necompletat aici, dacă tocmai s-a
+      // înregistrat cu email/parolă (vezi comentariul din authService.js
+      // — cursă reală, nu ipotetică). pendingNickname acoperă exact acest
+      // interval; pentru orice alt caz (Google, sau login normal ulterior)
+      // e null și nu schimbă nimic.
+      const data = await ensureUserProfile(u, u.displayName || consumePendingNickname());
       if (requestRef.current !== myRequestId) return; // cerere învechită, ignorăm
       setProfile(data);
       setProfileState("ready");

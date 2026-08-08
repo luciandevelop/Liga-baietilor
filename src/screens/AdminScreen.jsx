@@ -637,6 +637,9 @@ export default function AdminScreen({ onBack }) {
                               awayTeam={m.awayTeam}
                               kickoffAt={m.kickoffAt}
                               status={m.status}
+                              competitionId={m.competitionId}
+                              competitionName={m.competitionName}
+                              competitionColor={m.competitionColor}
                             />
                           </div>
                         </label>

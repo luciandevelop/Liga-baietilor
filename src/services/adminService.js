@@ -900,3 +900,14 @@ export async function listGeneralLeaderboard() {
   rows.sort((a, b) => (b.seasonPoints || 0) - (a.seasonPoints || 0));
   return rows;
 }
+
+// Toți userii, cu uid — pentru orice picker din Admin unde trebuie ales
+// un user (ex: alocarea pachetului de avataruri). Nu se identifică
+// niciodată userul după email — doar după uid, citit direct din
+// document, niciodată tastat manual.
+export async function listAllUsers() {
+  const snap = await getDocs(collection(db, "users"));
+  const rows = snap.docs.map((d) => ({ uid: d.id, ...d.data() }));
+  rows.sort((a, b) => (a.nickname || "").localeCompare(b.nickname || ""));
+  return rows;
+}

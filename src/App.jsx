@@ -30,6 +30,29 @@ export default function App() {
   // în care revine din await e ignorată (user schimbat/delogat între timp).
   const requestRef = useRef(0);
 
+  // BUG REPARAT — cauza reală a nickname-ului care nu se salva pentru
+  // conturile email/parolă: onAuthStateChanged poate declanșa loadProfile()
+  // de DOUĂ ori la înregistrare (comportament normal Firebase — o dată
+  // imediat, o dată când tokenul se stabilizează). Fără protecție, ambele
+  // apeluri porneau propriul ensureUserProfile() concurent; al doilea
+  // găsea pendingNickname deja golit de primul (consumePendingNickname e
+  // "citește o singură dată") și putea suprascrie scrierea corectă cu una
+  // fără nickname. inFlightRef ține minte cererea în curs PER uid — un al
+  // doilea apel pentru ACELAȘI user așteaptă exact aceeași promisiune, nu
+  // mai pornește o scriere separată în Firestore.
+  const inFlightRef = useRef(null); // { uid, promise } | null
+
+  function loadProfileDeduped(u) {
+    if (inFlightRef.current && inFlightRef.current.uid === u.uid) {
+      return inFlightRef.current.promise;
+    }
+    const promise = loadProfile(u).finally(() => {
+      if (inFlightRef.current?.promise === promise) inFlightRef.current = null;
+    });
+    inFlightRef.current = { uid: u.uid, promise };
+    return promise;
+  }
+
   const loadProfile = useCallback(async (u) => {
     const myRequestId = ++requestRef.current;
     setProfileState("checking");
@@ -63,7 +86,7 @@ export default function App() {
       setUser(u);
       setAuthChecked(true);
       if (u) {
-        loadProfile(u);
+        loadProfileDeduped(u);
       } else {
         requestRef.current++; // invalidează orice cerere rămasă în zbor
         setProfile(null);

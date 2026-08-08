@@ -86,24 +86,26 @@ export async function claimNickname(uid, rawNickname) {
 }
 
 // Decide dacă profilul ARE NEVOIE de pickerul obligatoriu de nickname —
-// FĂRĂ niciun flag suplimentar în Firestore, doar din nickname + fusul
-// live al contului de Auth (displayName). Cerut explicit: schemă minimă.
+// STRICT pe baza a ce e salvat în users/{uid}.nickname, fără nicio
+// comparație cu displayName din Firebase Auth.
 //
-//   - lipsă / gol / eșuează validarea      → da
-//   - exact "Jucător nou"                  → da (victimă directă a bug-ului vechi)
-//   - identic caracter-cu-caracter cu
-//     displayName-ul CURENT din Firebase   → da — asta înseamnă că a fost
-//     copiat automat, nu ales. Funcționează corect pentru AMBELE fluxuri
-//     doar pentru că registerWithEmail nu mai setează displayName (vezi
-//     mai jos) — altfel un nickname de email ales deliberat ar fi
-//     coincis mereu cu propriul displayName și ar fi fost re-cerut greșit.
-//   - altfel                               → nu, trece direct
-export function needsNicknamePrompt(profile, authDisplayName) {
+// BUG REPARAT — versiunea anterioară compara nickname-ul cu displayName
+// din Auth, ca să detecteze "copiat automat de la Google". Dar pentru
+// conturile de email create ÎNAINTE de fix-ul precedent (când
+// registerWithEmail încă seta displayName = nickname-ul ales),
+// displayName a rămas PERMANENT egal cu nickname-ul — Firebase Auth nu
+// șterge retroactiv acel câmp. Comparația credea greșit că e "copiat
+// automat" și cerea din nou alegerea, la fiecare login, la nesfârșit.
+// Regula acum e simplă și fiabilă: există un nickname valid salvat? da
+// → nu mai cere niciodată. Nu contează cum s-a autentificat.
+//   - lipsă / gol / eșuează validarea → da, cere
+//   - exact "Jucător nou" → da, cere (victimă directă a bug-ului vechi)
+//   - altfel → nu, trece direct
+export function needsNicknamePrompt(profile) {
   if (!profile) return true;
   const n = normalizeNickname(profile.nickname);
   if (!n || validateNickname(n)) return true;
   if (n === "Jucător nou") return true;
-  if (authDisplayName && n === normalizeNickname(authDisplayName)) return true;
   return false;
 }
 

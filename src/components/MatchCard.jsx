@@ -1,5 +1,5 @@
 import ClubLogo from "./ClubLogo";
-import CompetitionBadge from "./CompetitionBadge";
+import CompetitionHeaderStrip from "./CompetitionHeaderStrip";
 import { getCompetitionTheme } from "../competitionThemes";
 import { color, font, radius } from "../matchdayTheme";
 
@@ -53,18 +53,12 @@ export default function MatchCard({ homeTeam, awayTeam, kickoffAt, status, compe
     <div style={{
       ...s.card,
       border: `1px solid ${hasCompetition ? theme.borderColor : color.border}`,
-      background: hasCompetition ? `${theme.backgroundGradient}, ${color.surface}` : color.surface,
+      background: color.surface,
       boxShadow: hasCompetition ? `0 0 14px -4px ${theme.glowColor}` : "none",
       overflow: "hidden",
     }}>
-      {hasCompetition && (
-        <div style={{ height: 2, margin: "-14px -12px 10px", background: `linear-gradient(90deg, ${theme.primaryColor}, ${theme.secondaryColor})` }} />
-      )}
-      {hasCompetition && (
-        <div style={{ marginBottom: 8 }}>
-          <CompetitionBadge match={{ competitionId, competitionName, competitionColor }} size="sm" />
-        </div>
-      )}
+      {hasCompetition && <CompetitionHeaderStrip match={{ competitionId, competitionName, competitionColor }} />}
+      <div style={{ padding: hasCompetition ? "14px 12px 12px" : "14px 12px 12px" }}>
       <div style={s.teamsRow}>
         <div style={s.clubCol}>
           <ClubLogo teamName={homeTeam} size={38} />
@@ -80,12 +74,13 @@ export default function MatchCard({ homeTeam, awayTeam, kickoffAt, status, compe
         <span style={s.kickoff}>{formatKickoff(kickoffAt)}</span>
         <StatusBadge status={status} />
       </div>
+      </div>
     </div>
   );
 }
 
 const s = {
-  card: { borderRadius: radius.lg, padding: "14px 12px 12px" },
+  card: { borderRadius: radius.lg },
   teamsRow: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 },
   clubCol: { display: "flex", flexDirection: "column", alignItems: "center", gap: 6, flex: 1, minWidth: 0 },
   clubName: {

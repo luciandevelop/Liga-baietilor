@@ -1,7 +1,7 @@
 import { useState } from "react";
 import MatchCompactCard from "./MatchCompactCard";
 import NumericStepper from "./NumericStepper";
-import CompetitionBadge from "./CompetitionBadge";
+import CompetitionHeaderStrip from "./CompetitionHeaderStrip";
 import { MATCH_STATUSES, MATCH_STATUS_LABEL, MATCH_STATUS_TONE, getMatchStatus } from "../utils/matchStatus";
 import { getCompetitionTheme } from "../competitionThemes";
 import { color, font, radius } from "../theme";
@@ -63,13 +63,12 @@ export default function MatchResultCard({ match, onSave, onChangeStatus, disable
     <div style={{
       ...s.card,
       border: `1px solid ${theme.borderColor}`,
-      background: `${theme.backgroundGradient}, ${color.surface}`,
+      background: color.surface,
       boxShadow: `0 0 18px -4px ${theme.glowColor}, 0 14px 26px -14px rgba(0,0,0,0.6)`,
+      overflow: "hidden",
     }}>
-      <div style={{ height: 3, margin: "-12px -12px 12px", background: `linear-gradient(90deg, ${theme.primaryColor}, ${theme.secondaryColor})` }} />
-      <div style={{ marginBottom: 10 }}>
-        <CompetitionBadge match={match} size="sm" />
-      </div>
+      <CompetitionHeaderStrip match={match} />
+      <div style={{ padding: "14px 12px 14px" }}>
       <MatchCompactCard
         homeTeam={match.homeTeam}
         awayTeam={match.awayTeam}
@@ -115,13 +114,14 @@ export default function MatchResultCard({ match, onSave, onChangeStatus, disable
         </button>
         {status === "error" && <div style={s.err}>{error}</div>}
       </div>
+      </div>
     </div>
   );
 }
 
 const s = {
   card: {
-    background: color.surface, borderRadius: radius.lg, padding: "12px 12px 14px", overflow: "hidden",
+    background: color.surface, borderRadius: radius.lg, overflow: "hidden",
   },
   savedTag: {
     fontSize: 9.5, fontWeight: 800, color: color.green, background: color.greenBg,

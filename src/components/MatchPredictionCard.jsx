@@ -1,6 +1,6 @@
 import NumericStepper from "./NumericStepper";
 import ClubLogo from "./ClubLogo";
-import CompetitionBadge from "./CompetitionBadge";
+import CompetitionHeaderStrip from "./CompetitionHeaderStrip";
 import { getMatchStatus, MATCH_STATUS_LABEL, MATCH_STATUS_TONE } from "../utils/matchStatus";
 import { getCompetitionTheme } from "../competitionThemes";
 import { color, font, radius, shadow } from "../matchdayTheme";
@@ -29,10 +29,8 @@ export default function MatchPredictionCard({
   const p = prediction || {};
   const status = getMatchStatus(match);
   const tone = MATCH_STATUS_TONE[status];
-  // Identitate competiție — aceeași sursă unică (competitionThemes.js),
-  // aplicată ca fundal/glow implicit. Featured/Joker rămân stări
-  // speciale, cu prioritate vizuală peste identitatea de competiție.
   const theme = getCompetitionTheme(match.competitionId);
+  const statusTag = <span style={{ ...s.statusBadge, background: tone.bg, color: tone.fg }}>{MATCH_STATUS_LABEL[status]}</span>;
 
   return (
     <div
@@ -41,116 +39,105 @@ export default function MatchPredictionCard({
         border: `1px solid ${isFeatured ? "rgba(212,175,55,0.55)" : theme.borderColor}`,
         background: isFeatured
           ? "linear-gradient(165deg, rgba(212,175,55,0.2) 0%, rgba(212,175,55,0.04) 45%, #12141C 100%)"
-          : `${theme.backgroundGradient}, linear-gradient(165deg, ${color.surfaceElevated} 0%, ${color.surface} 60%)`,
+          : color.surface,
         boxShadow: isFeatured
           ? "0 0 26px rgba(212,175,55,0.3), 0 18px 32px -14px rgba(0,0,0,0.55)"
           : `0 0 20px -4px ${theme.glowColor}, 0 18px 32px -16px rgba(0,0,0,0.6)`,
-        padding: isFeatured ? "16px 16px 17px" : "14px 14px 15px",
         ...(isJoker ? s.cardJoker : {}),
       }}
     >
-      <div style={{
-        height: isFeatured ? 3 : 2, margin: isFeatured ? "-16px -16px 12px" : "-14px -14px 11px",
-        background: isFeatured
-          ? "linear-gradient(90deg, #FFF6D9, #D4AF37, #8A6A1E)"
-          : `linear-gradient(90deg, ${theme.primaryColor}, ${theme.secondaryColor})`,
-      }} />
-      {isFeatured && <div style={s.motwBanner}>⭐ MECIUL SĂPTĂMÂNII · PUNCTAJ ×2</div>}
-      <div style={s.headRow}>
-        <div style={s.headLeft}>
-          <CompetitionBadge match={match} size="sm" />
-          <span style={{ ...s.statusBadge, background: tone.bg, color: tone.fg }}>{MATCH_STATUS_LABEL[status]}</span>
-        </div>
-        <div style={s.badgeCol}>
-          {isJoker && <span style={s.jokerBadge}>🃏 ×2</span>}
-        </div>
-      </div>
-
-      <div style={s.matchRow}>
-        <div style={s.teamCol}>
-          <ClubLogo teamName={match.homeTeam} size={46} />
-          <span style={s.teamName}>{match.homeTeam}</span>
-        </div>
-        <span style={s.vs}>vs</span>
-        <div style={s.teamCol}>
-          <ClubLogo teamName={match.awayTeam} size={46} />
-          <span style={s.teamName}>{match.awayTeam}</span>
-        </div>
-      </div>
-
-      <div style={s.kickoff}>{formatKickoff(match)}</div>
-
-      {locked ? (
-        <div style={s.lockedBox}>
-          <div style={s.lockedScore}>
-            {p.scoreA !== "" && p.scoreA !== undefined ? p.scoreA : "–"}
-            {" – "}
-            {p.scoreB !== "" && p.scoreB !== undefined ? p.scoreB : "–"}
-          </div>
-          <div style={s.lockedMeta}>
-            C:{p.corners !== "" && p.corners !== undefined ? p.corners : "–"} · Ct:{" "}
-            {p.cards !== "" && p.cards !== undefined ? p.cards : "–"}
-          </div>
-          <span style={s.lockedTag}>PRONOSTIC BLOCAT</span>
+      {isFeatured ? (
+        <div style={s.motwStrip}>
+          <span style={s.motwTag}>⭐ MECIUL SĂPTĂMÂNII · PUNCTAJ ×2</span>
         </div>
       ) : (
-        <div style={s.inputsBox}>
-          <div style={s.scoreRow}>
-            <NumericStepper value={p.scoreA} onChange={(v) => onChange({ scoreA: v })} disabled={saving} />
-            <span style={s.dash}>–</span>
-            <NumericStepper value={p.scoreB} onChange={(v) => onChange({ scoreB: v })} disabled={saving} />
-          </div>
-
-          <div style={s.smallRow}>
-            <NumericStepper label="CORNERE" value={p.corners} onChange={(v) => onChange({ corners: v })} disabled={saving} />
-            <NumericStepper label="CARTONAȘE" value={p.cards} onChange={(v) => onChange({ cards: v })} disabled={saving} />
-          </div>
-
-          <div style={s.actionsRow}>
-            <button
-              type="button"
-              style={{
-                ...s.jokerBtn,
-                ...(isJoker ? s.jokerBtnActive : {}),
-                ...(jokerDisabled ? s.jokerBtnDisabled : {}),
-              }}
-              disabled={jokerDisabled || saving}
-              onClick={onToggleJoker}
-            >
-              {isJoker ? "🃏 Renunță" : "🃏 Joker"}
-            </button>
-
-            <button type="button" style={s.saveBtn} disabled={saving} onClick={onSave}>
-              {saving ? "…" : saveStatus === "success" ? "✓ Salvat" : "Salvează"}
-            </button>
-          </div>
-
-          {saveStatus === "error" && <div style={s.saveErr}>{saveError}</div>}
-        </div>
+        <CompetitionHeaderStrip match={match} rightSlot={statusTag} size="lg" />
       )}
+
+      <div style={{ padding: "14px 14px 15px" }}>
+        <div style={s.headRow}>
+          {isFeatured ? statusTag : <span />}
+          {isJoker && <span style={s.jokerBadge}>🃏 ×2</span>}
+        </div>
+
+        <div style={s.matchRow}>
+          <div style={s.teamCol}>
+            <ClubLogo teamName={match.homeTeam} size={46} />
+            <span style={s.teamName}>{match.homeTeam}</span>
+          </div>
+          <span style={s.vs}>vs</span>
+          <div style={s.teamCol}>
+            <ClubLogo teamName={match.awayTeam} size={46} />
+            <span style={s.teamName}>{match.awayTeam}</span>
+          </div>
+        </div>
+
+        <div style={s.kickoff}>{formatKickoff(match)}</div>
+
+        {locked ? (
+          <div style={s.lockedBox}>
+            <div style={s.lockedScore}>
+              {p.scoreA !== "" && p.scoreA !== undefined ? p.scoreA : "–"}
+              {" – "}
+              {p.scoreB !== "" && p.scoreB !== undefined ? p.scoreB : "–"}
+            </div>
+            <div style={s.lockedMeta}>
+              C:{p.corners !== "" && p.corners !== undefined ? p.corners : "–"} · Ct:{" "}
+              {p.cards !== "" && p.cards !== undefined ? p.cards : "–"}
+            </div>
+            <span style={s.lockedTag}>PRONOSTIC BLOCAT</span>
+          </div>
+        ) : (
+          <div style={s.inputsBox}>
+            <div style={s.scoreRow}>
+              <NumericStepper value={p.scoreA} onChange={(v) => onChange({ scoreA: v })} disabled={saving} />
+              <span style={s.dash}>–</span>
+              <NumericStepper value={p.scoreB} onChange={(v) => onChange({ scoreB: v })} disabled={saving} />
+            </div>
+
+            <div style={s.smallRow}>
+              <NumericStepper label="CORNERE" value={p.corners} onChange={(v) => onChange({ corners: v })} disabled={saving} />
+              <NumericStepper label="CARTONAȘE" value={p.cards} onChange={(v) => onChange({ cards: v })} disabled={saving} />
+            </div>
+
+            <div style={s.actionsRow}>
+              <button
+                type="button"
+                style={{
+                  ...s.jokerBtn,
+                  ...(isJoker ? s.jokerBtnActive : {}),
+                  ...(jokerDisabled ? s.jokerBtnDisabled : {}),
+                }}
+                disabled={jokerDisabled || saving}
+                onClick={onToggleJoker}
+              >
+                {isJoker ? "🃏 Renunță" : "🃏 Joker"}
+              </button>
+
+              <button type="button" style={s.saveBtn} disabled={saving} onClick={onSave}>
+                {saving ? "…" : saveStatus === "success" ? "✓ Salvat" : "Salvează"}
+              </button>
+            </div>
+
+            {saveStatus === "error" && <div style={s.saveErr}>{saveError}</div>}
+          </div>
+        )}
+      </div>
     </div>
   );
 }
 
 const s = {
-  card: {
-    background: color.surface,
-    borderRadius: radius.md,
-    padding: "14px 14px 15px",
-    boxShadow: shadow.sm,
-    overflow: "hidden",
-  },
+  card: { background: color.surface, borderRadius: radius.md, overflow: "hidden", boxShadow: shadow.sm },
   cardJoker: { border: "1px solid rgba(139,217,87,0.4)" },
-  motwBanner: {
-    fontSize: 10, fontWeight: 800, color: "#241B05", textAlign: "center",
-    background: "linear-gradient(180deg,#FFF6D9,#D4AF37)", boxShadow: "0 2px 8px rgba(212,175,55,0.4)",
-    borderRadius: 999, padding: "4px 11px", marginBottom: 11, display: "inline-block", fontFamily: font.body,
+  motwStrip: {
+    padding: "12px 14px", background: "linear-gradient(90deg, rgba(212,175,55,0.28), rgba(212,175,55,0.08))",
+    borderBottom: "2px solid #D4AF37",
   },
+  motwTag: { fontSize: 12.5, fontWeight: 800, letterSpacing: "0.02em", color: "#FFE9A8", fontFamily: font.display },
 
-  headRow: { display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 13 },
-  headLeft: { display: "flex", alignItems: "center", gap: 8, minWidth: 0 },
-  statusBadge: { fontSize: 9.5, fontWeight: 700, letterSpacing: "0.03em", padding: "3px 8px", borderRadius: 999, fontFamily: font.body, flexShrink: 0 },
-  badgeCol: { display: "flex", gap: 4, alignItems: "center", flexShrink: 0 },
+  headRow: { display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 13, marginTop: 2, minHeight: 20 },
+  statusBadge: { fontSize: 8.5, fontWeight: 700, letterSpacing: "0.03em", padding: "3px 8px", borderRadius: 999, fontFamily: font.body, flexShrink: 0 },
   jokerBadge: {
     fontSize: 9.5, fontWeight: 800, color: color.green, background: color.greenBg,
     border: `1px solid ${color.greenBorder}`, borderRadius: 999, padding: "2px 7px", whiteSpace: "nowrap",

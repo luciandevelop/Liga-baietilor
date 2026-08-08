@@ -18,7 +18,7 @@ import { color, font, radius, shadow } from "../theme";
 //   Un refuz e tratat silențios ca "încă ascuns".
 // - Pentru PROPRIUL rând (isOwn=true), `ownPredictions`/`ownJokerMatchId`
 //   suprascriu afișarea — userul își vede mereu propriul pronostic/Joker.
-export default function PlayerBreakdownModal({ nickname, avatarId, row, isOwn, ownPredictions, ownJokerMatchId, onClose }) {
+export default function PlayerBreakdownModal({ nickname, avatarId, row, isOwn, showBonus = true, ownPredictions, ownJokerMatchId, onClose }) {
   if (!row) return null;
   const entries = Object.values(row.breakdown || {}).sort((a, b) => {
     const at = a.kickoffAt?.toMillis ? a.kickoffAt.toMillis() : 0;
@@ -26,38 +26,62 @@ export default function PlayerBreakdownModal({ nickname, avatarId, row, isOwn, o
     return at - bt;
   });
 
+  // Statistici mari (stil card FIFA Ultimate Team) — agregate PUR vizual,
+  // calculate din valorile deja existente în breakdown (scorePoints /
+  // cornersPoints / cardsPoints / isJoker), NU o recalculare a punctajului.
+  const scoredEntries = entries.filter((m) => m.status === "scored");
+  const exactScores = scoredEntries.filter((m) => m.scorePoints === 120).length;
+  const cornersTotal = scoredEntries.reduce((sum, m) => sum + (m.cornersPoints || 0), 0);
+  const cardsTotal = scoredEntries.reduce((sum, m) => sum + (m.cardsPoints || 0), 0);
+  const jokerUsed = entries.some((m) => m.isJoker || (isOwn && ownJokerMatchId === m.matchId));
+
+  const displayTotal = showBonus ? row.totalPoints : row.pointsFromMatches;
+
   return (
     <div style={s.overlay} onClick={onClose}>
       <div style={s.sheet} onClick={(e) => e.stopPropagation()}>
         <div style={s.grabber} />
 
-        <div style={s.header}>
-          <div style={s.headerLeft}>
-            <PlayerAvatar avatarId={avatarId} nickname={nickname} size={40} />
-            <div>
-              <h3 style={s.title}>{nickname}</h3>
-              <span style={s.rankLabel}>{row.rank ? `#${row.rank} în etapă` : "Fără rezultate încă"}</span>
-            </div>
-          </div>
+        {/* ── Card jucător, stil Ultimate Team ── */}
+        <div style={s.playerCard}>
           <button style={s.closeBtn} onClick={onClose} type="button">✕</button>
+          <PlayerAvatar avatarId={avatarId} nickname={nickname} size={56} />
+          <h3 style={s.playerName}>{nickname}</h3>
+          <span style={s.playerRank}>{row.rank ? `#${row.rank} în etapă` : "Fără rezultate încă"}</span>
+          <div style={s.playerTotal}>
+            <PointsBadge value={displayTotal} size={26} tone="gold" />
+            <span style={s.playerTotalLabel}>{showBonus ? "TOTAL ETAPĂ" : "PUNCTE DIN MECIURI"}</span>
+          </div>
         </div>
 
-        <div style={s.summaryRow}>
-          <div style={s.summaryBox}>
-            <span style={s.summaryValue}>{row.pointsFromMatches}p</span>
-            <span style={s.summaryLabel}>Meciuri</span>
+        {/* ── Statistici mari ── */}
+        <div style={s.statsGrid}>
+          <div style={s.statTile}>
+            <span style={s.statValue}>{exactScores}</span>
+            <span style={s.statLabel}>Scor exact</span>
           </div>
-          <div style={s.summaryBox}>
-            <span style={{ ...s.summaryValue, color: row.rankingBonus >= 0 ? color.green : color.red }}>
-              {row.rankingBonus >= 0 ? "+" : ""}{row.rankingBonus}p
-            </span>
-            <span style={s.summaryLabel}>Bonus poziție</span>
+          <div style={s.statTile}>
+            <span style={s.statValue}>{cornersTotal}</span>
+            <span style={s.statLabel}>Cornere</span>
           </div>
-          <div style={{ ...s.summaryBox, ...s.summaryBoxTotal }}>
-            <PointsBadge value={row.totalPoints} size={20} tone="gold" />
-            <span style={s.summaryLabel}>TOTAL ETAPĂ</span>
+          <div style={s.statTile}>
+            <span style={s.statValue}>{cardsTotal}</span>
+            <span style={s.statLabel}>Cartonașe</span>
+          </div>
+          <div style={s.statTile}>
+            <span style={{ ...s.statValue, color: jokerUsed ? color.green : color.textFaint }}>{jokerUsed ? "Da" : "Nu"}</span>
+            <span style={s.statLabel}>Joker</span>
           </div>
         </div>
+
+        {showBonus && (
+          <div style={s.bonusRow}>
+            <span style={s.bonusRowLabel}>Bonus poziție</span>
+            <span style={{ ...s.bonusRowValue, color: row.rankingBonus >= 0 ? color.green : color.red }}>
+              {row.rankingBonus >= 0 ? "+" : ""}{row.rankingBonus}p
+            </span>
+          </div>
+        )}
 
         <div style={s.list}>
           {entries.map((m) => (
@@ -184,23 +208,37 @@ const s = {
   },
   grabber: { width: 36, height: 4, borderRadius: 999, background: color.border, margin: "0 auto 14px" },
 
-  header: { display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 },
-  headerLeft: { display: "flex", alignItems: "center", gap: 10, minWidth: 0 },
-  title: { fontSize: 16, fontWeight: 700, color: color.textPrimary, margin: 0, fontFamily: font.display },
-  rankLabel: { fontSize: 11.5, color: color.gold, fontWeight: 700 },
+  // ── Card jucător, stil Ultimate Team ──
+  playerCard: {
+    position: "relative", display: "flex", flexDirection: "column", alignItems: "center", gap: 4,
+    background: "linear-gradient(180deg, rgba(201,162,39,0.12), transparent)",
+    border: "1px solid rgba(201,162,39,0.25)", borderRadius: radius.lg, padding: "22px 16px 16px", marginBottom: 12,
+  },
   closeBtn: {
+    position: "absolute", top: 10, right: 10,
     background: color.surfaceElevated, border: `1px solid ${color.border}`, color: color.textMuted,
     borderRadius: 8, width: 30, height: 30, fontSize: 13, cursor: "pointer", flexShrink: 0,
   },
+  playerName: { fontSize: 17, fontWeight: 700, color: color.textPrimary, margin: "10px 0 0", fontFamily: font.display },
+  playerRank: { fontSize: 11.5, color: color.gold, fontWeight: 700, marginBottom: 10 },
+  playerTotal: { display: "flex", flexDirection: "column", alignItems: "center", gap: 3 },
+  playerTotalLabel: { fontSize: 9, color: color.textFaint, fontWeight: 700, letterSpacing: "0.05em" },
 
-  summaryRow: { display: "flex", gap: 8, marginBottom: 16 },
-  summaryBox: {
-    flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 2,
-    background: color.surface, border: `1px solid ${color.border}`, borderRadius: radius.md, padding: "10px 4px",
+  statsGrid: { display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 6, marginBottom: 10 },
+  statTile: {
+    display: "flex", flexDirection: "column", alignItems: "center", gap: 3,
+    background: color.surface, border: `1px solid ${color.border}`, borderRadius: radius.md, padding: "10px 2px",
   },
-  summaryBoxTotal: { border: "1px solid rgba(201,162,39,0.35)", boxShadow: shadow.goldGlow },
-  summaryValue: { fontSize: 16, fontWeight: 700, color: color.textPrimary, fontFamily: font.display },
-  summaryLabel: { fontSize: 9, color: color.textFaint, fontWeight: 700, letterSpacing: "0.02em" },
+  statValue: { fontSize: 18, fontWeight: 800, color: color.textPrimary, fontFamily: font.display },
+  statLabel: { fontSize: 8.5, color: color.textFaint, fontWeight: 700, letterSpacing: "0.01em", textAlign: "center" },
+
+  bonusRow: {
+    display: "flex", alignItems: "center", justifyContent: "space-between",
+    background: color.surface, border: `1px solid ${color.border}`, borderRadius: radius.md,
+    padding: "9px 12px", marginBottom: 12,
+  },
+  bonusRowLabel: { fontSize: 11.5, color: color.textSecondary, fontWeight: 600 },
+  bonusRowValue: { fontSize: 13, fontWeight: 800, fontFamily: font.display },
 
   list: { display: "flex", flexDirection: "column", gap: 8 },
 

@@ -3,7 +3,12 @@ import PlayerAvatar from "./PlayerAvatar";
 
 const MEDAL = { 1: "🥇", 2: "🥈", 3: "🥉" };
 
-export default function PlayerRankRow({ rank, nickname, avatarId, pointsFromMatches, rankingBonus, totalPoints, onClick, top3 }) {
+export default function PlayerRankRow({ rank, nickname, avatarId, pointsFromMatches, rankingBonus, totalPoints, onClick, top3, showBonus = true }) {
+  // Când etapa e activă (showBonus=false), "punctele reale" sunt DOAR cele
+  // din meciuri — bonusul de poziție nu există încă vizual, nu doar
+  // ascuns ca cifră separată în timp ce totalul îl include pe ascuns.
+  const displayTotal = showBonus ? totalPoints : pointsFromMatches;
+
   return (
     <button
       type="button"
@@ -17,13 +22,13 @@ export default function PlayerRankRow({ rank, nickname, avatarId, pointsFromMatc
       <span style={s.rank}>{MEDAL[rank] || `#${rank ?? "–"}`}</span>
       <PlayerAvatar avatarId={avatarId} nickname={nickname} size={26} />
       <span style={s.name}>{nickname}</span>
-      {pointsFromMatches !== undefined && <span style={s.pts}>{pointsFromMatches}p</span>}
-      {rankingBonus !== undefined && (
+      {showBonus && pointsFromMatches !== undefined && <span style={s.pts}>{pointsFromMatches}p</span>}
+      {showBonus && rankingBonus !== undefined && (
         <span style={{ ...s.bonus, color: rankingBonus >= 0 ? color.green : color.red }}>
           {rankingBonus >= 0 ? "+" : ""}{rankingBonus}p
         </span>
       )}
-      <span style={s.total}>{totalPoints}p</span>
+      <span style={s.total}>{displayTotal}p</span>
     </button>
   );
 }

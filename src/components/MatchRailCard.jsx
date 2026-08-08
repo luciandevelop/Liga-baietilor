@@ -1,5 +1,5 @@
 import { usePrefersReducedMotion } from "../motion";
-import CompetitionBadge from "./CompetitionBadge";
+import CompetitionHeaderStrip from "./CompetitionHeaderStrip";
 import ClubLogo from "./ClubLogo";
 import { getMatchStatus, MATCH_STATUS_LABEL, MATCH_STATUS_TONE } from "../utils/matchStatus";
 import { getCompetitionTheme } from "../competitionThemes";
@@ -24,14 +24,13 @@ export default function MatchRailCard({ match, now, emphasizeCountdown = false, 
   const reduced = usePrefersReducedMotion();
   const status = getMatchStatus(match, now);
   const tone = MATCH_STATUS_TONE[status];
-  // Identitatea competiției — SINGURA sursă: competitionThemes.js, citită
-  // prin match.competitionId. Niciun cod de culoare hardcodat aici.
   const theme = getCompetitionTheme(match.competitionId);
   const timeLabel = match.kickoffAt?.toDate
     ? match.kickoffAt.toDate().toLocaleTimeString("ro-RO", { hour: "2-digit", minute: "2-digit" })
     : "";
   const showScore = status === "finished";
   const countdown = status === "scheduled" && now != null ? formatCountdown(match.kickoffAt.toMillis() - LOCK_MS - now) : null;
+  const statusTag = <span style={{ ...s.tag, background: tone.bg, color: tone.fg }}>{MATCH_STATUS_LABEL[status]}</span>;
 
   return (
     <button
@@ -41,11 +40,11 @@ export default function MatchRailCard({ match, now, emphasizeCountdown = false, 
       onPointerUp={(e) => { e.currentTarget.style.transform = "scale(1)"; }}
       onPointerLeave={(e) => { e.currentTarget.style.transform = "scale(1)"; }}
       style={{
-        flexShrink: 0, minWidth: isFeatured ? 258 : 228, textAlign: "left", borderRadius: radius.lg,
+        flexShrink: 0, minWidth: isFeatured ? 264 : 236, textAlign: "left", borderRadius: radius.lg,
         overflow: "hidden", position: "relative",
         background: isFeatured
           ? "linear-gradient(165deg, rgba(212,175,55,0.22) 0%, rgba(212,175,55,0.05) 45%, #12141C 100%)"
-          : `${theme.backgroundGradient}, linear-gradient(165deg, ${color.surfaceElevated} 0%, ${color.surface} 60%)`,
+          : color.surface,
         border: `1px solid ${isFeatured ? "rgba(212,175,55,0.55)" : theme.borderColor}`,
         boxShadow: isFeatured
           ? "0 0 26px rgba(212,175,55,0.32), 0 16px 30px -12px rgba(0,0,0,0.55)"
@@ -53,19 +52,16 @@ export default function MatchRailCard({ match, now, emphasizeCountdown = false, 
         cursor: "pointer", transition: "transform 90ms cubic-bezier(.4,0,.2,1)",
       }}
     >
-      {/* separator/accent — banda de identitate a competiției, sus */}
-      <div style={{
-        height: 3, width: "100%",
-        background: isFeatured ? "linear-gradient(90deg,#FFF6D9,#D4AF37,#8A6A1E)" : `linear-gradient(90deg, ${theme.primaryColor}, ${theme.secondaryColor})`,
-      }} />
-
-      <div style={{ padding: isFeatured ? "16px 16px 17px" : "15px 15px 16px" }}>
-        {isFeatured && <div style={s.motwTag}>⭐ MECIUL SĂPTĂMÂNII · PUNCTAJ ×2</div>}
-
-        <div style={s.topRow}>
-          <CompetitionBadge match={match} size="sm" />
-          <span style={{ ...s.tag, background: tone.bg, color: tone.fg }}>{MATCH_STATUS_LABEL[status]}</span>
+      {isFeatured ? (
+        <div style={s.motwStrip}>
+          <span style={s.motwTag}>⭐ MECIUL SĂPTĂMÂNII · PUNCTAJ ×2</span>
         </div>
+      ) : (
+        <CompetitionHeaderStrip match={match} rightSlot={statusTag} />
+      )}
+
+      <div style={{ padding: "14px 15px 16px" }}>
+        {isFeatured && <div style={s.topRow}><span /><span>{statusTag}</span></div>}
 
         <div style={s.teamsRow}>
           <ClubLogo teamName={match.homeTeam} size={32} />
@@ -108,17 +104,17 @@ export default function MatchRailCard({ match, now, emphasizeCountdown = false, 
 }
 
 const s = {
-  motwTag: {
-    fontSize: 10, fontWeight: 800, letterSpacing: "0.03em", color: "#241B05",
-    background: "linear-gradient(180deg,#FFF6D9,#D4AF37)", boxShadow: "0 2px 8px rgba(212,175,55,0.4)",
-    borderRadius: 999, padding: "4px 10px", display: "inline-block", marginBottom: 11, fontFamily: font.body,
+  motwStrip: {
+    padding: "11px 14px", background: "linear-gradient(90deg, rgba(212,175,55,0.28), rgba(212,175,55,0.08))",
+    borderBottom: "2px solid #D4AF37",
   },
-  topRow: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 13 },
+  motwTag: { fontSize: 11.5, fontWeight: 800, letterSpacing: "0.02em", color: "#FFE9A8", fontFamily: font.display },
+  topRow: { display: "flex", alignItems: "center", justifyContent: "flex-end", marginBottom: 11 },
   tag: {
-    fontSize: 9.5, fontWeight: 700, letterSpacing: "0.03em", padding: "2.5px 7px", borderRadius: 999,
+    fontSize: 8.5, fontWeight: 700, letterSpacing: "0.03em", padding: "3px 8px", borderRadius: 999,
     fontFamily: font.body, whiteSpace: "nowrap", flexShrink: 0,
   },
-  teamsRow: { display: "flex", alignItems: "center", gap: 11, marginBottom: 12 },
+  teamsRow: { display: "flex", alignItems: "center", gap: 11, marginBottom: 12, marginTop: 3 },
   namesCol: { display: "flex", flexDirection: "column", gap: 3, flex: 1, minWidth: 0 },
   teamName: {
     fontSize: 12.5, color: color.textPrimary, fontWeight: 700, fontFamily: font.body,

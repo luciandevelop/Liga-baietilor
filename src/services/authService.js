@@ -5,7 +5,7 @@ import {
   sendPasswordResetEmail,
   signOut,
 } from "firebase/auth";
-import { doc, getDoc, setDoc, collection, query, where, getDocs, serverTimestamp } from "firebase/firestore";
+import { doc, getDoc, setDoc, collection, getDocs, serverTimestamp } from "firebase/firestore";
 import { auth, db, googleProvider } from "../firebase";
 
 // BUG REPARAT (sprint anterior) — cauza reală a "Jucător nou" pentru
@@ -54,23 +54,25 @@ export function validateNickname(raw) {
   return null;
 }
 
-// Interoghează users după nicknameLower — SINGURUL mod de a garanta
-// unicitatea, fără să atingă firestore.rules (users e deja citibil de
-// orice user autentificat). La scara asta (grup de prieteni) fereastra
-// de coliziune e neglijabilă — nu am adăugat o colecție de rezervări cu
-// tranzacție, care ar fi cerut o modificare de firestore.rules pe care
-// nu o pot verifica orb, fără fișierul tău real.
+// Interoghează TOATE documentele din users și compară nickname-urile
+// direct în JS, case-insensitive — NU printr-un câmp nicknameLower
+// separat. Regulile tale reale (hasOnly pe users/{userId}) permit DOAR
+// ['uid','nickname','avatarId','seasonPoints','gameweeksPlayed'] — orice
+// câmp în plus, oricât de mic, face ca scrierea să fie respinsă integral.
+// La scara unui grup de prieteni (~11 useri), citirea tuturor documentelor
+// e neglijabilă ca cost — mult mai simplu și mai sigur decât să cer o
+// modificare de regulă doar pentru un câmp de căutare.
 export async function isNicknameAvailable(nickname, excludeUid) {
   const lower = nicknameLowerOf(nickname);
   if (!lower) return false;
-  const snap = await getDocs(query(collection(db, "users"), where("nicknameLower", "==", lower)));
-  return !snap.docs.some((d) => d.id !== excludeUid);
+  const snap = await getDocs(collection(db, "users"));
+  return !snap.docs.some((d) => d.id !== excludeUid && nicknameLowerOf(d.data().nickname) === lower);
 }
 
 // Alege DEFINITIV nickname-ul unui user — singurul loc din toată
 // aplicația unde users/{uid}.nickname se poate scrie DUPĂ crearea
-// profilului. Nu există (și nu trebuie construită) o funcție de
-// schimbare ulterioară.
+// profilului. Scrie STRICT câmpul `nickname` — regula ta (hasOnly) ar
+// respinge orice altceva, inclusiv un eventual nicknameLower.
 export async function claimNickname(uid, rawNickname) {
   const nickname = normalizeNickname(rawNickname);
   const err = validateNickname(nickname);
@@ -79,9 +81,8 @@ export async function claimNickname(uid, rawNickname) {
   const available = await isNicknameAvailable(nickname, uid);
   if (!available) throw new NicknameTakenError(nickname);
 
-  const patch = { nickname, nicknameLower: nicknameLowerOf(nickname) };
-  await setDoc(doc(db, "users", uid), patch, { merge: true });
-  return patch;
+  await setDoc(doc(db, "users", uid), { nickname }, { merge: true });
+  return { nickname };
 }
 
 // Decide dacă profilul ARE NEVOIE de pickerul obligatoriu de nickname —
@@ -111,12 +112,11 @@ export function needsNicknamePrompt(profile, authDisplayName) {
 // e responsabilitatea EXCLUSIVĂ a App.jsx, apelată o singură dată per
 // schimbare de stare de autentificare.
 //
-// Nu se mai inventează NICIUN nickname la creare — nici din displayName,
-// nici "Jucător nou". Dacă `nickname` nu e dat explicit (cazul Google),
-// profilul se creează cu nickname:null și App.jsx va deschide obligatoriu
-// ecranul de alegere (needsNicknamePrompt). Dacă e dat (cazul Email, ales
-// la înregistrare), se scrie direct — nu mai e nevoie de niciun flag,
-// pentru că valoarea lui nu va coincide niciodată cu displayName (gol).
+// Scrierea de creare respectă STRICT regula ta reală (hasOnly + hasAll pe
+// exact 5 câmpuri, nickname obligatoriu string — niciodată null). Pentru
+// un user nou fără nickname ales încă (cazul Google), scriem string gol
+// "" — satisface `is string`, iar needsNicknamePrompt() îl tratează ca
+// "lipsă", deschizând corect pickerul.
 export async function ensureUserProfile(user, nickname) {
   const publicRef = doc(db, "users", user.uid);
   const privateRef = doc(db, "users", user.uid, "private", "profile");
@@ -127,8 +127,7 @@ export async function ensureUserProfile(user, nickname) {
       const chosen = normalizeNickname(nickname);
       await setDoc(publicRef, {
         uid: user.uid,
-        nickname: chosen || null,
-        nicknameLower: chosen ? nicknameLowerOf(chosen) : null,
+        nickname: chosen, // string mereu — gol ("") dacă nu a fost ales încă
         avatarId: null,
         seasonPoints: 0,
         gameweeksPlayed: 0,

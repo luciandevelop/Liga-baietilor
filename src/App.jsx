@@ -72,7 +72,7 @@ export default function App() {
       const adminStatus = await checkIsAdmin(u.uid);
       if (requestRef.current !== myRequestId) return;
       setIsAdmin(adminStatus);
-      setProfileState(needsNicknamePrompt(data, u.displayName) ? "needs-nickname" : "ready");
+      setProfileState(needsNicknamePrompt(data) ? "needs-nickname" : "ready");
     } catch (err) {
       if (requestRef.current !== myRequestId) return; // cerere învechită, ignorăm
       console.error("Profil indisponibil:", err);

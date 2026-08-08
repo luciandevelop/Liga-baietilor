@@ -8,6 +8,7 @@ import WelcomeScreen from "./screens/WelcomeScreen";
 import AdminScreen from "./screens/AdminScreen";
 import PredictionsScreen from "./screens/PredictionsScreen";
 import LeaderboardScreen from "./screens/LeaderboardScreen";
+import ProfileScreen from "./screens/ProfileScreen";
 import NicknameScreen from "./screens/NicknameScreen";
 
 // profileState: "idle" | "checking" | "ready" | "needs-nickname" | "error"
@@ -170,6 +171,18 @@ export default function App() {
     return <LeaderboardScreen user={user} onBack={() => setView("welcome")} />;
   }
 
+  if (view === "profile") {
+    return (
+      <ProfileScreen
+        user={user}
+        profile={profile}
+        isAdmin={isAdmin}
+        onOpenAdmin={() => setView("admin")}
+        onBack={() => setView("welcome")}
+      />
+    );
+  }
+
   return (
     <WelcomeScreen
       user={user}
@@ -178,6 +191,7 @@ export default function App() {
       onOpenAdmin={() => setView("admin")}
       onOpenPredictions={() => setView("predictions")}
       onOpenLeaderboard={() => setView("leaderboard")}
+      onOpenProfile={() => setView("profile")}
     />
   );
 }

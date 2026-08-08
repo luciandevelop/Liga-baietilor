@@ -1,5 +1,4 @@
 import { useEffect, useRef, useState } from "react";
-import { logout } from "../services/authService";
 import { getCurrentSeason, getCurrentGameweek, loadUserPredictions, loadUserJoker } from "../services/predictionsService";
 import { listMatches, listenLiveGameweekScores, listGameweekScores } from "../services/adminService";
 import { getUserPublicProfiles } from "../services/profilesService";
@@ -34,14 +33,13 @@ const CTA_LABEL = {
 // Home — Sprint 1 "Home Premium". Aceeași logică de date ca înainte
 // (niciun apel nou către Firestore) — doar experiența Home + navigarea
 // s-au schimbat, cum a fost cerut explicit.
-export default function WelcomeScreen({ user, profile, isAdmin, onOpenAdmin, onOpenPredictions, onOpenLeaderboard }) {
+export default function WelcomeScreen({ user, profile, isAdmin, onOpenAdmin, onOpenPredictions, onOpenLeaderboard, onOpenProfile }) {
   const now = useNow(1000);
   const reduced = usePrefersReducedMotion();
 
   const [loading, setLoading] = useState(true);
   const [criticalError, setCriticalError] = useState("");
   const [statsError, setStatsError] = useState("");
-  const [menuOpen, setMenuOpen] = useState(false);
   const [resultsOpen, setResultsOpen] = useState(false);
   const [toast, setToast] = useState("");
 
@@ -183,14 +181,14 @@ export default function WelcomeScreen({ user, profile, isAdmin, onOpenAdmin, onO
   function handleTopTab(id) {
     if (id === "matchday") return;
     if (id === "clasament") return onOpenLeaderboard();
-    if (id === "profil") return setMenuOpen((v) => !v);
+    if (id === "profil") return onOpenProfile();
   }
 
   function handleBottomTab(id) {
     if (id === "home") return;
     if (id === "pronosticuri") return onOpenPredictions();
     if (id === "clasament") return onOpenLeaderboard();
-    if (id === "profil") return setMenuOpen((v) => !v);
+    if (id === "profil") return onOpenProfile();
   }
 
   if (criticalError) {
@@ -227,19 +225,12 @@ export default function WelcomeScreen({ user, profile, isAdmin, onOpenAdmin, onO
         <AppHeader
           nickname={profile?.nickname || "Jucător"}
           points={(ownRow?.totalPoints ?? profile?.seasonPoints ?? 0).toLocaleString("ro-RO")}
-          avatarInitial={(profile?.nickname || "?").charAt(0).toUpperCase()}
+          avatarId={profile?.avatarId}
           hasNotification={feed.length > 0}
-          onAvatarClick={() => setMenuOpen((v) => !v)}
-          onBellClick={() => setMenuOpen((v) => !v)}
+          onAvatarClick={onOpenProfile}
+          onBellClick={() => handleComingSoon("Notificări")}
         />
         <TopTabNav active="matchday" onChange={handleTopTab} />
-
-        {menuOpen && (
-          <div style={s.menu}>
-            {isAdmin && <button style={s.menuItem} onClick={onOpenAdmin} type="button">⚙️ Panou Admin</button>}
-            <button style={{ ...s.menuItem, color: "#E5534B" }} onClick={logout} type="button">Deconectează-te</button>
-          </div>
-        )}
 
         {toast && <div style={s.toast}>{toast}</div>}
 
@@ -454,15 +445,6 @@ const s = {
     borderRadius: radius.sm, padding: "8px 12px", marginBottom: 14,
   },
 
-  menu: {
-    position: "absolute", top: 62, right: 16, background: color.surfaceElevated,
-    border: `1px solid ${color.border}`, borderRadius: radius.md, boxShadow: shadow.elevated,
-    overflow: "hidden", zIndex: 60, minWidth: 180,
-  },
-  menuItem: {
-    display: "block", width: "100%", textAlign: "left", background: "none", border: "none",
-    color: color.textPrimary, fontSize: 13, fontWeight: 600, padding: "12px 14px", cursor: "pointer", fontFamily: font.body,
-  },
   toast: {
     position: "fixed", left: "50%", top: 92, transform: "translateX(-50%)", zIndex: 70,
     background: color.surfaceElevated, border: `1px solid ${color.goldBorder}`, color: color.goldLight,

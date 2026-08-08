@@ -18,7 +18,7 @@ import {
   runMatchHealthCheck,
   updateMatch,
 } from "../services/adminService";
-import { getUserPublicProfiles } from "../services/profilesService";
+import { getUserPublicProfiles, updateOwnAvatar } from "../services/profilesService";
 import { getCurrentSeason, getCurrentGameweek } from "../services/predictionsService";
 import { COMPETITION_THEMES } from "../competitionThemes";
 import CompetitionLogo from "../components/CompetitionLogo";
@@ -88,6 +88,12 @@ export default function AdminScreen({ onBack }) {
   const [featuredIds, setFeaturedIds] = useState([]);
   const [featuredSaving, setFeaturedSaving] = useState(false);
   const [featuredMessage, setFeaturedMessage] = useState("");
+
+  // ── Avatar utilizator (config) ──
+  const [avatarUidInput, setAvatarUidInput] = useState("");
+  const [avatarIdInput, setAvatarIdInput] = useState("");
+  const [avatarSaving, setAvatarSaving] = useState(false);
+  const [avatarSaveMsg, setAvatarSaveMsg] = useState("");
 
   // ── Health Check — doar detectare, nimic automat ──
   const [healthIssues, setHealthIssues] = useState(null); // null = neîncă rulat
@@ -419,6 +425,22 @@ export default function AdminScreen({ onBack }) {
     } catch (err) {
       console.error(err);
       setEditMessage("Eroare la ștergere: " + err.message);
+    }
+  }
+
+  async function handleSetUserAvatar() {
+    setAvatarSaving(true);
+    setAvatarSaveMsg("");
+    try {
+      await updateOwnAvatar(avatarUidInput.trim(), avatarIdInput.trim());
+      setAvatarSaveMsg("Salvat.");
+      setAvatarUidInput("");
+      setAvatarIdInput("");
+    } catch (err) {
+      console.error(err);
+      setAvatarSaveMsg("Eroare: " + err.message);
+    } finally {
+      setAvatarSaving(false);
     }
   }
 
@@ -754,6 +776,7 @@ export default function AdminScreen({ onBack }) {
 
             {/* ── Import / Config ───────────────────────────────────── */}
             {tab === "config" && (
+              <>
               <SectionCard title="Import meciuri">
                 <form onSubmit={handleImportMatches} style={s.form}>
                   <p style={s.hint}>
@@ -770,6 +793,30 @@ export default function AdminScreen({ onBack }) {
                   <button style={s.btn} disabled={loading} type="submit">Importă meciurile</button>
                 </form>
               </SectionCard>
+
+              <SectionCard title="Avatar utilizator">
+                <p style={s.hint}>
+                  UID-ul îl găsești în Firebase Console → Authentication → caută după email. Format avatarId:
+                  „pachet/index" (ex: „adireal/1").
+                </p>
+                <input
+                  style={s.input}
+                  placeholder="UID utilizator"
+                  value={avatarUidInput}
+                  onChange={(e) => setAvatarUidInput(e.target.value)}
+                />
+                <input
+                  style={s.input}
+                  placeholder="avatarId (ex: adireal/1)"
+                  value={avatarIdInput}
+                  onChange={(e) => setAvatarIdInput(e.target.value)}
+                />
+                <button style={s.btn} disabled={avatarSaving || !avatarUidInput.trim() || !avatarIdInput.trim()} onClick={handleSetUserAvatar} type="button">
+                  {avatarSaving ? "Se salvează…" : "Setează avatarId"}
+                </button>
+                {avatarSaveMsg && <p style={s.hint}>{avatarSaveMsg}</p>}
+              </SectionCard>
+              </>
             )}
           </>
         )}

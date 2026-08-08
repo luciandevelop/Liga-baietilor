@@ -87,3 +87,15 @@ export const shadow = {
 };
 
 export const blur = { glow: "60px" };
+
+// ── stil unificat de card — TOATE cardurile noi (Progres, Rezultat,
+// Special, Feed) folosesc aceleași valori, ca să nu mai existe diferențe
+// vizuale între componente similare.
+export const cardStyle = {
+  radius: 16,
+  padding: "14px 14px",
+  shadow: "0 8px 22px rgba(0,0,0,0.4)",
+  border: "1px solid rgba(255,255,255,0.08)",
+  pressTransform: "scale(0.98)",
+  pressDuration: "120ms",
+};

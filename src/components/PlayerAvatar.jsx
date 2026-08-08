@@ -1,19 +1,17 @@
+import { useState } from "react";
+import { getAvatarUrl } from "../assets/avatars";
 import { color, font } from "../theme";
 
-// NU EXISTĂ ÎNCĂ un mapping avatarId → imagine în proiect. Câmpul
-// avatarId există pe users/{uid} (vezi firestore.rules), dar authService
-// îl setează mereu `null` la crearea profilului, și nu există niciun
-// fișier de assets/URL-uri pentru avataruri (spre deosebire de clubs.js
-// pentru echipe). Nu inventăm URL-uri.
-//
-// Componenta e pregătită pentru când mapping-ul va exista: un singur loc
-// de adăugat (marcat mai jos), fallback-ul rămâne identic la eroare.
-// Până atunci, arată ÎNTOTDEAUNA inițiala nickname-ului.
+// Sursă unică pentru avatarul unui jucător, oriunde apare în aplicație.
+// Dacă avatarId rezolvă la o imagine reală, o arată; altfel (sau dacă
+// imaginea eșuează la încărcare) cade pe inițiala nickname-ului — exact
+// comportamentul dinainte, neschimbat pentru orice user fără avatar
+// personalizat.
 export default function PlayerAvatar({ avatarId, nickname, size = 32 }) {
+  const [imgFailed, setImgFailed] = useState(false);
   const initial = (nickname || "?").trim().charAt(0).toUpperCase();
-
-  // TODO: când există un AVATAR_MAP (avatarId -> URL), verifică aici
-  // AVATAR_MAP[avatarId] și randează <img> cu fallback identic la onError.
+  const url = getAvatarUrl(avatarId);
+  const showImg = Boolean(url) && !imgFailed;
 
   return (
     <div
@@ -27,13 +25,23 @@ export default function PlayerAvatar({ avatarId, nickname, size = 32 }) {
         alignItems: "center",
         justifyContent: "center",
         flexShrink: 0,
+        overflow: "hidden",
         fontSize: size * 0.42,
         fontWeight: 800,
         color: color.textMuted,
         fontFamily: font.display,
       }}
     >
-      {initial || "?"}
+      {showImg ? (
+        <img
+          src={url}
+          alt={nickname || "avatar"}
+          style={{ width: "100%", height: "100%", objectFit: "cover" }}
+          onError={() => setImgFailed(true)}
+        />
+      ) : (
+        initial || "?"
+      )}
     </div>
   );
 }

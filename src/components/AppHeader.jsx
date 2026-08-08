@@ -1,4 +1,5 @@
 import { color, font, radius } from "../matchdayTheme";
+import PlayerAvatar from "./PlayerAvatar";
 
 function CrownIcon({ size = 12 }) {
   return (
@@ -26,7 +27,7 @@ function BellIcon({ size = 20 }) {
 
 // `points` deja formatat de apelant (ex. "3.450") — componenta nu face
 // formatare de numere, doar afișare.
-export default function AppHeader({ nickname, points, avatarInitial, hasNotification, onAvatarClick, onBellClick }) {
+export default function AppHeader({ nickname, points, avatarId, hasNotification, onAvatarClick, onBellClick }) {
   return (
     <div style={s.row}>
       <div style={s.logoGroup}>
@@ -42,7 +43,9 @@ export default function AppHeader({ nickname, points, avatarInitial, hasNotifica
 
       <div style={s.right}>
         <button type="button" onClick={onAvatarClick} style={s.profileBtn}>
-          <span style={s.avatar}>{avatarInitial}</span>
+          <div style={s.avatarRing}>
+            <PlayerAvatar avatarId={avatarId} nickname={nickname} size={30} />
+          </div>
           <span style={s.profileText}>
             <span style={s.nickname}>{nickname}</span>
             <span style={s.points}>{points} PCT</span>
@@ -89,13 +92,9 @@ const s = {
   profileBtn: {
     display: "flex", alignItems: "center", gap: 8, background: "none", border: "none", cursor: "pointer", padding: 0,
   },
-  avatar: {
-    width: 34, height: 34, borderRadius: "50%",
-    background: color.surfaceElevated,
-    border: `2px solid ${color.gold}`,
-    display: "flex", alignItems: "center", justifyContent: "center",
-    fontFamily: font.display, fontWeight: 700, fontSize: 13, color: color.textPrimary,
-    flexShrink: 0,
+  avatarRing: {
+    width: 34, height: 34, borderRadius: "50%", border: `2px solid ${color.gold}`,
+    display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, padding: 1,
   },
   profileText: { display: "flex", flexDirection: "column", alignItems: "flex-start" },
   nickname: { fontSize: 11, fontWeight: 700, color: color.textPrimary, letterSpacing: "0.02em" },

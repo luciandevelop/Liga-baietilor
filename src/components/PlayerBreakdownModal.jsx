@@ -18,7 +18,14 @@ import { color, font, radius, shadow } from "../theme";
 //   Un refuz e tratat silențios ca "încă ascuns".
 // - Pentru PROPRIUL rând (isOwn=true), `ownPredictions`/`ownJokerMatchId`
 //   suprascriu afișarea — userul își vede mereu propriul pronostic/Joker.
+//
+// CARD FIFA — nou: cardul de sus (avatar/nume/rang/puncte + statistici)
+// e acum un flip 3D — apasă oriunde pe el ca să vezi verso-ul cu
+// statisticile. Lista de meciuri de dedesubt NU intră în flip (ar arăta
+// ciudat/ar da glitch-uri de randare pentru o listă lungă în 3D) — rămâne
+// exact cum era, sub card, întotdeauna vizibilă.
 export default function PlayerBreakdownModal({ nickname, avatarId, row, isOwn, showBonus = true, ownPredictions, ownJokerMatchId, onClose }) {
+  const [flipped, setFlipped] = useState(false);
   if (!row) return null;
   const entries = Object.values(row.breakdown || {}).sort((a, b) => {
     const at = a.kickoffAt?.toMillis ? a.kickoffAt.toMillis() : 0;
@@ -34,6 +41,7 @@ export default function PlayerBreakdownModal({ nickname, avatarId, row, isOwn, s
   const cornersTotal = scoredEntries.reduce((sum, m) => sum + (m.cornersPoints || 0), 0);
   const cardsTotal = scoredEntries.reduce((sum, m) => sum + (m.cardsPoints || 0), 0);
   const jokerUsed = entries.some((m) => m.isJoker || (isOwn && ownJokerMatchId === m.matchId));
+  const exactPct = scoredEntries.length ? Math.round((exactScores / scoredEntries.length) * 100) : 0;
 
   const displayTotal = showBonus ? row.totalPoints : row.pointsFromMatches;
 
@@ -42,46 +50,65 @@ export default function PlayerBreakdownModal({ nickname, avatarId, row, isOwn, s
       <div style={s.sheet} onClick={(e) => e.stopPropagation()}>
         <div style={s.grabber} />
 
-        {/* ── Card jucător, stil Ultimate Team ── */}
-        <div style={s.playerCard}>
-          <button style={s.closeBtn} onClick={onClose} type="button">✕</button>
-          <PlayerAvatar avatarId={avatarId} nickname={nickname} size={56} />
-          <h3 style={s.playerName}>{nickname}</h3>
-          <span style={s.playerRank}>{row.rank ? `#${row.rank} în etapă` : "Fără rezultate încă"}</span>
-          <div style={s.playerTotal}>
-            <PointsBadge value={displayTotal} size={26} tone="gold" />
-            <span style={s.playerTotalLabel}>{showBonus ? "TOTAL ETAPĂ" : "PUNCTE DIN MECIURI"}</span>
+        {/* ── Card FIFA — flip 3D, apasă oriunde pe el ── */}
+        <div style={s.flipScene}>
+          <div style={{ ...s.flipInner, transform: flipped ? "rotateY(180deg)" : "rotateY(0deg)" }} onClick={() => setFlipped((v) => !v)}>
+            {/* FAȚĂ */}
+            <div style={{ ...s.flipFace, ...s.playerCard }}>
+              <button style={s.closeBtn} onClick={(e) => { e.stopPropagation(); onClose(); }} type="button">✕</button>
+              <PlayerAvatar avatarId={avatarId} nickname={nickname} size={64} />
+              <h3 style={s.playerName}>{nickname}</h3>
+              <span style={s.playerRank}>{row.rank ? `#${row.rank} în etapă` : "Fără rezultate încă"}</span>
+              <div style={s.playerTotal}>
+                <PointsBadge value={displayTotal} size={26} tone="gold" />
+                <span style={s.playerTotalLabel}>{showBonus ? "TOTAL ETAPĂ" : "PUNCTE DIN MECIURI"}</span>
+              </div>
+              <span style={s.flipHint}>Apasă pentru statistici ⟳</span>
+            </div>
+
+            {/* VERSO */}
+            <div style={{ ...s.flipFace, ...s.flipBack }}>
+              <button style={s.closeBtn} onClick={(e) => { e.stopPropagation(); onClose(); }} type="button">✕</button>
+              <div style={s.backTitle}>{nickname} · Statistici</div>
+              <div style={s.statsGrid}>
+                <div style={s.statTile}>
+                  <span style={s.statValue}>{exactScores}</span>
+                  <span style={s.statLabel}>Scor exact</span>
+                </div>
+                <div style={s.statTile}>
+                  <span style={s.statValue}>{exactPct}%</span>
+                  <span style={s.statLabel}>Reușită scor</span>
+                </div>
+                <div style={s.statTile}>
+                  <span style={s.statValue}>{cornersTotal}</span>
+                  <span style={s.statLabel}>Cornere</span>
+                </div>
+                <div style={s.statTile}>
+                  <span style={s.statValue}>{cardsTotal}</span>
+                  <span style={s.statLabel}>Cartonașe</span>
+                </div>
+                <div style={s.statTile}>
+                  <span style={{ ...s.statValue, color: jokerUsed ? color.green : color.textFaint }}>{jokerUsed ? "Da" : "Nu"}</span>
+                  <span style={s.statLabel}>Joker</span>
+                </div>
+                <div style={s.statTile}>
+                  <span style={s.statValue}>{row.pointsFromMatches}p</span>
+                  <span style={s.statLabel}>Puncte etapă</span>
+                </div>
+              </div>
+
+              {showBonus && (
+                <div style={s.bonusRow}>
+                  <span style={s.bonusRowLabel}>Bonus poziție</span>
+                  <span style={{ ...s.bonusRowValue, color: row.rankingBonus >= 0 ? color.green : color.red }}>
+                    {row.rankingBonus >= 0 ? "+" : ""}{row.rankingBonus}p
+                  </span>
+                </div>
+              )}
+              <span style={s.flipHint}>Apasă pentru a reveni ⟲</span>
+            </div>
           </div>
         </div>
-
-        {/* ── Statistici mari ── */}
-        <div style={s.statsGrid}>
-          <div style={s.statTile}>
-            <span style={s.statValue}>{exactScores}</span>
-            <span style={s.statLabel}>Scor exact</span>
-          </div>
-          <div style={s.statTile}>
-            <span style={s.statValue}>{cornersTotal}</span>
-            <span style={s.statLabel}>Cornere</span>
-          </div>
-          <div style={s.statTile}>
-            <span style={s.statValue}>{cardsTotal}</span>
-            <span style={s.statLabel}>Cartonașe</span>
-          </div>
-          <div style={s.statTile}>
-            <span style={{ ...s.statValue, color: jokerUsed ? color.green : color.textFaint }}>{jokerUsed ? "Da" : "Nu"}</span>
-            <span style={s.statLabel}>Joker</span>
-          </div>
-        </div>
-
-        {showBonus && (
-          <div style={s.bonusRow}>
-            <span style={s.bonusRowLabel}>Bonus poziție</span>
-            <span style={{ ...s.bonusRowValue, color: row.rankingBonus >= 0 ? color.green : color.red }}>
-              {row.rankingBonus >= 0 ? "+" : ""}{row.rankingBonus}p
-            </span>
-          </div>
-        )}
 
         <div style={s.list}>
           {entries.map((m) => (
@@ -208,23 +235,43 @@ const s = {
   },
   grabber: { width: 36, height: 4, borderRadius: 999, background: color.border, margin: "0 auto 14px" },
 
-  // ── Card jucător, stil Ultimate Team ──
+  // ── Card FIFA — flip 3D ──
+  flipScene: { perspective: "1400px", marginBottom: 12 },
+  flipInner: {
+    position: "relative", width: "100%", minHeight: 230, transformStyle: "preserve-3d",
+    transition: "transform 620ms cubic-bezier(.4,.2,.2,1)", cursor: "pointer",
+  },
+  flipFace: {
+    position: "absolute", inset: 0, backfaceVisibility: "hidden", borderRadius: radius.lg,
+    display: "flex", flexDirection: "column",
+  },
+  flipBack: {
+    transform: "rotateY(180deg)", background: "linear-gradient(180deg, rgba(201,162,39,0.1), transparent)",
+    border: "1px solid rgba(201,162,39,0.25)", padding: "16px 14px 14px", alignItems: "center",
+  },
+  flipHint: {
+    position: "absolute", bottom: 8, left: 0, right: 0, textAlign: "center",
+    fontSize: 8.5, color: color.textFaint, fontWeight: 600, letterSpacing: "0.02em",
+  },
+  backTitle: { fontSize: 12.5, fontWeight: 700, color: color.textPrimary, marginBottom: 12, fontFamily: font.display },
+
+  // ── Card jucător, stil Ultimate Team (fața) ──
   playerCard: {
-    position: "relative", display: "flex", flexDirection: "column", alignItems: "center", gap: 4,
+    position: "relative", alignItems: "center", gap: 4,
     background: "linear-gradient(180deg, rgba(201,162,39,0.12), transparent)",
-    border: "1px solid rgba(201,162,39,0.25)", borderRadius: radius.lg, padding: "22px 16px 16px", marginBottom: 12,
+    border: "1px solid rgba(201,162,39,0.25)", padding: "22px 16px 16px",
   },
   closeBtn: {
     position: "absolute", top: 10, right: 10,
     background: color.surfaceElevated, border: `1px solid ${color.border}`, color: color.textMuted,
-    borderRadius: 8, width: 30, height: 30, fontSize: 13, cursor: "pointer", flexShrink: 0,
+    borderRadius: 8, width: 30, height: 30, fontSize: 13, cursor: "pointer", flexShrink: 0, zIndex: 2,
   },
   playerName: { fontSize: 17, fontWeight: 700, color: color.textPrimary, margin: "10px 0 0", fontFamily: font.display },
   playerRank: { fontSize: 11.5, color: color.gold, fontWeight: 700, marginBottom: 10 },
   playerTotal: { display: "flex", flexDirection: "column", alignItems: "center", gap: 3 },
   playerTotalLabel: { fontSize: 9, color: color.textFaint, fontWeight: 700, letterSpacing: "0.05em" },
 
-  statsGrid: { display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 6, marginBottom: 10 },
+  statsGrid: { display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 6, marginBottom: 10, width: "100%" },
   statTile: {
     display: "flex", flexDirection: "column", alignItems: "center", gap: 3,
     background: color.surface, border: `1px solid ${color.border}`, borderRadius: radius.md, padding: "10px 2px",

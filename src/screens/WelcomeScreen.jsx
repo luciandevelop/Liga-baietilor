@@ -341,24 +341,26 @@ export default function WelcomeScreen({ user, profile, isAdmin, onOpenAdmin, onO
 
           {recentResults.length > 0 && (
             <div style={s.railSection}>
-              <button type="button" onClick={() => setResultsOpen((v) => !v)} style={s.accordionHeader}>
-                <span style={s.sectionLabel}>Ultimele rezultate ({recentResults.length})</span>
-                <span style={{ ...s.accordionChevron, transform: resultsOpen ? "rotate(180deg)" : "rotate(0deg)" }}>▾</span>
-              </button>
-              <div style={{ ...s.accordionBody, gridTemplateRows: resultsOpen ? "1fr" : "0fr" }}>
-                <div style={{ overflow: "hidden" }}>
-                  <div style={s.resultsList}>
-                    {recentResults.map((m) => (
-                      <button key={m.id} type="button" onClick={onOpenPredictions} style={s.resultRow}>
-                        <ClubLogo teamName={m.homeTeam} size={24} />
-                        <span style={s.resultName}>{m.homeTeam}</span>
-                        <span style={s.resultScore}>{m.realScoreA} – {m.realScoreB}</span>
-                        <span style={s.resultName}>{m.awayTeam}</span>
-                        <ClubLogo teamName={m.awayTeam} size={24} />
-                      </button>
-                    ))}
-                  </div>
-                </div>
+              <div style={s.sectionLabel}>Ultimele rezultate</div>
+              <div style={s.resultsList}>
+                {/* Implicit vizibil: DOAR ultimul meci terminat. */}
+                <ResultRow match={recentResults[0]} onClick={onOpenPredictions} />
+
+                {recentResults.length > 1 && (
+                  <>
+                    <div style={{ ...s.accordionBody, gridTemplateRows: resultsOpen ? "1fr" : "0fr" }}>
+                      <div style={{ overflow: "hidden" }}>
+                        {recentResults.slice(1).map((m) => (
+                          <ResultRow key={m.id} match={m} onClick={onOpenPredictions} />
+                        ))}
+                      </div>
+                    </div>
+                    <button type="button" onClick={() => setResultsOpen((v) => !v)} style={s.accordionToggle}>
+                      <span>{resultsOpen ? "Arată mai puține" : `Încă ${recentResults.length - 1}`}</span>
+                      <span style={{ ...s.accordionChevron, transform: resultsOpen ? "rotate(180deg)" : "rotate(0deg)" }}>▾</span>
+                    </button>
+                  </>
+                )}
               </div>
             </div>
           )}
@@ -397,6 +399,20 @@ export default function WelcomeScreen({ user, profile, isAdmin, onOpenAdmin, onO
 
       <BottomTabBar active="home" onChange={handleBottomTab} />
     </div>
+  );
+}
+
+// Un singur rând de rezultat — extras ca să fie refolosit atât pentru
+// meciul mereu-vizibil, cât și pentru cele ascunse în accordion.
+function ResultRow({ match: m, onClick }) {
+  return (
+    <button type="button" onClick={onClick} style={s.resultRow}>
+      <ClubLogo teamName={m.homeTeam} size={24} />
+      <span style={s.resultName}>{m.homeTeam}</span>
+      <span style={s.resultScore}>{m.realScoreA} – {m.realScoreB}</span>
+      <span style={s.resultName}>{m.awayTeam}</span>
+      <ClubLogo teamName={m.awayTeam} size={24} />
+    </button>
   );
 }
 
@@ -485,11 +501,12 @@ const s = {
   railSection: { marginBottom: 22 },
   rail: { display: "flex", gap: 9, overflowX: "auto", paddingBottom: 4 },
 
-  accordionHeader: {
-    display: "flex", alignItems: "center", justifyContent: "space-between", width: "100%",
-    background: "none", border: "none", padding: 0, marginBottom: 0, cursor: "pointer",
+  accordionToggle: {
+    display: "flex", alignItems: "center", justifyContent: "center", gap: 5, width: "100%",
+    background: "none", border: "none", borderTop: `1px solid ${color.borderSubtle}`,
+    padding: "9px 0", cursor: "pointer", fontSize: 11, fontWeight: 700, color: color.textFaint, fontFamily: font.body,
   },
-  accordionChevron: { color: color.textFaint, fontSize: 13, transition: "transform 220ms ease", marginBottom: 10 },
+  accordionChevron: { fontSize: 11, transition: "transform 220ms ease" },
   accordionBody: { display: "grid", transition: "grid-template-rows 260ms ease" },
 
   resultsList: { display: "flex", flexDirection: "column", gap: 1, background: color.surface, borderRadius: radius.lg, overflow: "hidden", border: `1px solid ${color.border}` },

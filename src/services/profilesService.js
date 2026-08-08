@@ -1,4 +1,4 @@
-import { doc, getDoc } from "firebase/firestore";
+import { doc, getDoc, setDoc } from "firebase/firestore";
 import { db } from "../firebase";
 
 // Un singur query per user, întoarce ce au nevoie orice listă de useri
@@ -16,4 +16,11 @@ export async function getUserPublicProfiles(uids) {
     })
   );
   return result;
+}
+
+// Userul își schimbă PROPRIUL avatar — oricând, fără limitări (cerut
+// explicit). Scrie STRICT câmpul avatarId, deja permis de regulile reale
+// (users/{userId}.avatarId — string sau null) — nicio schemă nouă.
+export async function updateOwnAvatar(uid, avatarId) {
+  await setDoc(doc(db, "users", uid), { avatarId }, { merge: true });
 }

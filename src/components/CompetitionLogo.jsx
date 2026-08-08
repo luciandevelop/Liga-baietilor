@@ -14,39 +14,40 @@ function initialsOf(name) {
 
 // `name` — orice variantă de nume de competiție ("Champions League",
 // "UEFA Champions League", "UCL"...) — rezolvată prin getCompetitionLogo().
-// Fallback: inițiale pe fundal auriu discret (nu o siglă inventată).
+// Siglă reală: plutește direct, fără cutie/fundal — citește mai clar la
+// dimensiuni mari și seamănă cu tratamentul din aplicații sportive
+// premium. Fallback (fără siglă): păstrează un cerc colorat cu inițiale,
+// pentru că acolo chiar are nevoie de o formă vizibilă.
 export default function CompetitionLogo({ name, size = 32 }) {
   const [imgFailed, setImgFailed] = useState(false);
   const match = getCompetitionLogo(name);
   const showLogo = Boolean(match?.url) && !imgFailed;
 
+  if (showLogo) {
+    return (
+      <img
+        src={match.url}
+        alt={match.name}
+        style={{
+          width: size, height: size, objectFit: "contain", flexShrink: 0,
+          filter: "drop-shadow(0 2px 6px rgba(0,0,0,0.45))",
+        }}
+        onError={() => setImgFailed(true)}
+      />
+    );
+  }
+
   return (
     <div
       style={{
-        width: size,
-        height: size,
-        borderRadius: 8,
-        background: showLogo ? color.surfaceElevated : color.goldBg,
-        border: `1px solid ${showLogo ? color.border : color.goldBorder}`,
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        overflow: "hidden",
-        flexShrink: 0,
+        width: size, height: size, borderRadius: "50%", flexShrink: 0,
+        background: color.goldBg, border: `1px solid ${color.goldBorder}`,
+        display: "flex", alignItems: "center", justifyContent: "center",
       }}
     >
-      {showLogo ? (
-        <img
-          src={match.url}
-          alt={match.name}
-          style={{ width: "80%", height: "80%", objectFit: "contain" }}
-          onError={() => setImgFailed(true)}
-        />
-      ) : (
-        <span style={{ fontSize: size * 0.28, fontWeight: 800, color: color.goldLight, fontFamily: font.display }}>
-          {initialsOf(match?.name || name)}
-        </span>
-      )}
+      <span style={{ fontSize: size * 0.32, fontWeight: 800, color: color.goldLight, fontFamily: font.display }}>
+        {initialsOf(match?.name || name)}
+      </span>
     </div>
   );
 }

@@ -1,5 +1,7 @@
-import { useState } from "react";
-import { getClubByName } from "../data/clubs";
+import ClubLogo from "./ClubLogo";
+import CompetitionBadge from "./CompetitionBadge";
+import { getCompetitionTheme } from "../competitionThemes";
+import { color, font, radius } from "../matchdayTheme";
 
 // Formatează un kickoffAt sigur, indiferent de forma în care vine:
 // Firestore Timestamp (are .toDate()), Date nativ, string, sau lipsă/invalid.
@@ -40,51 +42,39 @@ function StatusBadge({ status }) {
   return <span style={{ ...s.badge, ...s.badgeTone[info.tone] }}>{info.label}</span>;
 }
 
-// Siglă cu fallback curat la inițiale, dacă imaginea lipsește sau clubul
-// nu e încă în mapping — nu se blochează niciodată pagina.
-function ClubBadge({ teamName }) {
-  const [imgFailed, setImgFailed] = useState(false);
-  const club = getClubByName(teamName);
-  const displayName = club?.name || teamName || "?";
-  const initials = displayName
-    .split(" ")
-    .map((w) => w[0])
-    .filter(Boolean)
-    .slice(0, 2)
-    .join("")
-    .toUpperCase();
-
-  // Fallback-ul (inițiale) apare DOAR dacă nu există club în mapping, sau
-  // dacă imaginea chiar eșuează la încărcare (onError) — niciodată implicit
-  // cât timp există un URL de încercat.
-  const showLogo = Boolean(club?.logoUrl) && !imgFailed;
+export default function MatchCard({ homeTeam, awayTeam, kickoffAt, status, competitionId, competitionName, competitionColor }) {
+  // Aceeași sursă unică ca peste tot — competitionThemes.js, prin
+  // competitionId. Fără fallback vizibil dacă meciul n-are competiție
+  // salvată, cardul rămâne pe stilul neutru implicit.
+  const theme = getCompetitionTheme(competitionId);
+  const hasCompetition = Boolean(competitionId || competitionName);
 
   return (
-    <div style={s.clubCol}>
-      <div style={s.crestWrap}>
-        {showLogo ? (
-          <img
-            src={club.logoUrl}
-            alt={displayName}
-            style={s.crestImg}
-            onError={() => setImgFailed(true)}
-          />
-        ) : (
-          <span style={s.crestFallback}>{initials || "?"}</span>
-        )}
-      </div>
-      <span style={s.clubName}>{displayName}</span>
-    </div>
-  );
-}
-
-export default function MatchCard({ homeTeam, awayTeam, kickoffAt, status }) {
-  return (
-    <div style={s.card}>
+    <div style={{
+      ...s.card,
+      border: `1px solid ${hasCompetition ? theme.borderColor : color.border}`,
+      background: hasCompetition ? `${theme.backgroundGradient}, ${color.surface}` : color.surface,
+      boxShadow: hasCompetition ? `0 0 14px -4px ${theme.glowColor}` : "none",
+      overflow: "hidden",
+    }}>
+      {hasCompetition && (
+        <div style={{ height: 2, margin: "-14px -12px 10px", background: `linear-gradient(90deg, ${theme.primaryColor}, ${theme.secondaryColor})` }} />
+      )}
+      {hasCompetition && (
+        <div style={{ marginBottom: 8 }}>
+          <CompetitionBadge match={{ competitionId, competitionName, competitionColor }} size="sm" />
+        </div>
+      )}
       <div style={s.teamsRow}>
-        <ClubBadge teamName={homeTeam} />
+        <div style={s.clubCol}>
+          <ClubLogo teamName={homeTeam} size={38} />
+          <span style={s.clubName}>{homeTeam}</span>
+        </div>
         <span style={s.vs}>VS</span>
-        <ClubBadge teamName={awayTeam} />
+        <div style={s.clubCol}>
+          <ClubLogo teamName={awayTeam} size={38} />
+          <span style={s.clubName}>{awayTeam}</span>
+        </div>
       </div>
       <div style={s.metaRow}>
         <span style={s.kickoff}>{formatKickoff(kickoffAt)}</span>
@@ -95,77 +85,23 @@ export default function MatchCard({ homeTeam, awayTeam, kickoffAt, status }) {
 }
 
 const s = {
-  card: {
-    background: "#0D1220",
-    border: "1px solid #1c2338",
-    borderRadius: 14,
-    padding: "14px 12px 12px",
-  },
-  teamsRow: {
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "space-between",
-    gap: 8,
-  },
-  clubCol: {
-    display: "flex",
-    flexDirection: "column",
-    alignItems: "center",
-    gap: 6,
-    flex: 1,
-    minWidth: 0,
-  },
-  crestWrap: {
-    width: 40,
-    height: 40,
-    borderRadius: "50%",
-    background: "#161D33",
-    border: "1px solid #232B42",
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-    overflow: "hidden",
-    flexShrink: 0,
-  },
-  crestImg: { width: "100%", height: "100%", objectFit: "contain" },
-  crestFallback: { fontSize: 13, fontWeight: 800, color: "#8B93A8" },
+  card: { borderRadius: radius.lg, padding: "14px 12px 12px" },
+  teamsRow: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 },
+  clubCol: { display: "flex", flexDirection: "column", alignItems: "center", gap: 6, flex: 1, minWidth: 0 },
   clubName: {
-    fontSize: 12,
-    fontWeight: 700,
-    color: "#E8E4D8",
-    textAlign: "center",
-    whiteSpace: "nowrap",
-    overflow: "hidden",
-    textOverflow: "ellipsis",
-    maxWidth: "100%",
+    fontSize: 12, fontWeight: 700, color: color.textPrimary, textAlign: "center",
+    whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: "100%", fontFamily: font.body,
   },
-  vs: {
-    fontSize: 11,
-    fontWeight: 800,
-    color: "#4A5268",
-    flexShrink: 0,
-    padding: "0 6px",
-  },
+  vs: { fontSize: 11, fontWeight: 800, color: color.textFaint, flexShrink: 0, padding: "0 6px", fontFamily: font.display },
   metaRow: {
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 10,
-    marginTop: 10,
-    paddingTop: 10,
-    borderTop: "1px solid #1c2338",
+    display: "flex", alignItems: "center", justifyContent: "center", gap: 10,
+    marginTop: 10, paddingTop: 10, borderTop: `1px solid ${color.borderSubtle}`,
   },
-  kickoff: { fontSize: 11.5, color: "#8B93A8" },
-  badge: {
-    fontSize: 10.5,
-    fontWeight: 700,
-    borderRadius: 999,
-    padding: "3px 9px",
-    letterSpacing: "0.02em",
-  },
+  kickoff: { fontSize: 11.5, color: color.textSecondary, fontFamily: font.body },
+  badge: { fontSize: 10.5, fontWeight: 700, borderRadius: 999, padding: "3px 9px", letterSpacing: "0.02em", fontFamily: font.body },
   badgeTone: {
-    neutral: { background: "rgba(139,147,168,0.12)", color: "#8B93A8" },
-    live: { background: "rgba(181,69,61,0.15)", color: "#E08A82" },
-    done: { background: "rgba(63,168,92,0.14)", color: "#A9E0B8" },
+    neutral: { background: "rgba(144,153,172,0.13)", color: color.textFaint },
+    live: { background: "rgba(240,85,90,0.15)", color: "#E08A82" },
+    done: { background: "rgba(139,217,87,0.14)", color: "#A9E0B8" },
   },
 };

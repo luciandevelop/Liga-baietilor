@@ -1,4 +1,4 @@
-import ClubCrest from "./ClubCrest";
+import ClubLogo from "./ClubLogo";
 import { color, font } from "../theme";
 
 export default function MatchCompactCard({ homeTeam, awayTeam, variant = "stacked", sub, right }) {
@@ -6,9 +6,9 @@ export default function MatchCompactCard({ homeTeam, awayTeam, variant = "stacke
     return (
       <div style={s.inlineRow}>
         <div style={s.inlineTeams}>
-          <ClubCrest teamName={homeTeam} size={22} />
+          <ClubLogo teamName={homeTeam} size={22} />
           <span style={s.inlineNames}>{homeTeam} – {awayTeam}</span>
-          <ClubCrest teamName={awayTeam} size={22} />
+          <ClubLogo teamName={awayTeam} size={22} />
         </div>
         {right && <div style={s.inlineRight}>{right}</div>}
       </div>
@@ -25,12 +25,12 @@ export default function MatchCompactCard({ homeTeam, awayTeam, variant = "stacke
 
       <div style={s.stackedRow}>
         <div style={s.teamCol}>
-          <ClubCrest teamName={homeTeam} size={38} />
+          <ClubLogo teamName={homeTeam} size={46} />
           <span style={s.teamName}>{homeTeam}</span>
         </div>
         <span style={s.vs}>VS</span>
         <div style={s.teamCol}>
-          <ClubCrest teamName={awayTeam} size={38} />
+          <ClubLogo teamName={awayTeam} size={46} />
           <span style={s.teamName}>{awayTeam}</span>
         </div>
       </div>

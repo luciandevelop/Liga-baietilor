@@ -60,9 +60,14 @@ export default function MatchResultCard({ match, onSave, onChangeStatus, disable
   const theme = getCompetitionTheme(match.competitionId);
 
   return (
-    <div style={{ ...s.card, border: `1px solid ${theme.borderColor}`, boxShadow: `0 8px 20px -10px ${theme.glowColor}` }}>
-      <div style={{ height: 2, margin: "-12px -12px 10px", background: `linear-gradient(90deg, ${theme.primaryColor}, ${theme.secondaryColor})` }} />
-      <div style={{ marginBottom: 8 }}>
+    <div style={{
+      ...s.card,
+      border: `1px solid ${theme.borderColor}`,
+      background: `${theme.backgroundGradient}, ${color.surface}`,
+      boxShadow: `0 0 18px -4px ${theme.glowColor}, 0 14px 26px -14px rgba(0,0,0,0.6)`,
+    }}>
+      <div style={{ height: 3, margin: "-12px -12px 12px", background: `linear-gradient(90deg, ${theme.primaryColor}, ${theme.secondaryColor})` }} />
+      <div style={{ marginBottom: 10 }}>
         <CompetitionBadge match={match} size="sm" />
       </div>
       <MatchCompactCard

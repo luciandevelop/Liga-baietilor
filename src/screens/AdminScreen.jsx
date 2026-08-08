@@ -17,6 +17,7 @@ import {
   listAllMatches,
   runMatchHealthCheck,
   updateMatch,
+  listAllUsers,
 } from "../services/adminService";
 import { getUserPublicProfiles, updateOwnAvatar } from "../services/profilesService";
 import { getCurrentSeason, getCurrentGameweek } from "../services/predictionsService";
@@ -90,7 +91,8 @@ export default function AdminScreen({ onBack }) {
   const [featuredMessage, setFeaturedMessage] = useState("");
 
   // ── Avatar utilizator (config) ──
-  const [avatarUidInput, setAvatarUidInput] = useState("");
+  const [allUsers, setAllUsers] = useState([]);
+  const [avatarUserUid, setAvatarUserUid] = useState("");
   const [avatarIdInput, setAvatarIdInput] = useState("");
   const [avatarSaving, setAvatarSaving] = useState(false);
   const [avatarSaveMsg, setAvatarSaveMsg] = useState("");
@@ -428,13 +430,21 @@ export default function AdminScreen({ onBack }) {
     }
   }
 
+  useEffect(() => {
+    if (tab !== "config") return;
+    listAllUsers()
+      .then(setAllUsers)
+      .catch((err) => console.error("Eroare la încărcarea listei de utilizatori:", err));
+  }, [tab]);
+
   async function handleSetUserAvatar() {
     setAvatarSaving(true);
     setAvatarSaveMsg("");
     try {
-      await updateOwnAvatar(avatarUidInput.trim(), avatarIdInput.trim());
+      await updateOwnAvatar(avatarUserUid, avatarIdInput.trim());
       setAvatarSaveMsg("Salvat.");
-      setAvatarUidInput("");
+      setAllUsers((prev) => prev.map((u) => (u.uid === avatarUserUid ? { ...u, avatarId: avatarIdInput.trim() } : u)));
+      setAvatarUserUid("");
       setAvatarIdInput("");
     } catch (err) {
       console.error(err);
@@ -796,22 +806,28 @@ export default function AdminScreen({ onBack }) {
 
               <SectionCard title="Avatar utilizator">
                 <p style={s.hint}>
-                  UID-ul îl găsești în Firebase Console → Authentication → caută după email. Format avatarId:
+                  Alege utilizatorul din listă — niciun UID sau email tastat manual. Format avatarId:
                   „pachet/index" (ex: „adireal/1").
                 </p>
-                <input
-                  style={s.input}
-                  placeholder="UID utilizator"
-                  value={avatarUidInput}
-                  onChange={(e) => setAvatarUidInput(e.target.value)}
-                />
+                <select
+                  style={s.select}
+                  value={avatarUserUid}
+                  onChange={(e) => setAvatarUserUid(e.target.value)}
+                >
+                  <option value="">Alege utilizator…</option>
+                  {allUsers.map((u) => (
+                    <option key={u.uid} value={u.uid}>
+                      {u.nickname || u.uid} {u.avatarId ? `(are deja: ${u.avatarId})` : "(fără avatar)"}
+                    </option>
+                  ))}
+                </select>
                 <input
                   style={s.input}
                   placeholder="avatarId (ex: adireal/1)"
                   value={avatarIdInput}
                   onChange={(e) => setAvatarIdInput(e.target.value)}
                 />
-                <button style={s.btn} disabled={avatarSaving || !avatarUidInput.trim() || !avatarIdInput.trim()} onClick={handleSetUserAvatar} type="button">
+                <button style={s.btn} disabled={avatarSaving || !avatarUserUid || !avatarIdInput.trim()} onClick={handleSetUserAvatar} type="button">
                   {avatarSaving ? "Se salvează…" : "Setează avatarId"}
                 </button>
                 {avatarSaveMsg && <p style={s.hint}>{avatarSaveMsg}</p>}

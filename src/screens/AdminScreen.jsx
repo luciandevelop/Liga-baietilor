@@ -18,6 +18,7 @@ import {
   runMatchHealthCheck,
   updateMatch,
   listAllUsers,
+  getPlayerCardStats,
 } from "../services/adminService";
 import { getUserPublicProfiles, updateOwnAvatar } from "../services/profilesService";
 import { getCurrentSeason, getCurrentGameweek } from "../services/predictionsService";
@@ -25,7 +26,7 @@ import { COMPETITION_THEMES } from "../competitionThemes";
 import CompetitionLogo from "../components/CompetitionLogo";
 import MatchCard from "../components/MatchCard";
 import MatchResultCard from "../components/MatchResultCard";
-import PlayerBreakdownModal from "../components/PlayerBreakdownModal";
+import PlayerCard from "../components/PlayerCard";
 import PageHeader from "../components/PageHeader";
 import SectionCard from "../components/SectionCard";
 import StatusBadge from "../components/StatusBadge";
@@ -116,6 +117,9 @@ export default function AdminScreen({ onBack }) {
   const [previewMessage, setPreviewMessage] = useState("");
   const [finalizing, setFinalizing] = useState(false);
   const [openPlayerUid, setOpenPlayerUid] = useState("");
+  const [openPlayerRank, setOpenPlayerRank] = useState(null);
+  const [openPlayerStats, setOpenPlayerStats] = useState(null);
+  const [openPlayerLoading, setOpenPlayerLoading] = useState(false);
 
   async function refreshSeasons() {
     const data = await listSeasons();
@@ -437,6 +441,23 @@ export default function AdminScreen({ onBack }) {
       .catch((err) => console.error("Eroare la încărcarea listei de utilizatori:", err));
   }, [tab]);
 
+  // Aceeași sursă ca în Clasament — un singur card, indiferent de unde
+  // e deschis (Live preview din Admin, sau oricare din cele 3 taburi).
+  async function handleOpenPreviewPlayer(uid, rank) {
+    setOpenPlayerUid(uid);
+    setOpenPlayerRank(rank);
+    setOpenPlayerStats(null);
+    setOpenPlayerLoading(true);
+    try {
+      const stats = await getPlayerCardStats(uid, selectedSeasonId, selectedGameweekId);
+      setOpenPlayerStats(stats);
+    } catch (err) {
+      console.error("Eroare la încărcarea cardului:", err);
+    } finally {
+      setOpenPlayerLoading(false);
+    }
+  }
+
   async function handleSetUserAvatar() {
     setAvatarSaving(true);
     setAvatarSaveMsg("");
@@ -502,7 +523,6 @@ export default function AdminScreen({ onBack }) {
   const currentGameweek = gameweeks.find((g) => g.id === selectedGameweekId);
   const filteredMatches = matches.filter((m) => matchesSearch(m, searchTerm));
   const resultsOrderedMatches = sortForResults(filteredMatches);
-  const openPlayerRow = previewRows?.find((r) => r.uid === openPlayerUid) || null;
 
   return (
     <div style={layout.page}>
@@ -632,7 +652,7 @@ export default function AdminScreen({ onBack }) {
                         rankingBonus={r.rankingBonus}
                         totalPoints={r.totalPoints}
                         top3={r.rank <= 3}
-                        onClick={() => setOpenPlayerUid(r.uid)}
+                        onClick={() => handleOpenPreviewPlayer(r.uid, r.rank)}
                       />
                     ))}
                   </div>
@@ -838,12 +858,12 @@ export default function AdminScreen({ onBack }) {
         )}
       </div>
 
-      {openPlayerRow && (
-        <PlayerBreakdownModal
+      {openPlayerUid && !openPlayerLoading && openPlayerStats && (
+        <PlayerCard
           nickname={previewProfiles[openPlayerUid]?.nickname || openPlayerUid}
           avatarId={previewProfiles[openPlayerUid]?.avatarId}
-          row={openPlayerRow}
-          isOwn={true}
+          rank={openPlayerRank}
+          stats={openPlayerStats}
           onClose={() => setOpenPlayerUid("")}
         />
       )}

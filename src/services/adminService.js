@@ -911,3 +911,91 @@ export async function listAllUsers() {
   rows.sort((a, b) => (a.nickname || "").localeCompare(b.nickname || ""));
   return rows;
 }
+
+// Ultima etapă FINALIZATĂ a unui sezon — folosită ca fallback de tab-ul
+// "Etapă" din Clasament, când nu există nicio etapă a cărei săptămână
+// calendaristică conține azi (ex: etapa de test a rămas finalizată, dar
+// ziua a trecut). NU schimbă deloc resolveCurrentGameweek() — Home și
+// Pronosticuri rămân neschimbate, acolo o etapă expirată chiar trebuie
+// să dispară din predicții.
+export async function getLastCompletedGameweek(seasonId) {
+  const gameweeks = await listGameweeks(seasonId);
+  const completed = gameweeks.filter((g) => g.status === "completed");
+  if (completed.length === 0) return null;
+  return completed.sort((a, b) => Number(b.number) - Number(a.number))[0];
+}
+
+// Clasamentul unui SEZON — suma gameweekScores.totalPoints doar pentru
+// etapele acelui sezon, per user. Diferit de users/{uid}.seasonPoints
+// (care, în ciuda numelui, e totalul din TOATE sezoanele — vezi General).
+// Un sezon nou pornește automat de la 0, pentru că pur și simplu nu are
+// încă etape de sumat.
+export async function listSeasonLeaderboard(seasonId) {
+  const gameweeks = await listGameweeks(seasonId);
+  const completedIds = gameweeks.filter((g) => g.status === "completed").map((g) => g.id);
+  if (completedIds.length === 0) return [];
+
+  const scoresByUser = {};
+  await Promise.all(
+    completedIds.map(async (gwId) => {
+      const rows = await listGameweekScores(gwId);
+      rows.forEach((r) => {
+        if (!scoresByUser[r.userId]) scoresByUser[r.userId] = { uid: r.userId, totalPoints: 0 };
+        scoresByUser[r.userId].totalPoints += r.totalPoints || 0;
+      });
+    })
+  );
+
+  const rows = Object.values(scoresByUser);
+  rows.sort((a, b) => b.totalPoints - a.totalPoints);
+  return rows;
+}
+
+// Toate statisticile unui jucător pentru cardul FIFA — SINGURA sursă,
+// folosită identic indiferent din ce clasament (Etapă/Sezon/General) sau
+// din ce ecran (Clasament/Admin) a fost deschis cardul. `etapaGameweekId`
+// e etapa deja rezolvată de apelant (curentă sau ultima finalizată) —
+// nu se recalculează aici a doua oară, ca să nu existe două definiții
+// diferite de "etapa curentă" în aceeași aplicație.
+export async function getPlayerCardStats(uid, seasonId, etapaGameweekId) {
+  const [scoresSnap, seasonGameweeks, userSnap] = await Promise.all([
+    getDocs(query(collection(db, "gameweekScores"), where("userId", "==", uid))),
+    seasonId ? listGameweeks(seasonId) : Promise.resolve([]),
+    getDoc(doc(db, "users", uid)),
+  ]);
+
+  const allScores = scoresSnap.docs.map((d) => d.data());
+  const seasonGwIds = new Set(seasonGameweeks.map((g) => g.id));
+  const seasonScores = allScores.filter((s) => seasonGwIds.has(s.gameweekId));
+  const seasonPoints = seasonScores.reduce((sum, s) => sum + (s.totalPoints || 0), 0);
+  const generalPoints = userSnap.exists() ? (userSnap.data().seasonPoints || 0) : 0;
+
+  const etapaScore = etapaGameweekId ? allScores.find((s) => s.gameweekId === etapaGameweekId) : null;
+
+  // Statistici agregate — pe toată istoria disponibilă a userului (toate
+  // gameweekScores, orice sezon), consecvent cu "General" ca sferă cea
+  // mai largă. Calculate PUR din valori deja existente (scorePoints /
+  // cornersPoints / cardsPoints / isJoker / rankingBonus) — nicio
+  // recalculare a punctajului.
+  const allBreakdownEntries = allScores.flatMap((s) => Object.values(s.breakdown || {}));
+  const scoredEntries = allBreakdownEntries.filter((m) => m.status === "scored");
+  const exactScores = scoredEntries.filter((m) => m.scorePoints === 120).length;
+  const cornersTotal = scoredEntries.reduce((sum, m) => sum + (m.cornersPoints || 0), 0);
+  const cardsTotal = scoredEntries.reduce((sum, m) => sum + (m.cardsPoints || 0), 0);
+  const jokerUsed = allBreakdownEntries.some((m) => m.isJoker);
+  const exactPct = scoredEntries.length ? Math.round((exactScores / scoredEntries.length) * 100) : 0;
+  const bonusTotal = allScores.reduce((sum, s) => sum + (s.rankingBonus || 0), 0);
+
+  return {
+    etapaPoints: etapaScore?.totalPoints ?? null,
+    seasonPoints,
+    generalPoints,
+    exactScores,
+    cornersTotal,
+    cardsTotal,
+    jokerUsed,
+    exactPct,
+    bonusTotal,
+    matches: etapaScore ? Object.values(etapaScore.breakdown || {}) : [],
+  };
+}

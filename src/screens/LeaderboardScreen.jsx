@@ -45,7 +45,6 @@ export default function LeaderboardScreen({ onBack, user }) {
   const [profiles, setProfiles] = useState({});
 
   const [openUid, setOpenUid] = useState("");
-  const [openRank, setOpenRank] = useState(null);
   const [cardStats, setCardStats] = useState(null);
   const [cardLoading, setCardLoading] = useState(false);
 
@@ -113,12 +112,11 @@ export default function LeaderboardScreen({ onBack, user }) {
   // statistici (etapă/sezon/general), citite din aceeași sursă.
   async function handleOpenPlayer(uid, rank) {
     setOpenUid(uid);
-    setOpenRank(rank);
     setCardStats(null);
     setCardLoading(true);
     try {
       const stats = await getPlayerCardStats(uid, season?.id, gameweek?.id);
-      setCardStats(stats);
+      setCardStats({ ...stats, rank });
     } catch (err) {
       console.error("Eroare la încărcarea cardului:", err);
     } finally {
@@ -217,9 +215,10 @@ export default function LeaderboardScreen({ onBack, user }) {
 
       {openUid && !cardLoading && cardStats && (
         <PlayerCard
+          uid={openUid}
           nickname={profiles[openUid]?.nickname || openUid}
           avatarId={profiles[openUid]?.avatarId}
-          rank={openRank}
+          rank={cardStats.rank}
           stats={cardStats}
           onClose={() => setOpenUid("")}
         />

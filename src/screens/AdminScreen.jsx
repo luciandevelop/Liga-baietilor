@@ -117,7 +117,6 @@ export default function AdminScreen({ onBack }) {
   const [previewMessage, setPreviewMessage] = useState("");
   const [finalizing, setFinalizing] = useState(false);
   const [openPlayerUid, setOpenPlayerUid] = useState("");
-  const [openPlayerRank, setOpenPlayerRank] = useState(null);
   const [openPlayerStats, setOpenPlayerStats] = useState(null);
   const [openPlayerLoading, setOpenPlayerLoading] = useState(false);
 
@@ -445,12 +444,11 @@ export default function AdminScreen({ onBack }) {
   // e deschis (Live preview din Admin, sau oricare din cele 3 taburi).
   async function handleOpenPreviewPlayer(uid, rank) {
     setOpenPlayerUid(uid);
-    setOpenPlayerRank(rank);
     setOpenPlayerStats(null);
     setOpenPlayerLoading(true);
     try {
       const stats = await getPlayerCardStats(uid, selectedSeasonId, selectedGameweekId);
-      setOpenPlayerStats(stats);
+      setOpenPlayerStats({ ...stats, rank });
     } catch (err) {
       console.error("Eroare la încărcarea cardului:", err);
     } finally {
@@ -860,9 +858,10 @@ export default function AdminScreen({ onBack }) {
 
       {openPlayerUid && !openPlayerLoading && openPlayerStats && (
         <PlayerCard
+          uid={openPlayerUid}
           nickname={previewProfiles[openPlayerUid]?.nickname || openPlayerUid}
           avatarId={previewProfiles[openPlayerUid]?.avatarId}
-          rank={openPlayerRank}
+          rank={openPlayerStats.rank}
           stats={openPlayerStats}
           onClose={() => setOpenPlayerUid("")}
         />

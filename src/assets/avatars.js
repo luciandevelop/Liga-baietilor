@@ -7,13 +7,19 @@ const VARIANTS_PER_PACK = 5;
 // Parsează "pachet/index" — întoarce null dacă lipsește, e gol, sau nu
 // respectă formatul (userii fără avatar personalizat au avatarId: null,
 // exact cazul care trebuie să cadă pe fallback-ul cu inițiala).
+//
+// BUG REPARAT: regexul accepta litere mari (case-insensitive, /i), dar
+// nu normaliza pachetul înainte să construiască URL-ul — "Luck87/1" (cu
+// majusculă, exact cum arată nickname-ul) genera "/avatars/Luck87/1.png",
+// care NU se potrivea cu folderul real "luck87" (minuscule) pe un server
+// sensibil la majuscule. Acum normalizează mereu la minuscule.
 export function parseAvatarId(avatarId) {
   if (!avatarId || typeof avatarId !== "string") return null;
   const m = /^([a-z0-9_-]+)\/([1-9][0-9]*)$/i.exec(avatarId.trim());
   if (!m) return null;
   const index = parseInt(m[2], 10);
   if (index < 1 || index > VARIANTS_PER_PACK) return null;
-  return { pack: m[1], index };
+  return { pack: m[1].toLowerCase(), index };
 }
 
 // URL-ul real, gata de pus într-un <img src>. null dacă avatarId nu

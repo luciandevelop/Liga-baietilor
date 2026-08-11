@@ -254,6 +254,25 @@ function StatRow({ label, value, accent, strong }) {
   );
 }
 
+// Etichete clare pentru fiecare prag de punctaj — traduc cifra în
+// cuvinte, exact din pragurile reale ale scoringEngine.js (120/70/50/20/0
+// pentru scor; 15/10/5/2/0 pentru cornere/cartonașe), ca să nu existe loc
+// de interpretare sau discuție între jucători despre "de ce atâtea puncte".
+function scoreTierLabel(points) {
+  if (points === 120) return "scor exact";
+  if (points === 70) return "rezultat + diferență corectă";
+  if (points === 50) return "doar rezultatul corect";
+  if (points === 20) return "doar totalul de goluri";
+  return "fără reușită";
+}
+function sideStatTierLabel(points) {
+  if (points === 15) return "exact";
+  if (points === 10) return "diferență de 1";
+  if (points === 5) return "diferență de 2";
+  if (points === 2) return "diferență de 3";
+  return "fără reușită";
+}
+
 function MatchBreakdownRow({ m }) {
   const predText = m.prediction ? `${m.prediction.scoreA}-${m.prediction.scoreB}` : null;
 
@@ -297,12 +316,21 @@ function MatchBreakdownRow({ m }) {
         </div>
       </div>
 
-      {/* defalcare pe surse de puncte — ca oricine să poată verifica de
-          unde vine totalul, nu doar să-l creadă pe cuvânt */}
-      <div style={s.breakdownRow}>
-        <span>Scor <b style={s.breakdownVal}>+{m.scorePoints ?? 0}</b></span>
-        <span>Cornere <b style={s.breakdownVal}>+{m.cornersPoints ?? 0}</b></span>
-        <span>Cartonașe <b style={s.breakdownVal}>+{m.cardsPoints ?? 0}</b></span>
+      {/* defalcare pe surse de puncte, CU eticheta pragului — nu doar
+          cifra, ca să nu existe loc de discuție despre "de ce atâtea puncte" */}
+      <div style={s.breakdownGrid}>
+        <div style={s.breakdownCell}>
+          <span style={s.breakdownHead}>Scor <b style={s.breakdownVal}>+{m.scorePoints ?? 0}</b></span>
+          <span style={s.breakdownTier}>{scoreTierLabel(m.scorePoints ?? 0)}</span>
+        </div>
+        <div style={s.breakdownCell}>
+          <span style={s.breakdownHead}>Cornere <b style={s.breakdownVal}>+{m.cornersPoints ?? 0}</b></span>
+          <span style={s.breakdownTier}>{sideStatTierLabel(m.cornersPoints ?? 0)}</span>
+        </div>
+        <div style={s.breakdownCell}>
+          <span style={s.breakdownHead}>Cartonașe <b style={s.breakdownVal}>+{m.cardsPoints ?? 0}</b></span>
+          <span style={s.breakdownTier}>{sideStatTierLabel(m.cardsPoints ?? 0)}</span>
+        </div>
       </div>
     </div>
   );
@@ -485,9 +513,12 @@ const s = {
   predVsRealScore: { fontSize: 20, fontWeight: 700, color: color.textPrimary, fontFamily: font.display },
   predVsRealArrow: { fontSize: 11, color: color.textFaint, fontWeight: 700, marginTop: 12 },
 
-  breakdownRow: {
-    display: "flex", justifyContent: "space-between", fontSize: 10.5, color: color.textMuted,
-    marginTop: 10, paddingTop: 10, borderTop: `1px solid ${color.borderSubtle}`, fontFamily: font.body,
+  breakdownGrid: {
+    display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 4,
+    marginTop: 10, paddingTop: 10, borderTop: `1px solid ${color.borderSubtle}`,
   },
+  breakdownCell: { display: "flex", flexDirection: "column", gap: 2 },
   breakdownVal: { color: color.textSecondary, fontWeight: 700 },
+  breakdownHead: { fontSize: 10.5, color: color.textMuted, fontFamily: font.body },
+  breakdownTier: { fontSize: 8.5, color: color.textFaint, fontStyle: "italic", fontFamily: font.body },
 };

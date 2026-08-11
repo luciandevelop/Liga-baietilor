@@ -21,11 +21,13 @@ export default function MatchPredictionCard({
   saving,
   saveStatus, // "idle" | "success" | "error"
   saveError,
+  isSaved,
   locked,
   isFeatured,
   isJoker,
   onToggleJoker,
   jokerDisabled,
+  jokerUsedElsewhereNote,
   currentUid,
 }) {
   const p = prediction || {};
@@ -114,13 +116,20 @@ export default function MatchPredictionCard({
                 disabled={jokerDisabled || saving}
                 onClick={onToggleJoker}
               >
-                {isJoker ? "🃏 Renunță" : "🃏 Joker"}
+                {isJoker ? "🃏 Renunță" : jokerUsedElsewhereNote ? "🃏 Folosit" : "🃏 Joker"}
               </button>
 
-              <button type="button" style={s.saveBtn} disabled={saving} onClick={onSave}>
-                {saving ? "…" : saveStatus === "success" ? "✓ Salvat" : "Salvează"}
+              <button
+                type="button"
+                style={{ ...s.saveBtn, ...(isSaved && saveStatus !== "success" ? s.saveBtnModify : {}) }}
+                disabled={saving}
+                onClick={onSave}
+              >
+                {saving ? "…" : saveStatus === "success" ? "✓ Salvat" : isSaved ? "Modifică" : "Salvează"}
               </button>
             </div>
+
+            {jokerUsedElsewhereNote && <div style={s.jokerNote}>{jokerUsedElsewhereNote}</div>}
 
             {saveStatus === "error" && <div style={s.saveErr}>{saveError}</div>}
           </div>
@@ -166,9 +175,13 @@ const s = {
   },
   jokerBtnActive: { background: color.greenBg, border: `1px solid ${color.greenBorder}`, color: color.green },
   jokerBtnDisabled: { opacity: 0.4, cursor: "not-allowed" },
+  jokerNote: { fontSize: 9.5, color: color.textFaint, textAlign: "center", marginTop: 6, fontFamily: font.body },
   saveBtn: {
     flex: 1, background: color.goldGradient, color: color.goldOn, border: "none",
     borderRadius: radius.sm, padding: "9px 0", fontSize: 12, fontWeight: 800, cursor: "pointer", fontFamily: font.body,
+  },
+  saveBtnModify: {
+    background: "none", border: `1.5px solid ${color.gold}`, color: color.goldLight,
   },
   saveErr: { marginTop: 6, fontSize: 11, color: "#F0555A", textAlign: "center", fontFamily: font.body },
 

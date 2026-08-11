@@ -9,8 +9,8 @@ import { color, font, radius } from "../theme";
 export default function MatchResultCard({ match, onSave, onChangeStatus, disabled }) {
   const [scoreA, setScoreA] = useState(match.realScoreA ?? 0);
   const [scoreB, setScoreB] = useState(match.realScoreB ?? 0);
-  const [corners, setCorners] = useState(match.realCorners ?? 0);
-  const [cards, setCards] = useState(match.realCards ?? 0);
+  const [corners, setCorners] = useState(match.realCorners ?? 8);
+  const [cards, setCards] = useState(match.realCards ?? 3);
   const [saving, setSaving] = useState(false);
   const [status, setStatus] = useState("idle"); // idle | success | error
   const [error, setError] = useState("");

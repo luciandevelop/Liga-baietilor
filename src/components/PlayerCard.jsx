@@ -66,6 +66,11 @@ function getParticlesLayer(series) {
 
 export default function PlayerCard({ uid, nickname, avatarId, rank, stats, onClose }) {
   const [flipped, setFlipped] = useState(false);
+  // Când meciurile arătate sunt dintr-o etapă anterioară (fallback, nu
+  // etapa cerută), lista pornește închisă — "eventual se deschid la
+  // apăsare, dar tot trebuie să fie", nu ocupă spațiu implicit pentru o
+  // etapă care nu e cea din context.
+  const [matchesOpen, setMatchesOpen] = useState(!stats?.matchesIsFallback);
 
   if (!stats) return null;
 
@@ -203,9 +208,17 @@ export default function PlayerCard({ uid, nickname, avatarId, rank, stats, onClo
 
         <div style={s.list}>
           {matches.length === 0 && (
-            <div style={s.emptyMatches}>Etapa curentă nu e finalizată încă — meciurile apar aici după închidere.</div>
+            <div style={s.emptyMatches}>Nu există încă niciun meci finalizat pentru acest jucător.</div>
           )}
-          {matches.map((m) => (
+
+          {matches.length > 0 && stats.matchesIsFallback && (
+            <button type="button" style={s.matchesFallbackHeader} onClick={() => setMatchesOpen((v) => !v)}>
+              <span>Meciuri din {stats.matchesFallbackTitle || "ultima etapă jucată"} · etapa curentă nu are date pentru acest jucător</span>
+              <span style={{ transform: matchesOpen ? "rotate(180deg)" : "rotate(0deg)", transition: "transform 200ms ease" }}>▾</span>
+            </button>
+          )}
+
+          {matches.length > 0 && matchesOpen && matches.map((m) => (
             <MatchBreakdownRow key={m.matchId} m={m} />
           ))}
         </div>
@@ -406,6 +419,12 @@ const s = {
   emptyMatches: {
     textAlign: "center", fontSize: 11.5, color: color.textFaint, padding: "16px 10px",
     background: color.surface, border: `1px solid ${color.borderSubtle}`, borderRadius: radius.sm,
+  },
+  matchesFallbackHeader: {
+    display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, width: "100%",
+    background: "rgba(212,175,55,0.08)", border: "1px solid rgba(212,175,55,0.25)", borderRadius: radius.sm,
+    padding: "9px 12px", cursor: "pointer", fontSize: 10.5, fontWeight: 600, color: color.textSecondary,
+    fontFamily: font.body, textAlign: "left",
   },
   compactRow: {
     display: "flex", alignItems: "center", gap: 8, background: color.surface,

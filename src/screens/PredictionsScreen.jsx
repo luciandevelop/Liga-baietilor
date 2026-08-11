@@ -251,6 +251,7 @@ export default function PredictionsScreen({ user, onBack }) {
                   isJoker={isJoker}
                   onToggleJoker={() => (isJoker ? handleRemoveJoker() : handleSetJoker(m))}
                   jokerDisabled={jokerDisabled}
+                  currentUid={user.uid}
                 />
               );
             })}

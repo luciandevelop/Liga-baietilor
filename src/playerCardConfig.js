@@ -24,36 +24,44 @@ export const SERIES = {
     name: "Gold Elite",
     motto: "Regele etapei",
     quote: "Campionii nu urmăresc punctele. Punctele îi urmăresc pe ei.",
+    icon: "👑",
     primary: "#D4AF37",
     secondary: "#FFE9A8",
     bg: ["#4a3a0e", "#1c1608", "#0a0805"],
+    texture: "metal", // metal auriu, benzi de lumină late, lux discret
   },
   futureStars: {
     id: "futureStars",
     name: "Future Stars",
     motto: "Viitorul începe azi",
     quote: "Fiecare etapă este o șansă să urci.",
+    icon: "⭐",
     primary: "#B355E8",
     secondary: "#E8B8FF",
     bg: ["#2a0f3d", "#150a24", "#08040f"],
+    texture: "crystal", // fațete cristaline, gradient pe diagonală, futurist
   },
   totw: {
     id: "totw",
     name: "Team of the Week",
     motto: "În formă maximă",
     quote: "Ai prins momentul perfect.",
+    icon: "⚡",
     primary: "#3AA0FF",
     secondary: "#A9D9FF",
     bg: ["#0a2340", "#071528", "#030a14"],
+    texture: "electric", // puls radial, energie, muchii ascuțite de lumină
   },
   icon: {
     id: "icon",
     name: "Icon",
     motto: "Legendă",
     quote: "Respectul se câștigă etapă cu etapă.",
+    icon: "💎",
     primary: "#F0F0F0",
     secondary: "#FFFFFF",
     bg: ["#3a3a3a", "#1a1a1a", "#0a0a0a"],
+    texture: "marble", // marmură, vene fine, eleganță clasică
     rare: true, // singura serie cu efect holografic — vezi PlayerCard.jsx
   },
 };

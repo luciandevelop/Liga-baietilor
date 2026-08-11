@@ -296,6 +296,14 @@ function MatchBreakdownRow({ m }) {
           <span style={{ ...s.predVsRealScore, color: color.goldLight }}>{m.real.scoreA}-{m.real.scoreB}</span>
         </div>
       </div>
+
+      {/* defalcare pe surse de puncte — ca oricine să poată verifica de
+          unde vine totalul, nu doar să-l creadă pe cuvânt */}
+      <div style={s.breakdownRow}>
+        <span>Scor <b style={s.breakdownVal}>+{m.scorePoints ?? 0}</b></span>
+        <span>Cornere <b style={s.breakdownVal}>+{m.cornersPoints ?? 0}</b></span>
+        <span>Cartonașe <b style={s.breakdownVal}>+{m.cardsPoints ?? 0}</b></span>
+      </div>
     </div>
   );
 }
@@ -476,4 +484,10 @@ const s = {
   predVsRealLabel: { fontSize: 9, fontWeight: 700, color: color.textFaint, letterSpacing: "0.05em" },
   predVsRealScore: { fontSize: 20, fontWeight: 700, color: color.textPrimary, fontFamily: font.display },
   predVsRealArrow: { fontSize: 11, color: color.textFaint, fontWeight: 700, marginTop: 12 },
+
+  breakdownRow: {
+    display: "flex", justifyContent: "space-between", fontSize: 10.5, color: color.textMuted,
+    marginTop: 10, paddingTop: 10, borderTop: `1px solid ${color.borderSubtle}`, fontFamily: font.body,
+  },
+  breakdownVal: { color: color.textSecondary, fontWeight: 700 },
 };

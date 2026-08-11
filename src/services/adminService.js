@@ -1054,3 +1054,24 @@ export async function getPlayerCardStats(uid, seasonId, etapaGameweekId) {
     matchesFallbackTitle: matchesFallbackGw?.title ?? null,
   };
 }
+
+// Pronosticurile TUTUROR userilor pentru un meci — funcționează DOAR după
+// blocare (regula reală: isAfterLock(matchId), verificată pe server, nu
+// pe ceasul telefonului) — înainte de asta, interogarea întoarce eroare
+// de permisiuni, exact cum trebuie (nu văd pronosticul nimănui înainte
+// de blocare, nici al meu din lista altora). Include un rezumat rapid
+// (câți au pus victorie gazdă/egal/oaspete) — calculat pur din scorurile
+// deja citite, nimic suplimentar.
+export async function getMatchPredictions(matchId) {
+  const snap = await getDocs(query(collection(db, "predictions"), where("matchId", "==", matchId)));
+  const rows = snap.docs.map((d) => d.data());
+
+  const consensus = { home: 0, draw: 0, away: 0 };
+  rows.forEach((r) => {
+    if (r.scoreA > r.scoreB) consensus.home++;
+    else if (r.scoreA < r.scoreB) consensus.away++;
+    else consensus.draw++;
+  });
+
+  return { rows, consensus };
+}

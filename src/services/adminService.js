@@ -972,30 +972,65 @@ export async function getPlayerCardStats(uid, seasonId, etapaGameweekId) {
 
   const etapaScore = etapaGameweekId ? allScores.find((s) => s.gameweekId === etapaGameweekId) : null;
 
+  // Etapa ANTERIOARĂ a aceluiași user, în același sezon — folosită STRICT
+  // pentru titlul "Revenire spectaculoasă" (compară userul cu propriul
+  // trecut, niciodată cu alți useri). Dacă etapa curentă e prima din
+  // sezon (sau nu există sezon), pur și simplu nu există etapă anterioară
+  // — titlul respectiv nu se va potrivi, fără nicio eroare.
+  const seasonGwsSorted = seasonGameweeks.slice().sort((a, b) => Number(a.number) - Number(b.number));
+  const etapaIdx = seasonGwsSorted.findIndex((g) => g.id === etapaGameweekId);
+  const previousGw = etapaIdx > 0 ? seasonGwsSorted[etapaIdx - 1] : null;
+  const previousScore = previousGw ? allScores.find((s) => s.gameweekId === previousGw.id) : null;
+
   // Statistici agregate — pe toată istoria disponibilă a userului (toate
   // gameweekScores, orice sezon), consecvent cu "General" ca sferă cea
   // mai largă. Calculate PUR din valori deja existente (scorePoints /
-  // cornersPoints / cardsPoints / isJoker / rankingBonus) — nicio
-  // recalculare a punctajului.
+  // rankingBonus) — nicio recalculare a punctajului.
   const allBreakdownEntries = allScores.flatMap((s) => Object.values(s.breakdown || {}));
   const scoredEntries = allBreakdownEntries.filter((m) => m.status === "scored");
   const exactScores = scoredEntries.filter((m) => m.scorePoints === 120).length;
-  const cornersTotal = scoredEntries.reduce((sum, m) => sum + (m.cornersPoints || 0), 0);
-  const cardsTotal = scoredEntries.reduce((sum, m) => sum + (m.cardsPoints || 0), 0);
-  const jokerUsed = allBreakdownEntries.some((m) => m.isJoker);
-  const exactPct = scoredEntries.length ? Math.round((exactScores / scoredEntries.length) * 100) : 0;
-  const bonusTotal = allScores.reduce((sum, s) => sum + (s.rankingBonus || 0), 0);
+  const correctPct = scoredEntries.length
+    ? Math.round((scoredEntries.filter((m) => m.scorePoints >= 50).length / scoredEntries.length) * 100)
+    : 0;
+  const noPointsCount = scoredEntries.filter((m) => m.finalMatchPoints === 0).length;
+  const bonusWinsCount = allScores.filter((s) => (s.rankingBonus || 0) > 0).length;
+
+  // Puncte Speciale — categorie EXTENSIBILĂ, construită ca sumă de surse
+  // numite. Azi doar bonusul de poziție are valoare reală; dueluri/zaruri/
+  // misiuni sunt termeni pregătiți la 0, gata să primească o valoare reală
+  // când acele mecanici există — fără să schimbăm cardul sau formula
+  // vizibilă din afara acestei funcții.
+  const specialPointsBreakdown = {
+    bonus: allScores.reduce((sum, s) => sum + (s.rankingBonus || 0), 0),
+    duels: 0,
+    dice: 0,
+    missions: 0,
+  };
+  const specialPoints = Object.values(specialPointsBreakdown).reduce((a, b) => a + b, 0);
+
+  const etapaMatches = etapaScore ? Object.values(etapaScore.breakdown || {}) : [];
+
+  // Seria "Icon" e rezervată STRICT locului #1 din General — niciodată
+  // din rangul contextual (Etapă/Sezon), ca să nu se schimbe seria unui
+  // card doar pentru că a fost deschis din alt clasament. O singură
+  // interogare suplimentară, ieftină la scara asta (~11 useri).
+  const generalTop = await listGeneralLeaderboard();
+  const isTopGeneral = generalTop[0]?.uid === uid;
 
   return {
+    rank: null, // completat de apelant — poziția AFIȘATĂ pe față, contextuală tabului din care s-a deschis
+    isTopGeneral, // determină seria "Icon" — NICIODATĂ contextual
     etapaPoints: etapaScore?.totalPoints ?? null,
+    previousEtapaPoints: previousScore?.totalPoints ?? null,
     seasonPoints,
     generalPoints,
     exactScores,
-    cornersTotal,
-    cardsTotal,
-    jokerUsed,
-    exactPct,
-    bonusTotal,
-    matches: etapaScore ? Object.values(etapaScore.breakdown || {}) : [],
+    correctPct,
+    bonusWinsCount,
+    noPointsCount,
+    specialPoints,
+    gameweeksPlayed: allScores.length,
+    matchesThisEtapa: etapaMatches.length,
+    matches: etapaMatches,
   };
 }

@@ -1008,7 +1008,25 @@ export async function getPlayerCardStats(uid, seasonId, etapaGameweekId) {
   };
   const specialPoints = Object.values(specialPointsBreakdown).reduce((a, b) => a + b, 0);
 
-  const etapaMatches = etapaScore ? Object.values(etapaScore.breakdown || {}) : [];
+  // Meciurile de arătat sub card — DIN etapa cerută, dacă userul ăsta are
+  // ceva acolo. Dacă nu (nu a jucat etapa curentă, sau etapa cerută nu
+  // are încă date pentru el), cădem pe ULTIMA lui etapă cu meciuri reale —
+  // "eventual se deschid la apăsare, dar tot trebuie să fie", nu un ecran
+  // gol. `matchesFallback` spune apelantului dacă s-a întâmplat asta, ca
+  // să poată eticheta clar ("Meciuri din Etapa 1" etc.), nu să pară că e
+  // etapa curentă.
+  let matchesSource = etapaScore;
+  let matchesFallbackGw = null;
+  if (!matchesSource || !Object.keys(matchesSource.breakdown || {}).length) {
+    const sorted = allScores
+      .filter((sc) => Object.keys(sc.breakdown || {}).length > 0)
+      .sort((a, b) => (b.computedAt?.toMillis?.() ?? 0) - (a.computedAt?.toMillis?.() ?? 0));
+    if (sorted.length) {
+      matchesSource = sorted[0];
+      matchesFallbackGw = seasonGameweeks.find((g) => g.id === matchesSource.gameweekId) || null;
+    }
+  }
+  const etapaMatches = matchesSource ? Object.values(matchesSource.breakdown || {}) : [];
 
   // Seria "Icon" e rezervată STRICT locului #1 din General — niciodată
   // din rangul contextual (Etapă/Sezon), ca să nu se schimbe seria unui
@@ -1032,5 +1050,7 @@ export async function getPlayerCardStats(uid, seasonId, etapaGameweekId) {
     gameweeksPlayed: allScores.length,
     matchesThisEtapa: etapaMatches.length,
     matches: etapaMatches,
+    matchesIsFallback: Boolean(matchesFallbackGw),
+    matchesFallbackTitle: matchesFallbackGw?.title ?? null,
   };
 }

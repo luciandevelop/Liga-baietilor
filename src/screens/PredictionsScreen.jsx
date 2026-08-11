@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   getCurrentSeason,
   getCurrentGameweek,
@@ -14,7 +14,7 @@ import MatchPredictionCard from "../components/MatchPredictionCard";
 import { color, font, radius } from "../matchdayTheme";
 import useNow from "../hooks/useNow";
 
-export default function PredictionsScreen({ user, onBack }) {
+export default function PredictionsScreen({ user, onBack, scrollToMatchId }) {
   // Re-render la fiecare 30s — face ca isMatchLocked(m) să reflecte mereu
   // ora reală curentă, fără refresh manual. Nu e sursa de securitate
   // (aceea rămâne firestore.rules), doar sincronizează UI-ul cu ea.
@@ -27,6 +27,11 @@ export default function PredictionsScreen({ user, onBack }) {
   const [matches, setMatches] = useState([]);
   const [predictions, setPredictions] = useState({});
   const [saveState, setSaveState] = useState({}); // { [matchId]: { saving, status, error } }
+  // Meciuri cu pronostic DEJA salvat în Firestore — spre deosebire de
+  // saveState (tranzitoriu, dispare la reîncărcare), asta rămâne stabil
+  // cât timp ești pe ecran, ca butonul să arate "Modifică" de la bun
+  // început, nu doar imediat după un salvare proaspătă.
+  const [savedMatchIds, setSavedMatchIds] = useState(new Set());
   const [joker, setJoker] = useState(null); // { matchId } | null
   const [jokerSaving, setJokerSaving] = useState(false);
   const [jokerError, setJokerError] = useState("");
@@ -101,11 +106,12 @@ export default function PredictionsScreen({ user, onBack }) {
       initial[match.id] = {
         scoreA: p?.scoreA ?? 0,
         scoreB: p?.scoreB ?? 0,
-        corners: p?.corners ?? 0,
-        cards: p?.cards ?? 0,
+        corners: p?.corners ?? 8,
+        cards: p?.cards ?? 3,
       };
     });
     setPredictions(initial);
+    setSavedMatchIds(new Set(Object.keys(existing)));
     setJoker(existingJoker);
     setLoadState("ready");
   }, [user.uid]);
@@ -113,6 +119,20 @@ export default function PredictionsScreen({ user, onBack }) {
   useEffect(() => {
     load();
   }, [load]);
+
+  // Derulează automat la meciul-țintă (venit din "Progres etapă" pe Home),
+  // o singură dată, după ce lista chiar există în pagină — nu la fiecare
+  // randare, altfel ar sări înapoi de fiecare dată când userul scrollează
+  // manual în altă parte.
+  const scrolledRef = useRef(false);
+  useEffect(() => {
+    if (scrolledRef.current || !scrollToMatchId || loadState !== "ready") return;
+    const el = document.querySelector(`[data-match-id="${scrollToMatchId}"]`);
+    if (el) {
+      el.scrollIntoView({ behavior: "smooth", block: "center" });
+      scrolledRef.current = true;
+    }
+  }, [scrollToMatchId, loadState, matches]);
 
   function updateMatch(matchId, patch) {
     setPredictions((prev) => ({ ...prev, [matchId]: { ...prev[matchId], ...patch } }));
@@ -132,6 +152,7 @@ export default function PredictionsScreen({ user, onBack }) {
         cards: p.cards,
       });
       setSaveState((prev) => ({ ...prev, [matchId]: { saving: false, status: "success", error: "" } }));
+      setSavedMatchIds((prev) => new Set(prev).add(matchId));
     } catch (err) {
       console.error(`Eroare la salvarea meciului ${matchId}:`, err);
       setSaveState((prev) => ({
@@ -229,30 +250,34 @@ export default function PredictionsScreen({ user, onBack }) {
               const sState = saveState[m.id] || {};
 
               // Meciul care ARE deja Jokerul: poate fi doar renunțat, și doar
-              // dacă nu e locked. Orice alt meci: poate DEVENI noul Joker
-              // (mutare A→B), dar numai dacă meciul nou nu e featured/locked
-              // ȘI meciul vechi al Jokerului (dacă există) nu e deja locked.
+              // dacă nu e locked. Orice alt meci: butonul e dezactivat COMPLET
+              // cât timp Jokerul e activ altundeva — nu se mai poate "muta"
+              // silențios dintr-un click; userul trebuie să se întoarcă la
+              // meciul original și să apese "Renunță" acolo, explicit.
               const jokerDisabled = isJoker
                 ? locked || jokerSaving
-                : isFeatured || locked || jokerSaving || jokerMatchLocked;
+                : isFeatured || locked || jokerSaving || Boolean(joker);
 
               return (
-                <MatchPredictionCard
-                  key={m.id}
-                  match={m}
-                  prediction={predictions[m.id]}
-                  onChange={(patch) => updateMatch(m.id, patch)}
-                  onSave={() => handleSaveMatch(m)}
-                  saving={!!sState.saving}
-                  saveStatus={sState.status}
-                  saveError={sState.error}
-                  locked={locked}
-                  isFeatured={isFeatured}
-                  isJoker={isJoker}
-                  onToggleJoker={() => (isJoker ? handleRemoveJoker() : handleSetJoker(m))}
-                  jokerDisabled={jokerDisabled}
-                  currentUid={user.uid}
-                />
+                <div key={m.id} data-match-id={m.id}>
+                  <MatchPredictionCard
+                    match={m}
+                    prediction={predictions[m.id]}
+                    onChange={(patch) => updateMatch(m.id, patch)}
+                    onSave={() => handleSaveMatch(m)}
+                    saving={!!sState.saving}
+                    saveStatus={sState.status}
+                    saveError={sState.error}
+                    isSaved={savedMatchIds.has(m.id)}
+                    locked={locked}
+                    isFeatured={isFeatured}
+                    isJoker={isJoker}
+                    onToggleJoker={() => (isJoker ? handleRemoveJoker() : handleSetJoker(m))}
+                    jokerDisabled={jokerDisabled}
+                    jokerUsedElsewhereNote={!isJoker && joker && jokerMatch ? `Jokerul e activ pe ${jokerMatch.homeTeam} vs ${jokerMatch.awayTeam}` : null}
+                    currentUid={user.uid}
+                  />
+                </div>
               );
             })}
           </div>

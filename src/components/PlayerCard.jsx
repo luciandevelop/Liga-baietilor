@@ -174,6 +174,24 @@ export default function PlayerCard({ uid, nickname, avatarId, rank, stats, onClo
                   <span style={s.backName}>{nickname}</span>
                 </div>
 
+                <div style={s.pointsRow}>
+                  <div style={s.pointsTile}>
+                    <span style={s.pointsValue}>{stats.etapaPoints ?? "–"}</span>
+                    <span style={s.pointsLabel}>Etapă{stats.etapaPointsIsLive ? " · live" : ""}</span>
+                  </div>
+                  <div style={s.pointsTile}>
+                    <span style={s.pointsValue}>{stats.seasonPoints}</span>
+                    <span style={s.pointsLabel}>Sezon</span>
+                  </div>
+                  <div style={s.pointsTile}>
+                    <span style={s.pointsValue}>{stats.generalPoints}</span>
+                    <span style={s.pointsLabel}>General</span>
+                  </div>
+                </div>
+                {stats.etapaPointsIsLive && (
+                  <div style={s.liveNote}>Etapa curentă încă nu e finalizată — punctajul e provizoriu, se recalculează la fiecare meci încheiat.</div>
+                )}
+
                 <div style={s.realStatsList}>
                   <StatRow label="Scoruri exacte" value={stats.exactScores} accent={series.secondary} />
                   <StatRow label="Procent pronosticuri corecte" value={`${stats.correctPct}%`} accent={series.secondary} />
@@ -390,6 +408,16 @@ const s = {
   backHead: { display: "flex", alignItems: "center", gap: 8, padding: "20px 18px 12px", fontSize: 15, fontWeight: 800, color: "#fff" },
   backName: {},
 
+  pointsRow: { display: "flex", gap: 6, padding: "0 16px", marginBottom: 8 },
+  pointsTile: {
+    flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 2,
+    background: "rgba(255,255,255,0.06)", borderRadius: radius.md, padding: "8px 2px",
+  },
+  pointsValue: { fontSize: 16, fontWeight: 800, color: "#fff", fontFamily: font.display },
+  pointsLabel: { fontSize: 8, color: "rgba(255,255,255,0.55)", fontWeight: 700, letterSpacing: "0.03em", textTransform: "uppercase" },
+  liveNote: {
+    fontSize: 9, color: color.textFaint, textAlign: "center", padding: "0 16px", marginBottom: 8, lineHeight: 1.4,
+  },
   realStatsList: { padding: "0 16px", display: "flex", flexDirection: "column", gap: 2 },
   statRow: {
     display: "flex", justifyContent: "space-between", alignItems: "center",

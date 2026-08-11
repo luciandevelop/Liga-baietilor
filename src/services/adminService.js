@@ -1015,8 +1015,25 @@ export async function getPlayerCardStats(uid, seasonId, etapaGameweekId) {
   // gol. `matchesFallback` spune apelantului dacă s-a întâmplat asta, ca
   // să poată eticheta clar ("Meciuri din Etapa 1" etc.), nu să pară că e
   // etapa curentă.
+  //
+  // ÎNAINTE de fallback: dacă etapa CERUTĂ încă nu e finalizată (nu există
+  // gameweekScores pentru ea încă — normal, se scrie o singură dată la
+  // "Finalizează etapa"), încercăm rezultate LIVE, calculate meci-cu-meci
+  // din matches deja marcate "Final" de admin — "rezultatele să apară
+  // după fiecare meci, nu după ce se termină toată etapa".
+  const requestedGw = etapaGameweekId ? seasonGameweeks.find((g) => g.id === etapaGameweekId) : null;
   let matchesSource = etapaScore;
   let matchesFallbackGw = null;
+  let liveEtapaPoints = null;
+
+  if (!matchesSource && requestedGw && requestedGw.status !== "completed") {
+    const liveMatches = await getLiveMatchResultsForUser(etapaGameweekId, uid);
+    if (liveMatches.length > 0) {
+      matchesSource = { breakdown: Object.fromEntries(liveMatches.map((m) => [m.matchId, m])) };
+      liveEtapaPoints = liveMatches.reduce((sum, m) => sum + (m.finalMatchPoints || 0), 0);
+    }
+  }
+
   if (!matchesSource || !Object.keys(matchesSource.breakdown || {}).length) {
     const sorted = allScores
       .filter((sc) => Object.keys(sc.breakdown || {}).length > 0)
@@ -1038,7 +1055,8 @@ export async function getPlayerCardStats(uid, seasonId, etapaGameweekId) {
   return {
     rank: null, // completat de apelant — poziția AFIȘATĂ pe față, contextuală tabului din care s-a deschis
     isTopGeneral, // determină seria "Icon" — NICIODATĂ contextual
-    etapaPoints: etapaScore?.totalPoints ?? null,
+    etapaPoints: etapaScore?.totalPoints ?? liveEtapaPoints,
+    etapaPointsIsLive: !etapaScore && liveEtapaPoints !== null,
     previousEtapaPoints: previousScore?.totalPoints ?? null,
     seasonPoints,
     generalPoints,
@@ -1074,4 +1092,52 @@ export async function getMatchPredictions(matchId) {
   });
 
   return { rows, consensus };
+}
+
+// Rezultate LIVE, meci-cu-meci, ÎNAINTE ca etapa să fie finalizată —
+// exact ce a cerut Lu: "rezultatele să apară după fiecare meci
+// finalizat, nu după ce se termină o etapă". NU atinge deloc sistemul de
+// punctaj — refolosește computeMatchPoints() din scoringEngine.js
+// NESCHIMBAT, doar pentru afișare, nimic scris în Firestore. Diferă de
+// gameweekScores (scris o singură dată, la finalizare) — aici se
+// recalculează la fiecare deschidere, din matches (unde adminul salvează
+// scorul real, meci cu meci) + propriul pronostic al userului.
+export async function getLiveMatchResultsForUser(gameweekId, uid) {
+  const [matchesSnap, gwSnap, jokerSnap] = await Promise.all([
+    getDocs(query(collection(db, "matches"), where("gameweekId", "==", gameweekId))),
+    getDoc(doc(db, "gameweeks", gameweekId)),
+    getDoc(doc(db, "jokers", `${gameweekId}_${uid}`)),
+  ]);
+
+  const finished = matchesSnap.docs
+    .map((d) => ({ id: d.id, ...d.data() }))
+    .filter((m) => m.status === "finished" && m.realScoreA != null && m.realScoreB != null);
+  if (finished.length === 0) return [];
+
+  const featuredIds = gwSnap.exists() ? gwSnap.data().featuredMatchIds || [] : [];
+  const jokerMatchId = jokerSnap.exists() ? jokerSnap.data().matchId : null;
+
+  const predSnaps = await Promise.all(finished.map((m) => getDoc(doc(db, "predictions", `${m.id}_${uid}`))));
+
+  return finished.map((m, i) => {
+    const matchSnapshot = { matchId: m.id, homeTeam: m.homeTeam, awayTeam: m.awayTeam, kickoffAt: m.kickoffAt };
+    const predSnap = predSnaps[i];
+    if (!predSnap.exists()) return { ...matchSnapshot, status: "no-prediction" };
+
+    const prediction = predSnap.data();
+    const isFeatured = featuredIds.includes(m.id);
+    const isJoker = jokerMatchId === m.id;
+    const result = computeMatchPoints({ prediction, match: m, isFeatured, isJoker });
+    if (!result) return { ...matchSnapshot, status: "no-prediction" };
+
+    return {
+      ...matchSnapshot,
+      status: "scored",
+      isFeatured,
+      isJoker,
+      prediction: { scoreA: prediction.scoreA, scoreB: prediction.scoreB },
+      real: { scoreA: m.realScoreA, scoreB: m.realScoreB },
+      ...result,
+    };
+  });
 }

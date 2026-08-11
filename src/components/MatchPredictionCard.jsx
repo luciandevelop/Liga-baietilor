@@ -1,6 +1,7 @@
 import NumericStepper from "./NumericStepper";
 import ClubLogo from "./ClubLogo";
 import CompetitionHeaderStrip from "./CompetitionHeaderStrip";
+import FriendsPredictions from "./FriendsPredictions";
 import { getMatchStatus, MATCH_STATUS_LABEL, MATCH_STATUS_TONE } from "../utils/matchStatus";
 import { getCompetitionTheme } from "../competitionThemes";
 import { color, font, radius, shadow } from "../matchdayTheme";
@@ -25,6 +26,7 @@ export default function MatchPredictionCard({
   isJoker,
   onToggleJoker,
   jokerDisabled,
+  currentUid,
 }) {
   const p = prediction || {};
   const status = getMatchStatus(match);
@@ -86,6 +88,7 @@ export default function MatchPredictionCard({
               {p.cards !== "" && p.cards !== undefined ? p.cards : "–"}
             </div>
             <span style={s.lockedTag}>PRONOSTIC BLOCAT</span>
+            <FriendsPredictions matchId={match.id} currentUid={currentUid} homeTeam={match.homeTeam} awayTeam={match.awayTeam} />
           </div>
         ) : (
           <div style={s.inputsBox}>

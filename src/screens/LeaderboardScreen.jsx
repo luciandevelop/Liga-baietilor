@@ -152,12 +152,18 @@ export default function LeaderboardScreen({ onBack, user }) {
     }
   }
 
-  async function handleOpenPlayer(uid, rank) {
+  // `contextGwId` — etapa DIN CARE s-a apăsat rândul, nu mereu etapa
+  // curentă. BUG REPARAT: rândurile din accordion-ul "Etape anterioare"
+  // apelau asta fără să spună din ce etapă vin, deci cardul încerca
+  // mereu să arate meciurile etapei curente — dacă jucătorul ăla nu avea
+  // date acolo, lista ieșea goală, chiar dacă chiar avea meciuri în etapa
+  // pe care tocmai o deschisese.
+  async function handleOpenPlayer(uid, rank, contextGwId = gameweek?.id) {
     setOpenUid(uid);
     setCardStats(null);
     setCardLoading(true);
     try {
-      const stats = await getPlayerCardStats(uid, season?.id, gameweek?.id);
+      const stats = await getPlayerCardStats(uid, season?.id, contextGwId);
       setCardStats({ ...stats, rank });
     } catch (err) {
       console.error("Eroare la încărcarea cardului:", err);
@@ -245,7 +251,7 @@ export default function LeaderboardScreen({ onBack, user }) {
                               totalPoints={r.totalPoints}
                               top3={r.rank <= 3}
                               showBonus={true}
-                              onClick={() => handleOpenPlayer(r.uid, r.rank)}
+                              onClick={() => handleOpenPlayer(r.uid, r.rank, gw.id)}
                             />
                           ))}
                         </div>

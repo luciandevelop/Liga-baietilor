@@ -7,6 +7,7 @@ import {
   listenLiveGameweekScores,
   getLastCompletedGameweek,
   getPlayerCardStats,
+  listGameweeks,
 } from "../services/adminService";
 import { getUserPublicProfiles } from "../services/profilesService";
 import PlayerCard from "../components/PlayerCard";
@@ -44,6 +45,14 @@ export default function LeaderboardScreen({ onBack, user }) {
   const [generalRows, setGeneralRows] = useState([]);
   const [profiles, setProfiles] = useState({});
 
+  // Etape anterioare — sub etapa curentă, fiecare se deschide DOAR la
+  // apăsare (nu se încarcă toate dinainte, ca să nu tragem degeaba date
+  // pentru etape pe care nimeni nu le mai deschide).
+  const [pastGameweeks, setPastGameweeks] = useState([]);
+  const [expandedGwId, setExpandedGwId] = useState("");
+  const [expandedGwRows, setExpandedGwRows] = useState({}); // cache: gwId -> rows
+  const [expandedGwLoading, setExpandedGwLoading] = useState("");
+
   const [openUid, setOpenUid] = useState("");
   const [cardStats, setCardStats] = useState(null);
   const [cardLoading, setCardLoading] = useState(false);
@@ -76,6 +85,16 @@ export default function LeaderboardScreen({ onBack, user }) {
             const p = await getUserPublicProfiles(rows.map((r) => r.uid));
             setProfiles((prev) => ({ ...prev, ...p }));
           }
+
+          // Etape anterioare — doar lista (titlu + id), fără punctaje încă.
+          // Punctajele fiecărei etape se aduc STRICT la apăsare (vezi
+          // toggleExpandGw mai jos) — nu tragem degeaba date pentru etape
+          // pe care nimeni nu le deschide.
+          const allGws = await listGameweeks(s.id);
+          const past = allGws
+            .filter((g) => g.status === "completed" && g.id !== gw?.id)
+            .sort((a, b) => Number(b.number) - Number(a.number));
+          setPastGameweeks(past);
 
           const sRows = await listSeasonLeaderboard(s.id);
           setSeasonRows(sRows);
@@ -110,6 +129,29 @@ export default function LeaderboardScreen({ onBack, user }) {
 
   // Un singur card, indiferent din ce tab a fost apăsat — aceleași
   // statistici (etapă/sezon/general), citite din aceeași sursă.
+  // O etapă anterioară se deschide DOAR la apăsare — dacă e deja deschisă,
+  // apăsarea o închide (accordion simplu). Rândurile se aduc o singură
+  // dată per etapă (cache local) — a doua deschidere nu mai cere Firestore.
+  async function toggleExpandGw(gw) {
+    if (expandedGwId === gw.id) {
+      setExpandedGwId("");
+      return;
+    }
+    setExpandedGwId(gw.id);
+    if (expandedGwRows[gw.id]) return; // deja în cache
+    setExpandedGwLoading(gw.id);
+    try {
+      const rows = (await listGameweekScores(gw.id)).map(normalizeRow);
+      setExpandedGwRows((prev) => ({ ...prev, [gw.id]: rows }));
+      const p = await getUserPublicProfiles(rows.map((r) => r.uid));
+      setProfiles((prev) => ({ ...prev, ...p }));
+    } catch (err) {
+      console.error("Eroare la încărcarea etapei anterioare:", err);
+    } finally {
+      setExpandedGwLoading("");
+    }
+  }
+
   async function handleOpenPlayer(uid, rank) {
     setOpenUid(uid);
     setCardStats(null);
@@ -175,6 +217,44 @@ export default function LeaderboardScreen({ onBack, user }) {
                 onClick={() => handleOpenPlayer(r.uid, r.rank)}
               />
             ))}
+
+            {pastGameweeks.length > 0 && (
+              <div style={s.pastSection}>
+                <div style={s.pastSectionLabel}>Etape anterioare</div>
+                {pastGameweeks.map((gw) => {
+                  const isOpen = expandedGwId === gw.id;
+                  const rows = expandedGwRows[gw.id] || [];
+                  const isLoadingThis = expandedGwLoading === gw.id;
+                  return (
+                    <div key={gw.id} style={s.pastGwBlock}>
+                      <button type="button" style={s.pastGwHeader} onClick={() => toggleExpandGw(gw)}>
+                        <span>{gw.title}</span>
+                        <span style={{ ...s.pastGwChevron, transform: isOpen ? "rotate(180deg)" : "rotate(0deg)" }}>▾</span>
+                      </button>
+                      {isOpen && (
+                        <div style={s.pastGwBody}>
+                          {isLoadingThis && <div style={s.centerBox}>Se încarcă…</div>}
+                          {!isLoadingThis && rows.map((r) => (
+                            <PlayerRankRow
+                              key={r.uid}
+                              rank={r.rank}
+                              nickname={profiles[r.uid]?.nickname || r.uid}
+                              avatarId={profiles[r.uid]?.avatarId}
+                              pointsFromMatches={r.pointsFromMatches}
+                              rankingBonus={r.rankingBonus}
+                              totalPoints={r.totalPoints}
+                              top3={r.rank <= 3}
+                              showBonus={true}
+                              onClick={() => handleOpenPlayer(r.uid, r.rank)}
+                            />
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
           </div>
         )}
 
@@ -237,4 +317,18 @@ const s = {
   centerBox: { textAlign: "center", color: color.textMuted, fontSize: 13.5, padding: "30px 16px" },
   liveRow: { display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4 },
   list: { display: "flex", flexDirection: "column", gap: 7 },
+
+  pastSection: { marginTop: 14, display: "flex", flexDirection: "column", gap: 6 },
+  pastSectionLabel: {
+    fontSize: 10, fontWeight: 700, letterSpacing: "0.09em", textTransform: "uppercase",
+    color: color.textFaint, marginBottom: 2, fontFamily: font.body,
+  },
+  pastGwBlock: { background: color.surfaceInset, border: `1px solid ${color.border}`, borderRadius: radius.md, overflow: "hidden" },
+  pastGwHeader: {
+    width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between",
+    background: "none", border: "none", padding: "11px 14px", cursor: "pointer",
+    fontSize: 12.5, fontWeight: 700, color: color.textPrimary, fontFamily: font.body,
+  },
+  pastGwChevron: { color: color.textFaint, fontSize: 11, transition: "transform 200ms ease" },
+  pastGwBody: { padding: "0 8px 8px", display: "flex", flexDirection: "column", gap: 6 },
 };

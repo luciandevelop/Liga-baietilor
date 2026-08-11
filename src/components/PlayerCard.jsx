@@ -13,6 +13,57 @@ import { color, font, radius, shadow } from "../theme";
 // (poziția din clasamentul din care ai apăsat) — seria "Icon" citește
 // separat `stats.isTopGeneral`, nu acest rank, ca să nu se schimbe
 // identitatea cardului după din ce clasament îl deschizi.
+// ── Textura ramei — nu doar culoare diferită, ci un TIP de tratament
+// diferit per serie (cerut explicit: "recognoscibil prin tipul de glow,
+// textura ramei, nu doar culoare"). Benzi de lumină late = metal auriu;
+// benzi înguste și dese = electric; unghi diagonal + trepte = cristal;
+// tranziție lină cu un vârf alb central = marmură.
+function getFrameGradient(series) {
+  const { primary: p, secondary: s2 } = series;
+  switch (series.texture) {
+    case "metal":
+      return `linear-gradient(120deg, ${s2} 0%, ${p} 10%, #FFFCF0 14%, ${p} 18%, ${s2} 36%, ${p} 58%, #FFFCF0 62%, ${p} 66%, ${s2} 84%, ${p} 100%)`;
+    case "electric":
+      return `linear-gradient(105deg, ${p} 0%, ${s2} 14%, ${p} 22%, ${s2} 32%, ${p} 46%, #EAF6FF 50%, ${p} 54%, ${s2} 68%, ${p} 78%, ${s2} 90%, ${p} 100%)`;
+    case "crystal":
+      return `linear-gradient(140deg, ${s2} 0%, ${p} 22%, ${s2} 38%, #FFFFFF 42%, ${s2} 46%, ${p} 64%, ${s2} 80%, ${p} 100%)`;
+    case "marble":
+      return `linear-gradient(155deg, ${s2} 0%, ${p} 24%, #FFFFFF 40%, ${p} 46%, ${s2} 58%, ${p} 76%, #F5F5F5 88%, ${p} 100%)`;
+    default:
+      return `linear-gradient(135deg, ${s2}, ${p}, ${s2}, ${p}, ${s2})`;
+  }
+}
+
+// ── Atmosfera din spatele pozei — al doilea strat de personalitate.
+function getAtmosphereGradient(series) {
+  const { primary: p, secondary: s2 } = series;
+  switch (series.texture) {
+    case "electric": // inele concentrice de energie, ca un puls
+      return `radial-gradient(35% 30% at 50% 20%, ${s2}88, transparent 60%), radial-gradient(60% 45% at 50% 20%, ${p}55, transparent 70%), radial-gradient(90% 65% at 50% 15%, ${p}25, transparent 75%)`;
+    case "crystal": // schimbare de culoare pe diagonală, futurist
+      return `linear-gradient(125deg, ${p}66 0%, transparent 35%, ${s2}44 55%, transparent 80%)`;
+    case "marble": // glow neutru, mai alb, foarte discret
+      return `radial-gradient(80% 55% at 40% 10%, ${s2}40, transparent 65%), radial-gradient(60% 40% at 80% 30%, ${p}25, transparent 70%)`;
+    case "metal":
+    default:
+      return `radial-gradient(70% 55% at 30% 10%, ${p}55, transparent 65%)`;
+  }
+}
+
+// ── Particule — un singur strat de fundal cu mai multe radial-gradient
+// mici, poziții fixe (determinist, nu aleator la fiecare randare) — fără
+// elemente DOM suplimentare, cost aproape zero.
+function getParticlesLayer(series) {
+  const c = series.secondary;
+  const dots = [
+    [12, 18, 2], [78, 10, 1.5], [88, 32, 2.5], [8, 44, 1.5], [92, 58, 2],
+    [15, 66, 1.5], [70, 72, 2], [35, 8, 1.5], [55, 28, 1.5], [25, 52, 2],
+  ];
+  return dots
+    .map(([x, y, r]) => `radial-gradient(${r}px ${r}px at ${x}% ${y}%, ${c}CC, transparent 100%)`)
+    .join(", ");
+}
+
 export default function PlayerCard({ uid, nickname, avatarId, rank, stats, onClose }) {
   const [flipped, setFlipped] = useState(false);
 
@@ -33,6 +84,9 @@ export default function PlayerCard({ uid, nickname, avatarId, rank, stats, onClo
   });
 
   const bgGradient = `radial-gradient(140% 100% at 30% 0%, ${series.primary}33, transparent 55%), linear-gradient(165deg, ${series.bg[0]} 0%, ${series.bg[1]} 60%, ${series.bg[2]} 100%)`;
+  const frameGradient = getFrameGradient(series);
+  const atmosphereGradient = getAtmosphereGradient(series);
+  const particlesLayer = getParticlesLayer(series);
 
   return (
     <div style={s.overlay} onClick={onClose}>
@@ -45,49 +99,69 @@ export default function PlayerCard({ uid, nickname, avatarId, rank, stats, onClo
               style={{ ...s.flipInner, transform: flipped ? "rotateY(180deg)" : "rotateY(0deg)" }}
               onClick={() => setFlipped((v) => !v)}
             >
-              {/* ══════════ FAȚĂ ══════════ */}
-              <div style={{ ...s.flipFace, ...s.card, background: bgGradient, borderColor: series.primary, boxShadow: `0 0 34px ${series.primary}55, ${shadow.elevated}` }}>
-                <button style={s.closeBtn} onClick={(e) => { e.stopPropagation(); onClose(); }} type="button">✕</button>
+              {/* ══════════ FAȚĂ — ramă dublă, formă cu vârfuri (nu dreptunghi tăiat) ══════════ */}
+              <div style={{ ...s.flipFace, ...s.cardOuter, background: frameGradient, boxShadow: `0 0 40px ${series.primary}66, ${shadow.elevated}` }}>
+                {/* rama exterioară — "metalul" cardului, se vede ca o bandă în jurul întregului conținut */}
+                <div style={{ ...s.cardInner, background: bgGradient }}>
+                  {/* strat de atmosferă — personalitate proprie per serie, sub poză */}
+                  <div style={{ ...s.atmosphereLayer, background: atmosphereGradient }} />
+                  {/* particule discrete — aceleași poziții mereu, doar culoarea seriei diferă */}
+                  <div style={{ ...s.particlesLayer, backgroundImage: particlesLayer }} />
 
-                {/* efect de cristale în spatele avatarului — pur CSS */}
-                <div style={s.crystalField}>
-                  {[0, 1, 2, 3, 4, 5].map((i) => (
-                    <div
-                      key={i}
-                      style={{
-                        ...s.crystal,
-                        background: i % 2 === 0 ? series.primary : series.secondary,
-                        transform: `rotate(${i * 60}deg) translateY(-40px)`,
-                        opacity: 0.16 + (i % 3) * 0.05,
-                      }}
-                    />
-                  ))}
-                </div>
+                  <button style={s.closeBtn} onClick={(e) => { e.stopPropagation(); onClose(); }} type="button">✕</button>
 
-                <div style={s.rankBadge}>#{rank ?? "–"}</div>
-                <div style={{ ...s.seriesTag, borderColor: series.primary, color: series.secondary }}>{series.name}</div>
+                  {/* cristale la colțuri — peste ramă ȘI peste poză, fără graniță */}
+                  <div style={{ ...s.shard, ...s.shardTL, background: series.secondary }} />
+                  <div style={{ ...s.shard, ...s.shardTR, background: series.primary }} />
+                  <div style={{ ...s.shard, ...s.shardBL, background: series.primary }} />
 
-                <div style={s.avatarZone}>
-                  {avatarUrl ? (
-                    <img src={avatarUrl} alt={nickname} style={s.avatarImg} />
-                  ) : (
-                    <div style={{ ...s.avatarFallback, color: series.secondary }}>{initial}</div>
-                  )}
-                  <div style={{ ...s.avatarFade, background: `linear-gradient(180deg, transparent 55%, ${series.bg[2]} 96%)` }} />
-                </div>
+                  {/* emblemă centrală sus — mică, discretă */}
+                  <div style={{ ...s.crest, borderColor: series.secondary, color: series.secondary }}>{series.icon}</div>
 
-                <div style={s.frontFooter}>
-                  <div style={s.frontName}>{nickname}</div>
-                  <div style={{ ...s.frontTitle, color: series.secondary }}>
-                    <span>{title.icon}</span> {title.label}
+                  {/* rank — mare, fundal închis fix (nu culoarea seriei — altfel se pierde pe poze deschise la culoare) */}
+                  <div style={s.rankZone}>
+                    <div style={{ ...s.rankShield, borderColor: series.secondary }} />
+                    <span style={s.rankNum}>#{rank ?? "–"}</span>
                   </div>
-                  <div style={{ ...s.frontScore, color: series.secondary }}>{stats.generalPoints}<span style={s.frontScoreUnit}>p</span></div>
-                  <div style={s.frontMotto}>„{series.motto}"</div>
+
+                  {/* serie — panglică, nu chip */}
+                  <div style={{ ...s.seriesRibbon, background: `linear-gradient(90deg, ${series.secondary}, ${series.primary})` }}>
+                    <span style={s.seriesRibbonText}>{series.name}</span>
+                  </div>
+
+                  {/* poza — umple aproape tot cardul; masca estompează marginile treptat,
+                      nu le taie drept — asta o "imprimă" în card, nu o lipește peste el */}
+                  <div style={s.avatarZone}>
+                    {avatarUrl ? (
+                      <img src={avatarUrl} alt={nickname} style={s.avatarImg} />
+                    ) : (
+                      <div style={{ ...s.avatarFallback, color: series.secondary }}>{initial}</div>
+                    )}
+                    {/* leagă tonul pozei de culoarea seriei, indiferent ce fotografie reală e încărcată */}
+                    <div style={{ ...s.photoWash, background: `radial-gradient(120% 90% at 30% 15%, ${series.primary}4D, transparent 60%), radial-gradient(90% 70% at 85% 85%, ${series.secondary}33, transparent 65%)` }} />
+                  </div>
+                  {/* voal care contopește poza cu fundalul seriei — nicio linie dură */}
+                  <div style={{ ...s.blendVeil, background: `linear-gradient(180deg, ${series.bg[0]}00 0%, ${series.bg[0]}22 40%, ${series.bg[2]}CC 78%, ${series.bg[2]} 100%)` }} />
+                  <div style={{ ...s.blendVeilTop, background: `linear-gradient(180deg, ${series.bg[0]}55, transparent)` }} />
+
+                  <div style={s.frontFooter}>
+                    <div style={{ ...s.footerDivider, background: `linear-gradient(90deg, transparent, ${series.secondary}, transparent)` }} />
+                    <div style={s.frontName}>{nickname}</div>
+                    <div style={{ ...s.frontTitle, color: series.secondary }}>
+                      <span>{title.icon}</span> {title.label}
+                    </div>
+                    <div style={{ ...s.frontScore, color: series.secondary, textShadow: `0 0 18px ${series.primary}` }}>
+                      {stats.generalPoints}<span style={s.frontScoreUnit}>p</span>
+                    </div>
+                    <div style={s.frontMotto}>„{series.motto}"</div>
+                    <div style={s.lbCrest}>LB</div>
+                  </div>
                 </div>
               </div>
 
-              {/* ══════════ VERSO ══════════ */}
-              <div style={{ ...s.flipFace, ...s.card, ...s.backFace, background: bgGradient, borderColor: series.primary, boxShadow: `0 0 34px ${series.primary}55, ${shadow.elevated}` }}>
+              {/* ══════════ VERSO — aceeași ramă, conținut dens ══════════ */}
+              <div style={{ ...s.flipFace, ...s.cardOuter, ...s.backFace, background: frameGradient, boxShadow: `0 0 40px ${series.primary}66, ${shadow.elevated}` }}>
+                <div style={{ ...s.cardInner, background: bgGradient }}>
                 <button style={s.closeBtn} onClick={(e) => { e.stopPropagation(); onClose(); }} type="button">✕</button>
 
                 <div style={s.backHead}>
@@ -119,6 +193,7 @@ export default function PlayerCard({ uid, nickname, avatarId, rank, stats, onClo
                 <div style={s.backFooter}>
                   <span style={s.backQuote}>„{series.quote}"</span>
                   <span style={s.collectionId}>{collectionId}</span>
+                </div>
                 </div>
               </div>
             </div>
@@ -215,40 +290,89 @@ const s = {
   flipFace: { position: "absolute", inset: 0, backfaceVisibility: "hidden" },
   backFace: { transform: "rotateY(180deg)" },
 
-  card: {
-    borderRadius: 22, overflow: "hidden", border: "1.5px solid",
-    clipPath: "polygon(10% 0%, 90% 0%, 100% 6%, 100% 100%, 0% 100%, 0% 6%)",
+  // Forma cardului — "scut" cu umeri tăiați și vârf central, nu un
+  // dreptunghi cu colțuri rotunjite. Aplicată direct pe cardOuter/cardInner
+  // mai jos (cardInner ușor mai mic, pentru banda metalică de 7px vizibilă
+  // de jur-împrejur).
+  cardOuter: { clipPath: "polygon(0% 5%, 15% 5%, 20% 0%, 80% 0%, 85% 5%, 100% 5%, 100% 100%, 0% 100%)" },
+  cardInner: {
+    position: "absolute", inset: 7, overflow: "hidden",
+    clipPath: "polygon(0% 4.5%, 15% 4.5%, 20% 0%, 80% 0%, 85% 4.5%, 100% 4.5%, 100% 100%, 0% 100%)",
+    // adâncime — umbră închisă spre interior (senzație de "groapă" în care
+    // stă poza) + un contur luminos subțire chiar la margine (bevel).
+    boxShadow: "inset 0 0 22px 6px rgba(0,0,0,0.55), inset 0 2px 0 rgba(255,255,255,0.25), inset 0 -2px 0 rgba(0,0,0,0.4)",
+  },
+  shard: { position: "absolute", width: 4, borderRadius: 4, zIndex: 6, filter: "blur(0.4px)", boxShadow: "0 0 8px rgba(255,255,255,0.5)" },
+  shardTL: { height: 95, top: -8, left: 34, transform: "rotate(-22deg)", opacity: 0.9 },
+  shardTR: { height: 75, top: -4, right: 46, transform: "rotate(26deg)", opacity: 0.75 },
+  shardBL: { height: 55, top: "30%", left: -6, transform: "rotate(68deg)", opacity: 0.55 },
+
+  crest: {
+    position: "absolute", top: 2, left: "50%", transform: "translateX(-50%)", zIndex: 7,
+    width: 26, height: 26, borderRadius: "50%", border: "1.5px solid",
+    background: "rgba(0,0,0,0.45)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 13,
   },
 
+  rankZone: { position: "absolute", top: 18, left: 16, zIndex: 7, width: 46, height: 50 },
+  rankShield: {
+    position: "absolute", inset: 0, clipPath: "polygon(50% 0%, 100% 20%, 100% 75%, 50% 100%, 0% 75%, 0% 20%)",
+    background: "rgba(6,8,14,0.72)", border: "1.5px solid", boxShadow: "0 3px 10px rgba(0,0,0,0.5)",
+  },
+  rankNum: {
+    position: "relative", zIndex: 2, display: "flex", alignItems: "center", justifyContent: "center",
+    width: "100%", height: "100%", fontSize: 19, fontWeight: 900, color: "#fff",
+    fontFamily: "Georgia, serif", textShadow: "0 1px 4px rgba(0,0,0,0.6)",
+  },
+
+  seriesRibbon: {
+    position: "absolute", top: 18, right: -6, zIndex: 7, padding: "5px 20px 5px 14px", maxWidth: 170,
+    clipPath: "polygon(0% 0%, 100% 0%, 94% 50%, 100% 100%, 0% 100%)",
+    boxShadow: "0 2px 6px rgba(0,0,0,0.35)",
+  },
+  seriesRibbonText: { fontSize: 9, fontWeight: 800, letterSpacing: "0.02em", color: "#0A0E1A", textTransform: "uppercase", whiteSpace: "nowrap" },
   closeBtn: {
     position: "absolute", top: 12, right: 12, zIndex: 5,
     background: "rgba(0,0,0,0.4)", border: "1px solid rgba(255,255,255,0.25)", color: "#fff",
     borderRadius: 8, width: 28, height: 28, fontSize: 12, cursor: "pointer",
   },
 
-  crystalField: { position: "absolute", top: "8%", left: "50%", width: 0, height: 0, zIndex: 1 },
-  crystal: { position: "absolute", width: 3, height: 90, borderRadius: 3, filter: "blur(0.5px)" },
-
-  rankBadge: { position: "absolute", top: 14, left: 16, zIndex: 5, fontSize: 26, fontWeight: 900, color: "#fff", fontFamily: "Georgia, serif", textShadow: "0 2px 8px rgba(0,0,0,0.5)" },
-  seriesTag: {
-    position: "absolute", top: 16, right: 46, zIndex: 5, fontSize: 8.5, fontWeight: 800, letterSpacing: "0.04em",
-    textTransform: "uppercase", padding: "3px 8px", borderRadius: 999, border: "1px solid", background: "rgba(0,0,0,0.35)",
+  // Poza umple aproape tot cardul (78%, mărit — cerut explicit, "prefer să
+  // fie prea mare decât prea mic"), poziționată absolut sus. Masca e
+  // schimbarea cea mai importantă din acest sprint: estompează marginile
+  // treptat (jos + lateral), nu le taie drept — asta face poza să pară
+  // "imprimată" în card, nu lipită peste el.
+  avatarZone: {
+    position: "absolute", top: 0, left: 0, right: 0, height: "78%", zIndex: 2, overflow: "hidden",
+    maskImage: "radial-gradient(115% 85% at 50% 32%, black 52%, transparent 94%)",
+    WebkitMaskImage: "radial-gradient(115% 85% at 50% 32%, black 52%, transparent 94%)",
   },
-
-  avatarZone: { position: "relative", width: "100%", height: "71%", zIndex: 2, overflow: "hidden" },
-  avatarImg: { width: "100%", height: "100%", objectFit: "cover", objectPosition: "center 15%" },
+  avatarImg: { width: "100%", height: "100%", objectFit: "cover", objectPosition: "center 10%" },
   avatarFallback: {
     width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center",
-    fontSize: 110, fontWeight: 900, fontFamily: font.display, opacity: 0.85,
+    fontSize: 120, fontWeight: 900, fontFamily: font.display, opacity: 0.85,
   },
-  avatarFade: { position: "absolute", inset: 0 },
+  // strat de atmosferă, SUB poză — personalitatea seriei se vede și acolo
+  // unde poza nu acoperă (marginile estompate de mască).
+  atmosphereLayer: { position: "absolute", inset: 0, zIndex: 1, pointerEvents: "none" },
+  particlesLayer: { position: "absolute", inset: 0, zIndex: 5, pointerEvents: "none", backgroundRepeat: "no-repeat" },
+  // voal — leagă tonul pozei de culoarea seriei
+  photoWash: { position: "absolute", inset: 0, mixBlendMode: "soft-light", opacity: 0.55, pointerEvents: "none" },
+  // voal jos — contopește poza cu fundalul seriei, gradual, fără muchie
+  blendVeil: { position: "absolute", left: 0, right: 0, top: "34%", bottom: 0, zIndex: 3, pointerEvents: "none" },
+  // voal sus, discret — ca badge-urile/emblema să rămână lizibile pe poză
+  blendVeilTop: { position: "absolute", left: 0, right: 0, top: 0, height: "22%", zIndex: 3, pointerEvents: "none" },
 
-  frontFooter: { position: "relative", zIndex: 4, textAlign: "center", padding: "0 12px 14px" },
-  frontName: { fontSize: 19, fontWeight: 800, color: "#fff", textShadow: "0 2px 8px rgba(0,0,0,0.5)", fontFamily: font.display },
+  frontFooter: { position: "absolute", left: 0, right: 0, bottom: 0, zIndex: 4, textAlign: "center", padding: "0 12px 12px" },
+  footerDivider: { height: 1, width: "60%", margin: "0 auto 8px" },
+  frontName: { fontSize: 19, fontWeight: 800, color: "#fff", textShadow: "0 2px 8px rgba(0,0,0,0.6)", fontFamily: font.display },
   frontTitle: { fontSize: 10.5, fontWeight: 700, marginTop: 2, display: "flex", alignItems: "center", justifyContent: "center", gap: 4 },
-  frontScore: { fontSize: 32, fontWeight: 900, fontFamily: "Georgia, serif", marginTop: 2, lineHeight: 1 },
-  frontScoreUnit: { fontSize: 15, fontWeight: 700, marginLeft: 2 },
+  frontScore: { fontSize: 34, fontWeight: 900, fontFamily: "Georgia, serif", marginTop: 2, lineHeight: 1 },
+  frontScoreUnit: { fontSize: 16, fontWeight: 700, marginLeft: 2 },
   frontMotto: { fontSize: 9.5, color: "rgba(255,255,255,0.5)", fontStyle: "italic", marginTop: 5 },
+  lbCrest: {
+    marginTop: 8, display: "inline-block", fontSize: 8, fontWeight: 800, letterSpacing: "0.08em",
+    color: "rgba(255,255,255,0.35)", border: "1px solid rgba(255,255,255,0.2)", borderRadius: 4, padding: "2px 6px",
+  },
 
   backHead: { display: "flex", alignItems: "center", gap: 8, padding: "20px 18px 12px", fontSize: 15, fontWeight: 800, color: "#fff" },
   backName: {},

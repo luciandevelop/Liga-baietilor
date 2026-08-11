@@ -331,7 +331,7 @@ const s = {
   },
   seriesRibbonText: { fontSize: 9, fontWeight: 800, letterSpacing: "0.02em", color: "#0A0E1A", textTransform: "uppercase", whiteSpace: "nowrap" },
   closeBtn: {
-    position: "absolute", top: 12, right: 12, zIndex: 5,
+    position: "absolute", top: 12, right: 12, zIndex: 20,
     background: "rgba(0,0,0,0.4)", border: "1px solid rgba(255,255,255,0.25)", color: "#fff",
     borderRadius: 8, width: 28, height: 28, fontSize: 12, cursor: "pointer",
   },

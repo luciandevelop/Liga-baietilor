@@ -25,6 +25,9 @@ export default function App() {
   const [profileError, setProfileError] = useState("");
   const [isAdmin, setIsAdmin] = useState(false);
   const [view, setView] = useState("welcome"); // "welcome" | "admin"
+  // Meciul-țintă când "Progres etapă" e apăsat — PredictionsScreen derulează
+  // automat la el, în loc să deschidă mereu lista de la început.
+  const [predictionsTarget, setPredictionsTarget] = useState(null);
 
   // Incrementat la fiecare loadProfile() nou și la logout — orice cerere
   // în zbor care nu mai corespunde cu requestRef.current curent la momentul
@@ -164,7 +167,7 @@ export default function App() {
   }
 
   if (view === "predictions") {
-    return <PredictionsScreen user={user} onBack={() => setView("welcome")} />;
+    return <PredictionsScreen user={user} onBack={() => setView("welcome")} scrollToMatchId={predictionsTarget} />;
   }
 
   if (view === "leaderboard") {
@@ -189,7 +192,7 @@ export default function App() {
       profile={profile}
       isAdmin={isAdmin}
       onOpenAdmin={() => setView("admin")}
-      onOpenPredictions={() => setView("predictions")}
+      onOpenPredictions={(matchId) => { setPredictionsTarget(matchId || null); setView("predictions"); }}
       onOpenLeaderboard={() => setView("leaderboard")}
       onOpenProfile={() => setView("profile")}
     />

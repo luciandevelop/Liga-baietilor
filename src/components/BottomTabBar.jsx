@@ -19,6 +19,11 @@ const ICONS = {
       <path d="M12 14v3M9 20h6M10 17h4" stroke={c} strokeWidth="1.6" strokeLinecap="round" />
     </svg>
   ),
+  speciale: (c) => (
+    <svg width="19" height="19" viewBox="0 0 24 24" fill="none">
+      <path d="M12 2l2.6 5.9 6.4.6-4.8 4.3 1.4 6.2L12 15.9 6.4 19l1.4-6.2-4.8-4.3 6.4-.6L12 2z" stroke={c} strokeWidth="1.6" strokeLinejoin="round" />
+    </svg>
+  ),
   profil: (c) => (
     <svg width="19" height="19" viewBox="0 0 24 24" fill="none">
       <circle cx="12" cy="8" r="3.5" stroke={c} strokeWidth="1.6" />
@@ -31,6 +36,7 @@ const ITEMS = [
   { id: "home", label: "Home" },
   { id: "pronosticuri", label: "Pronosticuri" },
   { id: "clasament", label: "Clasament" },
+  { id: "speciale", label: "Speciale" },
   { id: "profil", label: "Profil" },
 ];
 

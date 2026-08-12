@@ -1,4 +1,8 @@
 import { useEffect, useState } from "react";
+import { listAllSpecialCompetitions, listSpecialPhases, openSpecialPhase, resolveSpecialPhase } from "../services/specialsService";
+import { PICK_TYPES } from "../specialDefinitions";
+import SpecialResolvePicker from "../components/SpecialResolvePicker";
+import useNow from "../hooks/useNow";
 import {
   createSeason,
   listSeasons,
@@ -21,6 +25,7 @@ import {
   getPlayerCardStats,
 } from "../services/adminService";
 import { getUserPublicProfiles, updateOwnAvatar } from "../services/profilesService";
+import { claimNickname } from "../services/authService";
 import { getCurrentSeason, getCurrentGameweek } from "../services/predictionsService";
 import { COMPETITION_THEMES } from "../competitionThemes";
 import CompetitionLogo from "../components/CompetitionLogo";
@@ -59,9 +64,27 @@ const TABS = [
   { id: "results", label: "Rezultate" },
   { id: "live", label: "Live" },
   { id: "featured", label: "Săptămânii" },
+  { id: "speciale", label: "Speciale" },
   { id: "health", label: "Health Check" },
   { id: "config", label: "Config" },
 ];
+
+// Starea vizuală instant a unei faze — 🟢/🟡/🔴/⚪/✅, exact ca în
+// exemplul lui Lu. Pură, testabilă separat de UI.
+function specialPhaseStatusInfo(state, now) {
+  if (!state) return { dot: "⚪", text: "Neactivată" };
+  if (state.status === "resolved") return { dot: "✅", text: "Rezolvată" };
+  if (state.status === "closed") return { dot: "🔴", text: "Închisă — în așteptarea rezultatului" };
+  // "open"
+  const closesAtMs = state.closesAt?.toMillis ? state.closesAt.toMillis() : state.closesAt;
+  const msLeft = closesAtMs ? closesAtMs - now : null;
+  if (msLeft != null && msLeft <= 0) return { dot: "🔴", text: "Închisă — în așteptarea rezultatului" };
+  if (msLeft != null && msLeft < 3 * 86400000) {
+    const days = Math.max(1, Math.round(msLeft / 86400000));
+    return { dot: "🟡", text: `Se închide peste ${days} ${days === 1 ? "zi" : "zile"}` };
+  }
+  return { dot: "🟢", text: "Deschisă" };
+}
 
 export default function AdminScreen({ onBack }) {
   const [tab, setTab] = useState("results");
@@ -93,10 +116,32 @@ export default function AdminScreen({ onBack }) {
 
   // ── Avatar utilizator (config) ──
   const [allUsers, setAllUsers] = useState([]);
+  // ── Speciale (config) ──
+  const now = useNow(60000); // "se închide peste 3 zile" nu are nevoie de secunde live, doar Home/SpecialsScreen
+  const [specialCompId, setSpecialCompId] = useState("");
+  const [specialPhaseId, setSpecialPhaseId] = useState("");
+  const [specialPhasesForSeason, setSpecialPhasesForSeason] = useState([]);
+  const [optionsText, setOptionsText] = useState("");
+  const [closesAtInput, setClosesAtInput] = useState("");
+  const [openSaving, setOpenSaving] = useState(false);
+  const [openMsg, setOpenMsg] = useState("");
+  const [resolveSelection, setResolveSelection] = useState(null);
+  const [resolveSaving, setResolveSaving] = useState(false);
+  const [resolveMsg, setResolveMsg] = useState("");
+
   const [avatarUserUid, setAvatarUserUid] = useState("");
   const [avatarIdInput, setAvatarIdInput] = useState("");
   const [avatarSaving, setAvatarSaving] = useState(false);
   const [avatarSaveMsg, setAvatarSaveMsg] = useState("");
+
+  // ── Nickname utilizator (config) — remediu pentru userii deja afectați
+  // de bug-ul Google Sign-In (nickname = numele real din cont, sărind
+  // peste ecranul de alegere). Odată salvat orice text valid, userul nu
+  // mai e retrimis automat la picker — are nevoie de o corecție directă.
+  const [nicknameUserUid, setNicknameUserUid] = useState("");
+  const [nicknameInput, setNicknameInput] = useState("");
+  const [nicknameSaving, setNicknameSaving] = useState(false);
+  const [nicknameSaveMsg, setNicknameSaveMsg] = useState("");
 
   // ── Health Check — doar detectare, nimic automat ──
   const [healthIssues, setHealthIssues] = useState(null); // null = neîncă rulat
@@ -456,6 +501,70 @@ export default function AdminScreen({ onBack }) {
     }
   }
 
+  // ── Speciale ──
+  useEffect(() => {
+    if (tab !== "speciale" || !selectedSeasonId) return;
+    listSpecialPhases(selectedSeasonId)
+      .then(setSpecialPhasesForSeason)
+      .catch((err) => console.error("Eroare la încărcarea fazelor speciale:", err));
+  }, [tab, selectedSeasonId, openMsg, resolveMsg]);
+
+  const specialCompetitions = listAllSpecialCompetitions();
+  const specialComp = specialCompetitions.find((c) => c.id === specialCompId) || null;
+  const specialPhaseDef = specialComp?.phases.find((p) => p.id === specialPhaseId) || null;
+  const specialPhaseState = specialPhasesForSeason.find((p) => p.phaseId === specialPhaseId) || null;
+
+  function slugifyOption(label) {
+    return label.toLowerCase().trim().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+  }
+
+  async function handleOpenSpecialPhase() {
+    if (!specialPhaseDef || !selectedSeasonId) return;
+    const labels = optionsText.split("\n").map((l) => l.trim()).filter(Boolean);
+    if (labels.length === 0) { setOpenMsg("Introdu cel puțin o opțiune."); return; }
+    if (!closesAtInput) { setOpenMsg("Setează data de închidere."); return; }
+    const options = labels.map((label) => ({ id: slugifyOption(label), label }));
+    setOpenSaving(true);
+    setOpenMsg("");
+    try {
+      await openSpecialPhase({
+        seasonId: selectedSeasonId,
+        phaseId: specialPhaseDef.id,
+        competitionId: specialComp.id,
+        closesAt: new Date(closesAtInput),
+        options,
+      });
+      setOpenMsg("Fază deschisă.");
+      setOptionsText("");
+      setClosesAtInput("");
+    } catch (err) {
+      console.error(err);
+      setOpenMsg("Eroare: " + err.message);
+    } finally {
+      setOpenSaving(false);
+    }
+  }
+
+  async function handleResolveSpecialPhase() {
+    if (!specialPhaseDef || !specialPhaseState) return;
+    const isComplete = specialPhaseDef.type === PICK_TYPES.SINGLE
+      ? Boolean(resolveSelection)
+      : Array.isArray(resolveSelection) && resolveSelection.length === (specialPhaseDef.type === PICK_TYPES.RANKED ? specialPhaseDef.rankedSize : specialPhaseDef.groupSize);
+    if (!isComplete) { setResolveMsg("Completează rezultatul întâi."); return; }
+    setResolveSaving(true);
+    setResolveMsg("");
+    try {
+      const result = await resolveSpecialPhase(specialPhaseDef.id, resolveSelection);
+      setResolveMsg(result.alreadyResolved ? "Era deja rezolvată." : `Rezolvat — ${result.scoredUsers} useri scorați.`);
+      setResolveSelection(null);
+    } catch (err) {
+      console.error(err);
+      setResolveMsg("Eroare: " + err.message);
+    } finally {
+      setResolveSaving(false);
+    }
+  }
+
   async function handleSetUserAvatar() {
     setAvatarSaving(true);
     setAvatarSaveMsg("");
@@ -470,6 +579,27 @@ export default function AdminScreen({ onBack }) {
       setAvatarSaveMsg("Eroare: " + err.message);
     } finally {
       setAvatarSaving(false);
+    }
+  }
+
+  // Refolosește claimNickname (aceeași validare + verificare de
+  // disponibilitate ca la userul care-și alege singur nickname-ul) — doar
+  // că aici e admin-ul care o declanșează, pentru cineva blocat cu numele
+  // real din Google, fără nicio cale să se corecteze singur.
+  async function handleSetUserNickname() {
+    setNicknameSaving(true);
+    setNicknameSaveMsg("");
+    try {
+      await claimNickname(nicknameUserUid, nicknameInput.trim());
+      setNicknameSaveMsg("Salvat.");
+      setAllUsers((prev) => prev.map((u) => (u.uid === nicknameUserUid ? { ...u, nickname: nicknameInput.trim() } : u)));
+      setNicknameUserUid("");
+      setNicknameInput("");
+    } catch (err) {
+      console.error(err);
+      setNicknameSaveMsg("Eroare: " + err.message);
+    } finally {
+      setNicknameSaving(false);
     }
   }
 
@@ -721,6 +851,108 @@ export default function AdminScreen({ onBack }) {
               </>
             )}
 
+            {/* ── Speciale — deschide/rezolvă fazele Specialelor Sezonului ── */}
+            {tab === "speciale" && (
+              <SectionCard title="Specialele Sezonului">
+                <select style={s.select} value={specialCompId} onChange={(e) => { setSpecialCompId(e.target.value); setSpecialPhaseId(""); }}>
+                  <option value="">Alege competiția…</option>
+                  {specialCompetitions.map((c) => (
+                    <option key={c.id} value={c.id}>{c.name}</option>
+                  ))}
+                </select>
+
+                {/* ── Stare instant, toate fazele deodată — fără să intri
+                    în fiecare una ca să vezi unde ești ── */}
+                {specialComp && (
+                  <div style={s.specialsOverview}>
+                    {specialComp.phases.map((p) => {
+                      const state = specialPhasesForSeason.find((s2) => s2.phaseId === p.id);
+                      const info = specialPhaseStatusInfo(state, now);
+                      return (
+                        <button
+                          key={p.id}
+                          type="button"
+                          style={{ ...s.specialsOverviewRow, ...(specialPhaseId === p.id ? s.specialsOverviewRowActive : {}) }}
+                          onClick={() => setSpecialPhaseId(p.id)}
+                        >
+                          <span>{info.dot}</span>
+                          <span style={s.specialsOverviewLabel}>{p.label}</span>
+                          <span style={s.specialsOverviewStatus}>{info.text}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+
+                {specialComp && (
+                  <select style={s.select} value={specialPhaseId} onChange={(e) => setSpecialPhaseId(e.target.value)}>
+                    <option value="">Alege faza…</option>
+                    {specialComp.phases.map((p) => {
+                      const state = specialPhasesForSeason.find((s2) => s2.phaseId === p.id);
+                      return (
+                        <option key={p.id} value={p.id}>
+                          {p.label} {state ? `(${state.status})` : "(neîschisă)"}
+                        </option>
+                      );
+                    })}
+                  </select>
+                )}
+
+                {specialPhaseDef && !specialPhaseState && (
+                  <>
+                    <p style={s.hint}>
+                      Deschide „{specialPhaseDef.label}" — o linie = o opțiune. Userii aleg STRICT din listă,
+                      nu scriu liber (elimină potriviri greșite la scorare). Poți deschide orice fază, oricând —
+                      nicio ordine impusă.
+                      {specialPhaseDef.requiresPhase && (
+                        <> (De obicei are sens după „{specialComp.phases.find((p) => p.id === specialPhaseDef.requiresPhase)?.label}", dar poți deschide și mai devreme.)</>
+                      )}
+                    </p>
+                    <textarea
+                      style={s.textarea}
+                      rows={5}
+                      placeholder={"PSG\nReal Madrid\nBayern\n..."}
+                      value={optionsText}
+                      onChange={(e) => setOptionsText(e.target.value)}
+                    />
+                    <input
+                      style={s.input}
+                      type="datetime-local"
+                      value={closesAtInput}
+                      onChange={(e) => setClosesAtInput(e.target.value)}
+                    />
+                    <button style={s.btn} disabled={openSaving} onClick={handleOpenSpecialPhase} type="button">
+                      {openSaving ? "Se deschide…" : "Deschide faza"}
+                    </button>
+                    {openMsg && <p style={s.hint}>{openMsg}</p>}
+                  </>
+                )}
+
+                {specialPhaseDef && specialPhaseState && specialPhaseState.status !== "resolved" && (
+                  <>
+                    <p style={s.hint}>
+                      Stare: <b>{specialPhaseState.status}</b> · {specialPhaseState.options?.length || 0} opțiuni.
+                      Introdu rezultatul real ca să rezolvi faza — punctele se adaugă automat în Clasamentul General.
+                    </p>
+                    <SpecialResolvePicker
+                      phaseDef={specialPhaseDef}
+                      options={specialPhaseState.options || []}
+                      selection={resolveSelection}
+                      onChange={setResolveSelection}
+                    />
+                    <button style={{ ...s.btn, marginTop: 10 }} disabled={resolveSaving} onClick={handleResolveSpecialPhase} type="button">
+                      {resolveSaving ? "Se rezolvă…" : "Rezolvă faza"}
+                    </button>
+                    {resolveMsg && <p style={s.hint}>{resolveMsg}</p>}
+                  </>
+                )}
+
+                {specialPhaseDef && specialPhaseState?.status === "resolved" && (
+                  <p style={s.hint}>Fază deja rezolvată — punctele au fost adăugate în Clasamentul General.</p>
+                )}
+              </SectionCard>
+            )}
+
             {/* ── Health Check — doar detectare + corecție manuală ────── */}
             {tab === "health" && (
               <SectionCard title="Health Check — meciuri deja salvate">
@@ -850,6 +1082,35 @@ export default function AdminScreen({ onBack }) {
                 </button>
                 {avatarSaveMsg && <p style={s.hint}>{avatarSaveMsg}</p>}
               </SectionCard>
+
+              <SectionCard title="Nickname utilizator">
+                <p style={s.hint}>
+                  Pentru useri blocați cu numele real din Google (bug reparat, dar cei deja
+                  afectați nu se corectează singuri) — schimbă direct nickname-ul aici.
+                </p>
+                <select
+                  style={s.select}
+                  value={nicknameUserUid}
+                  onChange={(e) => setNicknameUserUid(e.target.value)}
+                >
+                  <option value="">Alege utilizator…</option>
+                  {allUsers.map((u) => (
+                    <option key={u.uid} value={u.uid}>
+                      {u.nickname || u.uid}
+                    </option>
+                  ))}
+                </select>
+                <input
+                  style={s.input}
+                  placeholder="nickname nou"
+                  value={nicknameInput}
+                  onChange={(e) => setNicknameInput(e.target.value)}
+                />
+                <button style={s.btn} disabled={nicknameSaving || !nicknameUserUid || !nicknameInput.trim()} onClick={handleSetUserNickname} type="button">
+                  {nicknameSaving ? "Se salvează…" : "Setează nickname"}
+                </button>
+                {nicknameSaveMsg && <p style={s.hint}>{nicknameSaveMsg}</p>}
+              </SectionCard>
               </>
             )}
           </>
@@ -891,6 +1152,15 @@ const s = {
     color: color.green, borderRadius: radius.sm, padding: "10px 14px", fontSize: 12.5, marginBottom: 16,
     whiteSpace: "pre-line",
   },
+  specialsOverview: { display: "flex", flexDirection: "column", gap: 4, margin: "10px 0" },
+  specialsOverviewRow: {
+    display: "flex", alignItems: "center", gap: 8, width: "100%", background: "rgba(255,255,255,0.03)",
+    border: "1px solid rgba(255,255,255,0.08)", borderRadius: 8, padding: "8px 10px", cursor: "pointer", textAlign: "left",
+  },
+  specialsOverviewRowActive: { border: "1px solid rgba(212,175,55,0.5)", background: "rgba(212,175,55,0.08)" },
+  specialsOverviewLabel: { flex: 1, fontSize: 11.5, fontWeight: 600, color: "#fff" },
+  specialsOverviewStatus: { fontSize: 10.5, color: "#9099AC" },
+
   select: {
     width: "100%", background: color.surfaceInset, border: `1px solid ${color.border}`, borderRadius: radius.sm,
     padding: "11px 12px", fontSize: 13.5, color: color.textPrimary, marginBottom: 10, fontFamily: font.body,

@@ -246,6 +246,7 @@ export default function PredictionsScreen({ user, onBack, scrollToMatchId }) {
             {matches.map((m) => {
               const locked = isMatchLocked(m);
               const isFeatured = featuredMatchIds.includes(m.id);
+              const featuredIndex = isFeatured ? featuredMatchIds.indexOf(m.id) + 1 : null;
               const isJoker = joker?.matchId === m.id;
               const sState = saveState[m.id] || {};
 
@@ -271,6 +272,7 @@ export default function PredictionsScreen({ user, onBack, scrollToMatchId }) {
                     isSaved={savedMatchIds.has(m.id)}
                     locked={locked}
                     isFeatured={isFeatured}
+                    featuredIndex={featuredIndex}
                     isJoker={isJoker}
                     onToggleJoker={() => (isJoker ? handleRemoveJoker() : handleSetJoker(m))}
                     jokerDisabled={jokerDisabled}

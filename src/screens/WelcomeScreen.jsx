@@ -224,7 +224,7 @@ export default function WelcomeScreen({ user, profile, isAdmin, onOpenAdmin, onO
       <CinematicBackdrop crowd rain style={{ height: "50vh", minHeight: 340, display: "flex", flexDirection: "column" }}>
         <AppHeader
           nickname={profile?.nickname || "Jucător"}
-          points={(ownRow?.totalPoints ?? profile?.seasonPoints ?? 0).toLocaleString("ro-RO")}
+          points={(profile?.seasonPoints ?? ownRow?.totalPoints ?? 0).toLocaleString("ro-RO")}
           avatarId={profile?.avatarId}
           hasNotification={feed.length > 0}
           onAvatarClick={onOpenProfile}
@@ -323,6 +323,7 @@ export default function WelcomeScreen({ user, profile, isAdmin, onOpenAdmin, onO
                     now={now}
                     emphasizeCountdown={i < 3}
                     isFeatured={featuredIds.includes(m.id)}
+                    featuredIndex={featuredIds.includes(m.id) ? featuredIds.indexOf(m.id) + 1 : null}
                     onClick={onOpenPredictions}
                   />
                 ))}

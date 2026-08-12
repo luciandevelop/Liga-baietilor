@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { getCurrentSeason, getCurrentGameweek, loadUserPredictions, loadUserJoker } from "../services/predictionsService";
-import { listMatches, listenLiveGameweekScores, listGameweekScores } from "../services/adminService";
+import { listMatches, listenLiveGameweekScores, listGameweekScores, getUserSeasonPoints } from "../services/adminService";
 import { getUserPublicProfiles } from "../services/profilesService";
 import useNow from "../hooks/useNow";
 import { usePrefersReducedMotion } from "../motion";
@@ -48,6 +48,10 @@ export default function WelcomeScreen({ user, profile, isAdmin, onOpenAdmin, onO
   const [predictions, setPredictions] = useState({});
   const [ownJoker, setOwnJoker] = useState(null);
   const [ownRow, setOwnRow] = useState(null);
+  // Citit proaspăt, separat de `profile` (stale după login) — sursa
+  // reală pentru header. Pornește din `profile.seasonPoints` (ca să nu
+  // arate 0 o clipă la încărcare), apoi se suprascrie cu valoarea reală.
+  const [freshSeasonPoints, setFreshSeasonPoints] = useState(profile?.seasonPoints ?? null);
   const [profiles, setProfiles] = useState({});
 
   const prevRanksRef = useRef(null);
@@ -131,6 +135,15 @@ export default function WelcomeScreen({ user, profile, isAdmin, onOpenAdmin, onO
   }
 
   useEffect(load, [user.uid]);
+
+  // Punctajul general — reîmprospătat de fiecare dată când se deschide
+  // Home, nu doar la login. Fără asta, dacă o etapă se finalizează cât
+  // userul rămâne conectat, header-ul rămânea blocat la cifra veche.
+  useEffect(() => {
+    getUserSeasonPoints(user.uid)
+      .then(setFreshSeasonPoints)
+      .catch((err) => console.error("Eroare la reîmprospătarea punctajului din header:", err));
+  }, [user.uid]);
 
   const staticFeedRef = useRef(false);
   useEffect(() => {
@@ -224,7 +237,7 @@ export default function WelcomeScreen({ user, profile, isAdmin, onOpenAdmin, onO
       <CinematicBackdrop crowd rain style={{ height: "50vh", minHeight: 340, display: "flex", flexDirection: "column" }}>
         <AppHeader
           nickname={profile?.nickname || "Jucător"}
-          points={(profile?.seasonPoints ?? ownRow?.totalPoints ?? 0).toLocaleString("ro-RO")}
+          points={(freshSeasonPoints ?? profile?.seasonPoints ?? ownRow?.totalPoints ?? 0).toLocaleString("ro-RO")}
           avatarId={profile?.avatarId}
           hasNotification={feed.length > 0}
           onAvatarClick={onOpenProfile}

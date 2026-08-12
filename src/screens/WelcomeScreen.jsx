@@ -33,7 +33,7 @@ const CTA_LABEL = {
 // Home — Sprint 1 "Home Premium". Aceeași logică de date ca înainte
 // (niciun apel nou către Firestore) — doar experiența Home + navigarea
 // s-au schimbat, cum a fost cerut explicit.
-export default function WelcomeScreen({ user, profile, isAdmin, onOpenAdmin, onOpenPredictions, onOpenLeaderboard, onOpenProfile }) {
+export default function WelcomeScreen({ user, profile, isAdmin, onOpenAdmin, onOpenPredictions, onOpenLeaderboard, onOpenSpecials, onOpenProfile }) {
   const now = useNow(1000);
   const reduced = usePrefersReducedMotion();
 
@@ -201,6 +201,7 @@ export default function WelcomeScreen({ user, profile, isAdmin, onOpenAdmin, onO
     if (id === "home") return;
     if (id === "pronosticuri") return onOpenPredictions();
     if (id === "clasament") return onOpenLeaderboard();
+    if (id === "speciale") return onOpenSpecials();
     if (id === "profil") return onOpenProfile();
   }
 

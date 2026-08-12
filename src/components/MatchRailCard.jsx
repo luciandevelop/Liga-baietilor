@@ -20,7 +20,7 @@ function formatCountdown(ms) {
 // "Se blochează în" + countdown ÎN LOC de oră.
 // `isFeatured` — meci din featuredMatchIds (Meciul Săptămânii/Punctaj
 // Dublu) — tratament vizual auriu distinct, imposibil de ratat.
-export default function MatchRailCard({ match, now, emphasizeCountdown = false, isFeatured = false, onClick }) {
+export default function MatchRailCard({ match, now, emphasizeCountdown = false, isFeatured = false, featuredIndex, onClick }) {
   const reduced = usePrefersReducedMotion();
   const status = getMatchStatus(match, now);
   const tone = MATCH_STATUS_TONE[status];
@@ -54,7 +54,11 @@ export default function MatchRailCard({ match, now, emphasizeCountdown = false, 
     >
       {isFeatured ? (
         <div style={s.motwStrip}>
-          <span style={s.motwTag}>⭐ MECIUL SĂPTĂMÂNII · PUNCTAJ ×2</span>
+          <span style={s.motwBadgeIcon}>⭐</span>
+          <div style={s.motwTextCol}>
+            <span style={s.motwTag}>Meci al săptămânii{featuredIndex ? ` · ${featuredIndex} din 3` : ""}</span>
+            <span style={s.motwSub}>Punctaj dublat ×2</span>
+          </div>
         </div>
       ) : (
         <CompetitionHeaderStrip match={match} rightSlot={statusTag} />
@@ -105,10 +109,15 @@ export default function MatchRailCard({ match, now, emphasizeCountdown = false, 
 
 const s = {
   motwStrip: {
-    padding: "11px 14px", background: "linear-gradient(90deg, rgba(212,175,55,0.28), rgba(212,175,55,0.08))",
-    borderBottom: "2px solid #D4AF37",
+    padding: "12px 14px", display: "flex", alignItems: "center", gap: 9,
+    background: "linear-gradient(90deg, rgba(212,175,55,0.4), rgba(212,175,55,0.14))",
+    border: "1.5px solid #D4AF37", borderRadius: "14px 14px 0 0",
+    boxShadow: "0 0 18px -4px rgba(212,175,55,0.6)",
   },
-  motwTag: { fontSize: 11.5, fontWeight: 800, letterSpacing: "0.02em", color: "#FFE9A8", fontFamily: font.display },
+  motwBadgeIcon: { fontSize: 19, flexShrink: 0, filter: "drop-shadow(0 0 6px rgba(212,175,55,0.7))" },
+  motwTextCol: { display: "flex", flexDirection: "column", gap: 1 },
+  motwTag: { fontSize: 11.5, fontWeight: 800, letterSpacing: "0.02em", color: "#FFE9A8", fontFamily: font.display, textTransform: "uppercase" },
+  motwSub: { fontSize: 9.5, fontWeight: 700, color: "rgba(255,233,168,0.75)", fontFamily: font.body },
   topRow: { display: "flex", alignItems: "center", justifyContent: "flex-end", marginBottom: 11 },
   tag: {
     fontSize: 8.5, fontWeight: 700, letterSpacing: "0.03em", padding: "3px 8px", borderRadius: 999,

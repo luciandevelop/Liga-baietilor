@@ -8,6 +8,7 @@ import WelcomeScreen from "./screens/WelcomeScreen";
 import AdminScreen from "./screens/AdminScreen";
 import PredictionsScreen from "./screens/PredictionsScreen";
 import LeaderboardScreen from "./screens/LeaderboardScreen";
+import SpecialsScreen from "./screens/SpecialsScreen";
 import ProfileScreen from "./screens/ProfileScreen";
 import NicknameScreen from "./screens/NicknameScreen";
 
@@ -62,12 +63,17 @@ export default function App() {
     setProfileState("checking");
     setProfileError("");
     try {
-      // u.displayName poate fi încă necompletat aici, dacă tocmai s-a
-      // înregistrat cu email/parolă (vezi comentariul din authService.js
-      // — cursă reală, nu ipotetică). pendingNickname acoperă exact acest
-      // interval; pentru orice alt caz (Google, sau login normal ulterior)
-      // e null și nu schimbă nimic.
-      const data = await ensureUserProfile(u, u.displayName || consumePendingNickname());
+      // BUG REPARAT — varianta anterioară folosea `u.displayName ||
+      // consumePendingNickname()`, presupunând greșit că displayName e gol
+      // pentru conturile Google. NU e — Google Sign-In completează automat
+      // displayName cu numele real din cont, deci orice user nou cu Google
+      // primea acel nume direct ca nickname, sărind complet peste
+      // NicknameScreen. Acum folosim STRICT consumePendingNickname() —
+      // populat doar în fereastra scurtă de după registerWithEmail, null
+      // pentru orice alt caz (Google sau login normal), ceea ce lasă
+      // nickname-ul gol la primul profil și declanșează corect ecranul de
+      // alegere, indiferent de metoda de autentificare.
+      const data = await ensureUserProfile(u, consumePendingNickname());
       if (requestRef.current !== myRequestId) return; // cerere învechită, ignorăm
       setProfile(data);
       // Verificăm admin ÎNAINTE de a decide profileState — altfel linkul
@@ -174,6 +180,10 @@ export default function App() {
     return <LeaderboardScreen user={user} onBack={() => setView("welcome")} />;
   }
 
+  if (view === "specials") {
+    return <SpecialsScreen user={user} onBack={() => setView("welcome")} />;
+  }
+
   if (view === "profile") {
     return (
       <ProfileScreen
@@ -194,6 +204,7 @@ export default function App() {
       onOpenAdmin={() => setView("admin")}
       onOpenPredictions={(matchId) => { setPredictionsTarget(matchId || null); setView("predictions"); }}
       onOpenLeaderboard={() => setView("leaderboard")}
+      onOpenSpecials={() => setView("specials")}
       onOpenProfile={() => setView("profile")}
     />
   );

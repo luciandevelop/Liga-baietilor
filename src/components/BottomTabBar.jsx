@@ -20,7 +20,7 @@ const ICONS = {
     </svg>
   ),
   speciale: (c) => (
-    <svg width="19" height="19" viewBox="0 0 24 24" fill="none">
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
       <path d="M12 2l2.6 5.9 6.4.6-4.8 4.3 1.4 6.2L12 15.9 6.4 19l1.4-6.2-4.8-4.3 6.4-.6L12 2z" stroke={c} strokeWidth="1.6" strokeLinejoin="round" />
     </svg>
   ),
@@ -46,6 +46,24 @@ export default function BottomTabBar({ active, onChange }) {
       {ITEMS.map((it) => {
         const isActive = active === it.id;
         const c = isActive ? color.gold : color.textFaint;
+        const isSpeciale = it.id === "speciale";
+
+        // Tratament special DOAR pe tab-ul Speciale — restul taburilor
+        // rămân exact ca înainte, nicio schimbare de layout/dimensiune.
+        if (isSpeciale) {
+          return (
+            <button key={it.id} type="button" onClick={() => onChange?.(it.id)} style={s.item}>
+              <span style={s.specialeIconWrap}>
+                <span style={{ ...s.specialeGlow, opacity: isActive ? 0.9 : 0.45 }} />
+                <span style={{ position: "relative", filter: isActive ? "drop-shadow(0 0 4px rgba(212,175,55,0.7))" : "none" }}>
+                  {ICONS.speciale(c)}
+                </span>
+              </span>
+              <span style={{ ...s.label, color: c, ...(isActive ? s.specialeLabelActive : {}) }}>{it.label}</span>
+            </button>
+          );
+        }
+
         return (
           <button key={it.id} type="button" onClick={() => onChange?.(it.id)} style={s.item}>
             {ICONS[it.id](c)}
@@ -68,4 +86,13 @@ const s = {
     background: "none", border: "none", padding: "10px 4px 8px", cursor: "pointer",
   },
   label: { fontSize: 9.5, fontWeight: 700, fontFamily: font.body, letterSpacing: "0.01em" },
+
+  // ── Doar pentru tab-ul Speciale ──
+  specialeIconWrap: { position: "relative", display: "flex", alignItems: "center", justifyContent: "center", width: 22, height: 22 },
+  specialeGlow: {
+    position: "absolute", width: 30, height: 30, borderRadius: "50%",
+    background: "radial-gradient(circle, rgba(212,175,55,0.55) 0%, transparent 70%)",
+    pointerEvents: "none",
+  },
+  specialeLabelActive: { fontWeight: 800, textShadow: "0 0 6px rgba(212,175,55,0.5)" },
 };

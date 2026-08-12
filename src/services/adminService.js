@@ -1141,3 +1141,14 @@ export async function getLiveMatchResultsForUser(gameweekId, uid) {
     };
   });
 }
+
+// Punctajul general al UNUI singur user, citit PROASPĂT din Firestore —
+// nu din `profile` (încărcat o singură dată la login și niciodată
+// reîmprospătat cât timp userul rămâne conectat). Header-ul din Home
+// avea nevoie exact de asta: dacă o etapă se finalizează CÂT userul e
+// deja logat, `profile.seasonPoints` rămâne blocat la valoarea veche —
+// bug real, nu problemă de cache în telefon, cum părea la prima vedere.
+export async function getUserSeasonPoints(uid) {
+  const snap = await getDoc(doc(db, "users", uid));
+  return snap.exists() ? snap.data().seasonPoints ?? 0 : 0;
+}

@@ -2,8 +2,10 @@ import { useEffect, useState } from "react";
 import { listAllSpecialCompetitions, listSpecialPhases, openSpecialPhase, resolveSpecialPhase, loadAllSpecialPicks } from "../services/specialsService";
 import { PICK_TYPES } from "../specialDefinitions";
 import { resolveTeamOptions } from "../teamRegistry";
+import { resolveGolgheterOptions, GOLGHETER_ID } from "../golgheterRegistry";
 import SpecialResolvePicker from "../components/SpecialResolvePicker";
 import SpecialMonitoringPanel from "../components/SpecialMonitoringPanel";
+import ClubLogo from "../components/ClubLogo";
 import useNow from "../hooks/useNow";
 import {
   createSeason,
@@ -541,18 +543,28 @@ export default function AdminScreen({ onBack }) {
   // Opțiunile pentru faza selectată — din registrul de echipe (STRICT,
   // niciun text liber) pentru optionsSource === "teams", sau din
   // textarea (mecanismul existent, neschimbat) pentru "players" (Golgheter).
-  const isTeamsPhase = specialPhaseDef?.optionsSource === "teams";
-  const teamOptionsPreview = isTeamsPhase && specialComp ? resolveTeamOptions(specialComp.id, specialPhaseDef.id) : [];
+  // Opțiuni din registru — DOAR dacă resolveTeamOptions/resolveGolgheterOptions
+  // întorc ceva (null = fază eliminatorie, admin introduce manual echipele
+  // reale calificate — vezi comentariul din teamRegistry.js).
+  const registryOptions = specialPhaseDef && specialComp
+    ? (specialPhaseDef.optionsSource === "teams"
+        ? resolveTeamOptions(specialComp.id, specialPhaseDef.id)
+        : specialPhaseDef.id === GOLGHETER_ID
+          ? resolveGolgheterOptions()
+          : null)
+    : null;
+  const isRegistryPhase = registryOptions !== null;
+  const teamOptionsPreview = registryOptions || [];
 
   async function handleOpenSpecialPhase() {
     if (!specialPhaseDef || !selectedSeasonId) return;
     if (!closesAtInput) { setOpenMsg("Setează data de închidere."); return; }
 
-    const options = isTeamsPhase
+    const options = isRegistryPhase
       ? teamOptionsPreview
       : optionsText.split("\n").map((l) => l.trim()).filter(Boolean).map((label) => ({ id: slugifyOption(label), label }));
 
-    if (options.length === 0) { setOpenMsg(isTeamsPhase ? "Nicio echipă în registru pentru competiția asta." : "Introdu cel puțin o opțiune."); return; }
+    if (options.length === 0) { setOpenMsg(isRegistryPhase ? "Niciun candidat în registru pentru faza asta." : "Introdu cel puțin o opțiune."); return; }
     setOpenSaving(true);
     setOpenMsg("");
     try {
@@ -937,28 +949,33 @@ export default function AdminScreen({ onBack }) {
                       .
                     </p>
 
-                    {isTeamsPhase ? (
+                    {isRegistryPhase ? (
                       <>
                         <p style={s.hint}>
-                          Opțiuni — direct din registrul de echipe, {teamOptionsPreview.length} echipe.
+                          Opțiuni — direct din registru, {teamOptionsPreview.length} candidați.
                           Userii aleg STRICT din listă, fără text liber.
                         </p>
                         <div style={s.teamsPreview}>
                           {teamOptionsPreview.map((t) => (
-                            <span key={t.id} style={s.teamsPreviewChip}>{t.label}</span>
+                            <span key={t.id} style={s.teamsPreviewChip}>
+                              {t.club && <ClubLogo teamName={t.club} size={16} />}
+                              {t.club ? `${t.label} (${t.club})` : t.label}
+                            </span>
                           ))}
                         </div>
                       </>
                     ) : (
                       <>
                         <p style={s.hint}>
-                          O linie = un candidat. Userii aleg STRICT din listă, nu scriu liber
-                          (elimină potriviri greșite la scorare).
+                          {specialPhaseDef.optionsSource === "teams"
+                            ? "Echipele reale calificate în faza asta (necunoscute dinainte — depind de tragerea la sorți). O linie = o echipă."
+                            : "O linie = un candidat."}
+                          {" "}Userii aleg STRICT din listă, nu scriu liber (elimină potriviri greșite la scorare).
                         </p>
                         <textarea
                           style={s.textarea}
                           rows={5}
-                          placeholder={"Mbappé\nHaaland\nLewandowski\n..."}
+                          placeholder={specialPhaseDef.optionsSource === "teams" ? "PSG\nBayern\nInter\n..." : "Mbappé\nHaaland\nLewandowski\n..."}
                           value={optionsText}
                           onChange={(e) => setOptionsText(e.target.value)}
                         />
@@ -1214,6 +1231,7 @@ const s = {
   specialsOverview: { display: "flex", flexDirection: "column", gap: 4, margin: "10px 0" },
   teamsPreview: { display: "flex", flexWrap: "wrap", gap: 5, margin: "8px 0" },
   teamsPreviewChip: {
+    display: "flex", alignItems: "center", gap: 5,
     fontSize: 10.5, fontWeight: 600, color: "#C7CEDA", background: "rgba(255,255,255,0.05)",
     border: "1px solid rgba(255,255,255,0.1)", borderRadius: 999, padding: "4px 10px",
   },

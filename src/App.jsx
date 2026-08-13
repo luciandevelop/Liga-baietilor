@@ -9,6 +9,7 @@ import AdminScreen from "./screens/AdminScreen";
 import PredictionsScreen from "./screens/PredictionsScreen";
 import LeaderboardScreen from "./screens/LeaderboardScreen";
 import SpecialsScreen from "./screens/SpecialsScreen";
+import FeedScreen from "./screens/FeedScreen";
 import ProfileScreen from "./screens/ProfileScreen";
 import NicknameScreen from "./screens/NicknameScreen";
 
@@ -184,6 +185,10 @@ export default function App() {
     return <SpecialsScreen user={user} onBack={() => setView("welcome")} />;
   }
 
+  if (view === "feed") {
+    return <FeedScreen onBack={() => setView("welcome")} />;
+  }
+
   if (view === "profile") {
     return (
       <ProfileScreen
@@ -205,6 +210,7 @@ export default function App() {
       onOpenPredictions={(matchId) => { setPredictionsTarget(matchId || null); setView("predictions"); }}
       onOpenLeaderboard={() => setView("leaderboard")}
       onOpenSpecials={() => setView("specials")}
+      onOpenFeed={() => setView("feed")}
       onOpenProfile={() => setView("profile")}
     />
   );

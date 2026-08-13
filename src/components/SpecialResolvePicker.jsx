@@ -1,7 +1,9 @@
 import { PICK_TYPES } from "../specialDefinitions";
+import ClubLogo from "./ClubLogo";
 import { color, font, radius } from "../matchdayTheme";
 
 export default function SpecialResolvePicker({ phaseDef, options, selection, onChange }) {
+  const showLogos = phaseDef.optionsSource === "teams";
   const isRanked = phaseDef.type === PICK_TYPES.RANKED;
   const isGroup = phaseDef.type === PICK_TYPES.GROUP;
   const targetSize = isRanked ? phaseDef.rankedSize : isGroup ? phaseDef.groupSize : 1;
@@ -32,7 +34,10 @@ export default function SpecialResolvePicker({ phaseDef, options, selection, onC
               onClick={() => (phaseDef.type === PICK_TYPES.SINGLE ? onChange(opt.id) : toggleMulti(opt.id))}
               style={{ ...s.optionBtn, ...(isSingleSelected || isMultiSelected ? s.optionBtnActive : {}) }}
             >
-              <span>{opt.label}</span>
+              <span style={s.optionContent}>
+                {showLogos && opt.id !== "alta" && <ClubLogo teamName={opt.label} size={20} />}
+                {opt.label}
+              </span>
               {isRanked && isMultiSelected && <span style={s.rankBadge}>{rankIndex + 1}</span>}
               {isGroup && isMultiSelected && <span style={s.checkBadge}>✓</span>}
             </button>
@@ -54,6 +59,7 @@ const s = {
     fontFamily: font.body, textAlign: "left",
   },
   optionBtnActive: { border: `1.5px solid ${color.gold}`, background: "rgba(212,175,55,0.1)" },
+  optionContent: { display: "flex", alignItems: "center", gap: 8 },
   rankBadge: {
     width: 20, height: 20, borderRadius: "50%", background: color.gold, color: color.goldOn,
     fontSize: 10.5, fontWeight: 800, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0,

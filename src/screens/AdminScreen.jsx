@@ -1,7 +1,9 @@
 import { useEffect, useState } from "react";
-import { listAllSpecialCompetitions, listSpecialPhases, openSpecialPhase, resolveSpecialPhase } from "../services/specialsService";
+import { listAllSpecialCompetitions, listSpecialPhases, openSpecialPhase, resolveSpecialPhase, loadAllSpecialPicks } from "../services/specialsService";
 import { PICK_TYPES } from "../specialDefinitions";
+import { resolveTeamOptions } from "../teamRegistry";
 import SpecialResolvePicker from "../components/SpecialResolvePicker";
+import SpecialMonitoringPanel from "../components/SpecialMonitoringPanel";
 import useNow from "../hooks/useNow";
 import {
   createSeason,
@@ -123,6 +125,7 @@ export default function AdminScreen({ onBack }) {
   const [specialPhasesForSeason, setSpecialPhasesForSeason] = useState([]);
   const [optionsText, setOptionsText] = useState("");
   const [closesAtInput, setClosesAtInput] = useState("");
+  const [specialMonitoring, setSpecialMonitoring] = useState({ picks: [], loading: false });
   const [openSaving, setOpenSaving] = useState(false);
   const [openMsg, setOpenMsg] = useState("");
   const [resolveSelection, setResolveSelection] = useState(null);
@@ -479,7 +482,7 @@ export default function AdminScreen({ onBack }) {
   }
 
   useEffect(() => {
-    if (tab !== "config") return;
+    if (tab !== "config" && tab !== "speciale") return;
     listAllUsers()
       .then(setAllUsers)
       .catch((err) => console.error("Eroare la încărcarea listei de utilizatori:", err));
@@ -509,6 +512,23 @@ export default function AdminScreen({ onBack }) {
       .catch((err) => console.error("Eroare la încărcarea fazelor speciale:", err));
   }, [tab, selectedSeasonId, openMsg, resolveMsg]);
 
+  // Monitorizare — cine a ales, ce a ales, când. Se încarcă doar când
+  // faza chiar există (a fost deschisă) — pe fazele "neîschisă" nu are
+  // rost, nimeni nu poate avea încă un pick.
+  useEffect(() => {
+    if (!specialPhaseId || !specialPhasesForSeason.find((p) => p.phaseId === specialPhaseId)) {
+      setSpecialMonitoring({ picks: [], loading: false });
+      return;
+    }
+    setSpecialMonitoring({ picks: [], loading: true });
+    loadAllSpecialPicks(specialPhaseId)
+      .then((picks) => setSpecialMonitoring({ picks, loading: false }))
+      .catch((err) => {
+        console.error("Eroare la încărcarea monitorizării:", err);
+        setSpecialMonitoring({ picks: [], loading: false });
+      });
+  }, [specialPhaseId, specialPhasesForSeason, resolveMsg]);
+
   const specialCompetitions = listAllSpecialCompetitions();
   const specialComp = specialCompetitions.find((c) => c.id === specialCompId) || null;
   const specialPhaseDef = specialComp?.phases.find((p) => p.id === specialPhaseId) || null;
@@ -518,12 +538,21 @@ export default function AdminScreen({ onBack }) {
     return label.toLowerCase().trim().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
   }
 
+  // Opțiunile pentru faza selectată — din registrul de echipe (STRICT,
+  // niciun text liber) pentru optionsSource === "teams", sau din
+  // textarea (mecanismul existent, neschimbat) pentru "players" (Golgheter).
+  const isTeamsPhase = specialPhaseDef?.optionsSource === "teams";
+  const teamOptionsPreview = isTeamsPhase && specialComp ? resolveTeamOptions(specialComp.id, specialPhaseDef.id) : [];
+
   async function handleOpenSpecialPhase() {
     if (!specialPhaseDef || !selectedSeasonId) return;
-    const labels = optionsText.split("\n").map((l) => l.trim()).filter(Boolean);
-    if (labels.length === 0) { setOpenMsg("Introdu cel puțin o opțiune."); return; }
     if (!closesAtInput) { setOpenMsg("Setează data de închidere."); return; }
-    const options = labels.map((label) => ({ id: slugifyOption(label), label }));
+
+    const options = isTeamsPhase
+      ? teamOptionsPreview
+      : optionsText.split("\n").map((l) => l.trim()).filter(Boolean).map((label) => ({ id: slugifyOption(label), label }));
+
+    if (options.length === 0) { setOpenMsg(isTeamsPhase ? "Nicio echipă în registru pentru competiția asta." : "Introdu cel puțin o opțiune."); return; }
     setOpenSaving(true);
     setOpenMsg("");
     try {
@@ -901,20 +930,41 @@ export default function AdminScreen({ onBack }) {
                 {specialPhaseDef && !specialPhaseState && (
                   <>
                     <p style={s.hint}>
-                      Deschide „{specialPhaseDef.label}" — o linie = o opțiune. Userii aleg STRICT din listă,
-                      nu scriu liber (elimină potriviri greșite la scorare). Poți deschide orice fază, oricând —
-                      nicio ordine impusă.
+                      Deschide „{specialPhaseDef.label}"
                       {specialPhaseDef.requiresPhase && (
-                        <> (De obicei are sens după „{specialComp.phases.find((p) => p.id === specialPhaseDef.requiresPhase)?.label}", dar poți deschide și mai devreme.)</>
+                        <> (de obicei are sens după „{specialComp.phases.find((p) => p.id === specialPhaseDef.requiresPhase)?.label}", dar poți deschide și mai devreme — nicio ordine impusă)</>
                       )}
+                      .
                     </p>
-                    <textarea
-                      style={s.textarea}
-                      rows={5}
-                      placeholder={"PSG\nReal Madrid\nBayern\n..."}
-                      value={optionsText}
-                      onChange={(e) => setOptionsText(e.target.value)}
-                    />
+
+                    {isTeamsPhase ? (
+                      <>
+                        <p style={s.hint}>
+                          Opțiuni — direct din registrul de echipe, {teamOptionsPreview.length} echipe.
+                          Userii aleg STRICT din listă, fără text liber.
+                        </p>
+                        <div style={s.teamsPreview}>
+                          {teamOptionsPreview.map((t) => (
+                            <span key={t.id} style={s.teamsPreviewChip}>{t.label}</span>
+                          ))}
+                        </div>
+                      </>
+                    ) : (
+                      <>
+                        <p style={s.hint}>
+                          O linie = un candidat. Userii aleg STRICT din listă, nu scriu liber
+                          (elimină potriviri greșite la scorare).
+                        </p>
+                        <textarea
+                          style={s.textarea}
+                          rows={5}
+                          placeholder={"Mbappé\nHaaland\nLewandowski\n..."}
+                          value={optionsText}
+                          onChange={(e) => setOptionsText(e.target.value)}
+                        />
+                      </>
+                    )}
+
                     <input
                       style={s.input}
                       type="datetime-local"
@@ -928,10 +978,19 @@ export default function AdminScreen({ onBack }) {
                   </>
                 )}
 
+                {specialPhaseDef && specialPhaseState && (
+                  <SpecialMonitoringPanel
+                    phaseDef={specialPhaseDef}
+                    phaseState={specialPhaseState}
+                    allUsers={allUsers}
+                    monitoring={specialMonitoring}
+                    now={now}
+                  />
+                )}
+
                 {specialPhaseDef && specialPhaseState && specialPhaseState.status !== "resolved" && (
                   <>
                     <p style={s.hint}>
-                      Stare: <b>{specialPhaseState.status}</b> · {specialPhaseState.options?.length || 0} opțiuni.
                       Introdu rezultatul real ca să rezolvi faza — punctele se adaugă automat în Clasamentul General.
                     </p>
                     <SpecialResolvePicker
@@ -1153,6 +1212,11 @@ const s = {
     whiteSpace: "pre-line",
   },
   specialsOverview: { display: "flex", flexDirection: "column", gap: 4, margin: "10px 0" },
+  teamsPreview: { display: "flex", flexWrap: "wrap", gap: 5, margin: "8px 0" },
+  teamsPreviewChip: {
+    fontSize: 10.5, fontWeight: 600, color: "#C7CEDA", background: "rgba(255,255,255,0.05)",
+    border: "1px solid rgba(255,255,255,0.1)", borderRadius: 999, padding: "4px 10px",
+  },
   specialsOverviewRow: {
     display: "flex", alignItems: "center", gap: 8, width: "100%", background: "rgba(255,255,255,0.03)",
     border: "1px solid rgba(255,255,255,0.08)", borderRadius: 8, padding: "8px 10px", cursor: "pointer", textAlign: "left",

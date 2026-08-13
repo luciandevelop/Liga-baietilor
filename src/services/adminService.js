@@ -1152,3 +1152,12 @@ export async function getUserSeasonPoints(uid) {
   const snap = await getDoc(doc(db, "users", uid));
   return snap.exists() ? snap.data().seasonPoints ?? 0 : 0;
 }
+
+// Toți jokerii activi într-o etapă — pentru Feed (activitatea tuturor
+// jucătorilor, nu doar a userului curent). Interogare simplă, separată
+// de cea din finalizeGameweek (aceea calculează scoruri, asta doar
+// citește pentru afișare).
+export async function listJokersForGameweek(gameweekId) {
+  const snap = await getDocs(query(collection(db, "jokers"), where("gameweekId", "==", gameweekId)));
+  return snap.docs.map((d) => d.data());
+}

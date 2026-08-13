@@ -142,7 +142,11 @@ export async function resolveSpecialPhase(phaseId, correctAnswer) {
 // ── Scriere — Player ───────────────────────────────────────────────
 
 export async function saveSpecialPick(phaseId, uid, pickData) {
-  await setDoc(doc(db, "specialPicks", `${phaseId}_${uid}`), { phaseId, userId: uid, ...pickData }, { merge: true });
+  await setDoc(
+    doc(db, "specialPicks", `${phaseId}_${uid}`),
+    { phaseId, userId: uid, ...pickData, submittedAt: serverTimestamp() },
+    { merge: true }
+  );
 }
 
 // Lista tuturor competițiilor + fazele lor, din configurare — folosită

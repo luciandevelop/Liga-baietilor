@@ -53,34 +53,16 @@ export const CL_LEAGUE_PHASE_TEAMS = [
   team("como-1907", "Como"),
 ];
 
-// ── Europa League / Conference League — favorite + "ALTA" (opțiune
-// reală de scorare, nu un fallback vizual — vezi specialsScoringEngine
-// nou, mai jos în specialsService.js). ──
-export const EL_FAVORITES = [
-  team("tottenham", "Tottenham"),
-  team("as-monaco", "AS Monaco"),
-  team("eintracht-frankfurt", "Eintracht Frankfurt"),
-  team("lyon", "Lyon"),
-  team("fenerbahce", "Fenerbahçe"),
-  team("real-sociedad", "Real Sociedad"),
-  team("bologna", "Bologna"),
-  team("rangers", "Rangers"),
-  team("fcsb", "FCSB"),
-  team("besiktas", "Beşiktaş"),
-];
-
-export const UECL_FAVORITES = [
-  team("crystal-palace", "Crystal Palace"),
-  team("celta", "Celta Vigo"),
-  team("genk", "Genk"),
-  team("gent", "Gent"),
-  team("rapid-bucuresti", "Rapid București"),
-  team("olympiacos", "Olympiacos"),
-  team("aek-athens", "AEK Athens"),
-  team("dynamo-kyiv", "Dynamo Kyiv"),
-  team("legia", "Legia Warszawa"),
-  team("shamrock-rovers", "Shamrock Rovers"),
-];
+// ── Europa League / Conference League ──
+// ELIMINATE — listele anterioare erau inventate, nu verificate (FCSB nici
+// măcar nu joacă cupe europene în sezonul ăsta — greșeală reală, semnalată
+// direct). Confirmat pe surse UEFA oficiale acum: Europa League are 13
+// echipe calificate direct (restul prin preliminarii, până pe 27 august);
+// Conference League NU are nicio echipă calificată direct — toate cele 36
+// vin din preliminarii, care se termină abia pe 27 august. Se adaugă real
+// abia după ce se cunosc, nu ghicite. Până atunci, `resolveTeamOptions`
+// întoarce null pentru ambele — admin introduce manual dacă vrea să
+// deschidă mai devreme, exact ca la sferturi/semifinale/finală.
 
 // Marcaj universal "altă echipă decât favoritele" — id fix, recunoscut
 // direct de scorare (vezi computeSpecialPoints din specialsService.js).
@@ -158,9 +140,12 @@ export function resolveTeamOptions(competitionId, phaseId) {
   }
   switch (competitionId) {
     case "uefa-europa-league":
-      return [...EL_FAVORITES, ALTA_OPTION];
     case "uefa-conference-league":
-      return [...UECL_FAVORITES, ALTA_OPTION];
+      // Niciun team confirmat calificat direct încă (preliminariile se
+      // termină pe 27 august 2026) — null = admin introduce manual dacă
+      // vrea să deschidă mai devreme, exact ca sferturile la Champions
+      // League. Se completează cu lista reală imediat ce se cunoaște.
+      return null;
     case "english-premier-league":
       return [...PREMIER_LEAGUE_TEAMS, ALTA_OPTION];
     case "la-liga":

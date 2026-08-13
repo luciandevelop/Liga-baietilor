@@ -3,7 +3,7 @@ import ClubLogo from "./ClubLogo";
 import { color, font, radius } from "../matchdayTheme";
 
 export default function SpecialResolvePicker({ phaseDef, options, selection, onChange }) {
-  const showLogos = phaseDef.optionsSource === "teams";
+  const showLogos = phaseDef.optionsSource === "teams" || phaseDef.id === "cl-golgheter";
   const isRanked = phaseDef.type === PICK_TYPES.RANKED;
   const isGroup = phaseDef.type === PICK_TYPES.GROUP;
   const targetSize = isRanked ? phaseDef.rankedSize : isGroup ? phaseDef.groupSize : 1;
@@ -35,7 +35,9 @@ export default function SpecialResolvePicker({ phaseDef, options, selection, onC
               style={{ ...s.optionBtn, ...(isSingleSelected || isMultiSelected ? s.optionBtnActive : {}) }}
             >
               <span style={s.optionContent}>
-                {showLogos && opt.id !== "alta" && <ClubLogo teamName={opt.label} size={20} />}
+                {showLogos && opt.id !== "alta" && opt.id !== "altul" && (
+                  <ClubLogo teamName={opt.club || opt.label} size={20} />
+                )}
                 {opt.label}
               </span>
               {isRanked && isMultiSelected && <span style={s.rankBadge}>{rankIndex + 1}</span>}

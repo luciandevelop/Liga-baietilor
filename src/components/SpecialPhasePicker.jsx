@@ -1,9 +1,11 @@
 import { useState } from "react";
 import { PICK_TYPES } from "../specialDefinitions";
 import { saveSpecialPick } from "../services/specialsService";
+import ClubLogo from "./ClubLogo";
 import { color, font, radius } from "../matchdayTheme";
 
 export default function SpecialPhasePicker({ phaseDef, phaseState, uid, ownPick, onSaved }) {
+  const showLogos = phaseDef.optionsSource === "teams" || phaseDef.id === "cl-golgheter";
   const [selection, setSelection] = useState(() => {
     if (phaseDef.type === PICK_TYPES.SINGLE) return ownPick?.choice || null;
     return ownPick?.choices || [];
@@ -69,7 +71,15 @@ export default function SpecialPhasePicker({ phaseDef, phaseState, uid, ownPick,
                 ...(isSingleSelected || isMultiSelected ? s.optionBtnActive : {}),
               }}
             >
-              <span>{opt.label}</span>
+              <span style={s.optionContent}>
+                {showLogos && opt.id !== "alta" && opt.id !== "altul" && (
+                  <ClubLogo teamName={opt.club || opt.label} size={22} />
+                )}
+                <span style={s.optionText}>
+                  {opt.label}
+                  {opt.club && <span style={s.optionClub}> · {opt.club}</span>}
+                </span>
+              </span>
               {isRanked && isMultiSelected && <span style={s.rankBadge}>{rankIndex + 1}</span>}
               {isGroup && isMultiSelected && <span style={s.checkBadge}>✓</span>}
             </button>
@@ -97,6 +107,9 @@ const s = {
     fontFamily: font.body, textAlign: "left",
   },
   optionBtnActive: { border: `1.5px solid ${color.gold}`, background: "rgba(212,175,55,0.1)" },
+  optionContent: { display: "flex", alignItems: "center", gap: 10 },
+  optionText: { display: "flex", flexDirection: "column" },
+  optionClub: { fontSize: 10.5, fontWeight: 500, color: color.textFaint },
   rankBadge: {
     width: 22, height: 22, borderRadius: "50%", background: color.gold, color: color.goldOn,
     fontSize: 11, fontWeight: 800, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0,

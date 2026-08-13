@@ -6,6 +6,11 @@ import { resolveGolgheterOptions, GOLGHETER_ID } from "../golgheterRegistry";
 import SpecialResolvePicker from "../components/SpecialResolvePicker";
 import SpecialMonitoringPanel from "../components/SpecialMonitoringPanel";
 import ClubLogo from "../components/ClubLogo";
+import {
+  listRecentEventsForAdmin, listHiddenEditorialIds, hideEditorialArticle, unhideEditorialArticle,
+  listAdminFunItems, addFunItem, deleteFunItem,
+} from "../services/feedService";
+import { EDITORIAL_ARTICLES } from "../feedContent/editorialContent";
 import useNow from "../hooks/useNow";
 import {
   createSeason,
@@ -69,6 +74,7 @@ const TABS = [
   { id: "live", label: "Live" },
   { id: "featured", label: "Săptămânii" },
   { id: "speciale", label: "Speciale" },
+  { id: "feed", label: "Feed" },
   { id: "health", label: "Health Check" },
   { id: "config", label: "Config" },
 ];
@@ -530,6 +536,66 @@ export default function AdminScreen({ onBack }) {
         setSpecialMonitoring({ picks: [], loading: false });
       });
   }, [specialPhaseId, specialPhasesForSeason, resolveMsg]);
+
+  // ── Feed (Admin) ──
+  const [feedEvents, setFeedEvents] = useState([]);
+  const [feedHiddenIds, setFeedHiddenIds] = useState(new Set());
+  const [feedAdminFun, setFeedAdminFun] = useState([]);
+  const [feedLoading, setFeedLoading] = useState(false);
+  const [newFunLabel, setNewFunLabel] = useState("");
+  const [newFunText, setNewFunText] = useState("");
+  const [funSaving, setFunSaving] = useState(false);
+
+  useEffect(() => {
+    if (tab !== "feed") return;
+    setFeedLoading(true);
+    Promise.all([listRecentEventsForAdmin(), listHiddenEditorialIds(), listAdminFunItems()])
+      .then(([events, hidden, adminFun]) => {
+        setFeedEvents(events);
+        setFeedHiddenIds(hidden);
+        setFeedAdminFun(adminFun);
+      })
+      .catch((err) => console.error("Eroare la încărcarea Feed-ului (admin):", err))
+      .finally(() => setFeedLoading(false));
+  }, [tab]);
+
+  async function handleToggleEditorial(articleId) {
+    try {
+      if (feedHiddenIds.has(articleId)) {
+        await unhideEditorialArticle(articleId);
+        setFeedHiddenIds((prev) => { const n = new Set(prev); n.delete(articleId); return n; });
+      } else {
+        await hideEditorialArticle(articleId);
+        setFeedHiddenIds((prev) => new Set(prev).add(articleId));
+      }
+    } catch (err) {
+      console.error("Eroare la ascundere/reafișare articol:", err);
+    }
+  }
+
+  async function handleAddFun() {
+    if (!newFunLabel.trim() || !newFunText.trim()) return;
+    setFunSaving(true);
+    try {
+      const id = await addFunItem({ label: newFunLabel.trim(), text: newFunText.trim() });
+      setFeedAdminFun((prev) => [...prev, { id, label: newFunLabel.trim(), text: newFunText.trim() }]);
+      setNewFunLabel("");
+      setNewFunText("");
+    } catch (err) {
+      console.error("Eroare la adăugarea FUN:", err);
+    } finally {
+      setFunSaving(false);
+    }
+  }
+
+  async function handleDeleteFun(id) {
+    try {
+      await deleteFunItem(id);
+      setFeedAdminFun((prev) => prev.filter((f) => f.id !== id));
+    } catch (err) {
+      console.error("Eroare la ștergerea FUN:", err);
+    }
+  }
 
   const specialCompetitions = listAllSpecialCompetitions();
   const specialComp = specialCompetitions.find((c) => c.id === specialCompId) || null;
@@ -1029,6 +1095,73 @@ export default function AdminScreen({ onBack }) {
               </SectionCard>
             )}
 
+            {/* ── Feed — evenimente automate, moderare editorial, FUN ── */}
+            {tab === "feed" && (
+              <>
+                <SectionCard title="Evenimente recente (automate)">
+                  {feedLoading && <p style={s.hint}>Se încarcă…</p>}
+                  {!feedLoading && feedEvents.length === 0 && <p style={s.hint}>Niciun eveniment încă.</p>}
+                  <div style={s.feedAdminList}>
+                    {feedEvents.map((e) => (
+                      <div key={e.id} style={s.feedAdminRow}>
+                        <div style={s.feedAdminRowHead}>
+                          <span style={s.feedAdminCategory}>{e.category}</span>
+                          <span style={s.feedAdminPriority}>prioritate {e.priority}</span>
+                        </div>
+                        <div style={s.feedAdminTitle}>{e.title}</div>
+                        <div style={s.feedAdminMeta}>{new Date(e.ts).toLocaleString("ro-RO")} · sursă: automat</div>
+                      </div>
+                    ))}
+                  </div>
+                </SectionCard>
+
+                <SectionCard title="Articole editoriale — ascundere">
+                  <p style={s.hint}>{EDITORIAL_ARTICLES.length} articole în total · {feedHiddenIds.size} ascunse acum.</p>
+                  <div style={s.feedAdminList}>
+                    {EDITORIAL_ARTICLES.map((a) => {
+                      const hidden = feedHiddenIds.has(a.id);
+                      return (
+                        <div key={a.id} style={{ ...s.feedAdminRow, ...(hidden ? s.feedAdminRowHidden : {}) }}>
+                          <div style={s.feedAdminRowBetween}>
+                            <div>
+                              <div style={s.feedAdminTitle}>{a.title}</div>
+                              <div style={s.feedAdminMeta}>{a.teamId} · {a.category}</div>
+                            </div>
+                            <button type="button" style={s.smallBtn} onClick={() => handleToggleEditorial(a.id)}>
+                              {hidden ? "Reafișează" : "Ascunde"}
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </SectionCard>
+
+                <SectionCard title="FUN — adăugat de Admin">
+                  <p style={s.hint}>Astea se adaugă peste lista de bază (nu o înlocuiesc).</p>
+                  <input style={s.input} placeholder="Etichetă (ex: GLUMĂ, PROVERB)" value={newFunLabel} onChange={(e) => setNewFunLabel(e.target.value)} />
+                  <textarea style={s.textarea} rows={2} placeholder="Textul..." value={newFunText} onChange={(e) => setNewFunText(e.target.value)} />
+                  <button style={s.btn} disabled={funSaving} onClick={handleAddFun} type="button">
+                    {funSaving ? "Se salvează…" : "Adaugă"}
+                  </button>
+
+                  {feedAdminFun.length > 0 && (
+                    <div style={{ ...s.feedAdminList, marginTop: 10 }}>
+                      {feedAdminFun.map((f) => (
+                        <div key={f.id} style={s.feedAdminRowBetween}>
+                          <div>
+                            <div style={s.feedAdminCategory}>{f.label}</div>
+                            <div style={s.feedAdminTitle}>{f.text}</div>
+                          </div>
+                          <button type="button" style={s.smallBtn} onClick={() => handleDeleteFun(f.id)}>Șterge</button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </SectionCard>
+              </>
+            )}
+
             {/* ── Health Check — doar detectare + corecție manuală ────── */}
             {tab === "health" && (
               <SectionCard title="Health Check — meciuri deja salvate">
@@ -1229,6 +1362,24 @@ const s = {
     whiteSpace: "pre-line",
   },
   specialsOverview: { display: "flex", flexDirection: "column", gap: 4, margin: "10px 0" },
+  feedAdminList: { display: "flex", flexDirection: "column", gap: 6, marginTop: 8 },
+  feedAdminRow: {
+    background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 8, padding: "9px 11px",
+  },
+  feedAdminRowHidden: { opacity: 0.45 },
+  feedAdminRowHead: { display: "flex", justifyContent: "space-between", marginBottom: 3 },
+  feedAdminRowBetween: {
+    display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10,
+    background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 8, padding: "9px 11px",
+  },
+  feedAdminCategory: { fontSize: 9.5, fontWeight: 800, letterSpacing: "0.06em", color: "#D4AF37", textTransform: "uppercase" },
+  feedAdminPriority: { fontSize: 9.5, color: "#6B7385" },
+  feedAdminTitle: { fontSize: 12, fontWeight: 600, color: "#fff", marginTop: 1 },
+  feedAdminMeta: { fontSize: 10, color: "#6B7385", marginTop: 2 },
+  smallBtn: {
+    flexShrink: 0, background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.15)", borderRadius: 6,
+    padding: "6px 10px", fontSize: 10.5, fontWeight: 700, color: "#fff", cursor: "pointer",
+  },
   teamsPreview: { display: "flex", flexWrap: "wrap", gap: 5, margin: "8px 0" },
   teamsPreviewChip: {
     display: "flex", alignItems: "center", gap: 5,

@@ -13,8 +13,8 @@ export default function CompetitionHeaderStrip({ match, rightSlot, size = "md" }
   if (!match?.competitionId && !match?.competitionName) return null;
   const theme = getCompetitionTheme(match.competitionId);
   const logo = match.competitionId ? getCompetitionLogo(match.competitionId) : null;
-  const logoSize = size === "lg" ? 46 : 42;
-  const nameFontSize = size === "lg" ? 20 : 19;
+  const logoSize = size === "lg" ? 46 : 30;
+  const nameFontSize = size === "lg" ? 20 : 14.5;
 
   // Gradient radial — mai luminos în colțul stânga-sus, se stinge spre
   // culoarea de bază a cardului la margini. Nu un dreptunghi colorat plin.
@@ -28,7 +28,7 @@ export default function CompetitionHeaderStrip({ match, rightSlot, size = "md" }
           display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, padding: "0 14px",
         }}
       >
-        <div style={{ display: "flex", alignItems: "center", gap: 13, minWidth: 0, position: "relative", zIndex: 2 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: size === "lg" ? 13 : 8, minWidth: 0, position: "relative", zIndex: 2, flex: 1 }}>
           {logo?.url && (
             <img
               src={logo.url}

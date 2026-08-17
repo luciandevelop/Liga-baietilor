@@ -40,7 +40,7 @@ export default function MatchRailCard({ match, now, emphasizeCountdown = false, 
       onPointerUp={(e) => { e.currentTarget.style.transform = "scale(1)"; }}
       onPointerLeave={(e) => { e.currentTarget.style.transform = "scale(1)"; }}
       style={{
-        flexShrink: 0, minWidth: isFeatured ? 264 : 236, textAlign: "left", borderRadius: radius.lg,
+        flexShrink: 0, minWidth: isFeatured ? 264 : 298, textAlign: "left", borderRadius: radius.lg,
         overflow: "hidden", position: "relative",
         background: isFeatured
           ? "linear-gradient(165deg, rgba(212,175,55,0.22) 0%, rgba(212,175,55,0.05) 45%, #12141C 100%)"

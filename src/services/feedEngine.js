@@ -18,17 +18,24 @@ export const FEED_CATEGORIES = {
   MECIURI: "meciuri",
   CL: "champions-league",
   LIGA: "liga",
-  ACTIVITATE: "activitate",
+  JOKERI: "jokeri",
   FUN: "fun",
   FOTBAL: "fotbal",
 };
 
-// Priorități pe 3 nivele, exact cum a cerut Lu — folosite direct ca
-// numere de sortare (mai mare = mai sus în Feed).
+// Priorități — ordinea EXACTĂ cerută: clasament > rezultate meciuri >
+// jokeri > meciuri importante care urmează > preview/analiză > FUN.
+// În interiorul "clasament", păstrez sub-nivelele MAXIMA/MARE (lider
+// nou/podium vs intrare în top10/depășire) — tot mai sus decât orice
+// altă categorie, dar nu toate schimbările de clasament sunt la fel
+// de importante între ele.
 export const PRIORITY = {
-  MAXIMA: 100, // schimbare de lider, intrare/ieșire din TOP 3, salt foarte mare (5+)
-  MARE: 70,    // intrare/ieșire din TOP 10, depășire directă, salt 3-4
-  NORMALA: 40, // meci terminat, Joker activat, alte evenimente
+  RANK_MAXIMA: 100,   // schimbare de lider, intrare/ieșire din TOP 3, salt foarte mare (5+)
+  RANK_MARE: 90,       // intrare/ieșire din TOP 10, depășire directă, salt 3-4
+  MATCH_RESULT: 70,    // rezultat final de meci
+  JOKER: 60,           // Joker activat
+  UPCOMING_IMPORTANT: 50, // meci important care urmează (ex. Meciul Săptămânii)
+  PREVIEW: 35,         // context/analiză despre un meci care urmează
   FUN: 15,
 };
 
@@ -70,9 +77,8 @@ export function detectRankChangeEvents(prevState, currentRows) {
           .slice(0, 2)
       : [];
 
-    const priority = becameLeader || enteredTop3 || leftTop3 || hugeJump ? PRIORITY.MAXIMA
-      : enteredTop10 || leftTop10 || overtaken.length > 0 || bigJump ? PRIORITY.MARE
-      : PRIORITY.NORMALA;
+    const priority = becameLeader || enteredTop3 || leftTop3 || hugeJump ? PRIORITY.RANK_MAXIMA
+      : PRIORITY.RANK_MARE;
 
     const pointsBefore = before.points;
     const pointsAfter = row.seasonPoints;
@@ -81,7 +87,7 @@ export function detectRankChangeEvents(prevState, currentRows) {
     if (becameLeader) {
       const overtakenText = overtaken.length > 0 ? ` — l-a depășit pe ${overtaken.join(" și ")}` : "";
       events.push({
-        id, category: FEED_CATEGORIES.CLASAMENT, priority: PRIORITY.MAXIMA, ts: Date.now(),
+        id, category: FEED_CATEGORIES.CLASAMENT, priority: PRIORITY.RANK_MAXIMA, ts: Date.now(),
         icon: "crown", important: true,
         title: `${row.nickname} este noul lider al clasamentului!${overtakenText}`,
         subtitle: `Locul ${before.rank} → Locul 1`,
@@ -91,7 +97,7 @@ export function detectRankChangeEvents(prevState, currentRows) {
       const overtakenText = overtaken.length > 0 ? ` — l-a depășit pe ${overtaken.join(" și ")}` : "";
       events.push({
         id, category: FEED_CATEGORIES.CLASAMENT, priority, ts: Date.now(),
-        icon: "up", important: priority === PRIORITY.MAXIMA,
+        icon: "up", important: priority === PRIORITY.RANK_MAXIMA,
         title: moved === 1
           ? `${row.nickname} a urcat pe locul ${row.rank}${overtakenText}`
           : `${row.nickname} a urcat ${moved} poziții, de pe locul ${before.rank} pe ${row.rank}${overtakenText}`,
@@ -101,7 +107,7 @@ export function detectRankChangeEvents(prevState, currentRows) {
     } else {
       events.push({
         id, category: FEED_CATEGORIES.CLASAMENT, priority, ts: Date.now(),
-        icon: "down", important: priority === PRIORITY.MAXIMA,
+        icon: "down", important: priority === PRIORITY.RANK_MAXIMA,
         title: Math.abs(moved) === 1
           ? `${row.nickname} a coborât pe locul ${row.rank}`
           : `${row.nickname} a coborât ${Math.abs(moved)} poziții, de pe locul ${before.rank} pe ${row.rank}`,
@@ -120,7 +126,7 @@ export function buildMatchFinalEvent(match) {
   if (match.realScoreA == null || match.realScoreB == null) return null;
   return {
     id: `match-final_${match.id}`,
-    category: FEED_CATEGORIES.MECIURI, priority: PRIORITY.NORMALA, ts: Date.now(),
+    category: FEED_CATEGORIES.MECIURI, priority: PRIORITY.MATCH_RESULT, ts: Date.now(),
     icon: "whistle", important: false,
     title: `${match.homeTeam} ${match.realScoreA}–${match.realScoreB} ${match.awayTeam}`,
     subtitle: "Final de meci",
@@ -140,7 +146,7 @@ export function buildJokerEvent(joker, match, nickname) {
   if (!match) return null;
   return {
     id: `joker_${joker.gameweekId}_${joker.userId}`,
-    category: FEED_CATEGORIES.ACTIVITATE, priority: PRIORITY.NORMALA, ts: Date.now(),
+    category: FEED_CATEGORIES.JOKERI, priority: PRIORITY.JOKER, ts: Date.now(),
     icon: "joker", important: false,
     title: `${nickname} a activat Jokerul pe ${match.homeTeam} – ${match.awayTeam}`,
     detail: {
@@ -150,13 +156,29 @@ export function buildJokerEvent(joker, match, nickname) {
   };
 }
 
-export function buildFeaturedMatchEvent(match) {
+// ── Meci care urmează — REGULA ZERO: apare doar dacă e chiar un meci
+// real, programat, din datele aplicației (matches, status "scheduled").
+// Niciun articol de club de sine stătător — orice fragment editorial
+// atașat aici (`editorialSnippets`) e STRICT legat de echipele din
+// ACEST meci, dispare din Feed când meciul nu mai e relevant (a
+// început/s-a terminat).
+//
+// isImportant = e Meciul Săptămânii (Punctaj Dublu) -> prioritate mai
+// mare (UPCOMING_IMPORTANT), altfel doar PREVIEW.
+export function buildUpcomingMatchEvent(match, editorialSnippets, isImportant) {
   return {
-    id: `motw_${match.id}`,
-    category: FEED_CATEGORIES.ACTIVITATE, priority: PRIORITY.NORMALA + 5, ts: Date.now(),
-    icon: "star", important: false,
-    title: `Meciul Săptămânii: ${match.homeTeam} – ${match.awayTeam} (Punctaj Dublu)`,
-    detail: { competitionName: match.competitionName, matchId: match.id },
+    id: `upcoming_${match.id}`,
+    category: FEED_CATEGORIES.MECIURI, priority: isImportant ? PRIORITY.UPCOMING_IMPORTANT : PRIORITY.PREVIEW,
+    ts: Date.now(), icon: isImportant ? "star" : "whistle", important: isImportant,
+    title: isImportant
+      ? `${match.homeTeam} – ${match.awayTeam}: Meciul Săptămânii (Punctaj Dublu)`
+      : `${match.homeTeam} – ${match.awayTeam}`,
+    subtitle: match.competitionName || null,
+    detail: {
+      competitionName: match.competitionName, matchId: match.id,
+      kickoffAt: match.kickoffAt?.toMillis ? match.kickoffAt.toMillis() : null,
+      editorialSnippets: editorialSnippets || [],
+    },
   };
 }
 

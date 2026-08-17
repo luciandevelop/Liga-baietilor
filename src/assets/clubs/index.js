@@ -86,6 +86,20 @@ import milan from "./milan.svg";
 import monza from "./monza.svg";
 import napoli from "./napoli.svg";
 import newcastle from "./newcastle.svg";
+import bodoGlimt from "./bodo-glimt.svg";
+import ferencvaros from "./ferencvaros.svg";
+import lask from "./lask.svg";
+import viking from "./viking.svg";
+import araratArmenia from "./ararat-armenia.svg";
+import celje from "./celje.svg";
+import aek from "./aek.svg";
+import levskiSofia from "./levski-sofia.svg";
+import necNijmegen from "./nec-nijmegen.svg";
+import dinamoZagreb from "./dinamo-zagreb.svg";
+import viktoriaPlzen from "./viktoria-plzen.svg";
+import trabzonspor from "./trabzonspor.svg";
+import aarhus from "./aarhus.svg";
+import slovanBratislava from "./slovan-bratislava.svg";
 import nice from "./nice.svg";
 import nottinghamForest from "./nottingham-forest.svg";
 import olympiacos from "./olympiacos.svg";
@@ -221,6 +235,20 @@ export const CLUB_LOGOS = {
   "monza": monza,
   "napoli": napoli,
   "newcastle": newcastle,
+  "bodo-glimt": bodoGlimt,
+  "ferencvaros": ferencvaros,
+  "lask": lask,
+  "viking": viking,
+  "ararat-armenia": araratArmenia,
+  "celje": celje,
+  "aek": aek,
+  "levski-sofia": levskiSofia,
+  "nec-nijmegen": necNijmegen,
+  "dinamo-zagreb": dinamoZagreb,
+  "viktoria-plzen": viktoriaPlzen,
+  "trabzonspor": trabzonspor,
+  "aarhus": aarhus,
+  "slovan-bratislava": slovanBratislava,
   "nice": nice,
   "nottingham-forest": nottinghamForest,
   "olympiacos": olympiacos,
@@ -357,6 +385,20 @@ export const CLUB_NAMES = {
   "monza": "Monza",
   "napoli": "Napoli",
   "newcastle": "Newcastle",
+  "bodo-glimt": "Bodø/Glimt",
+  "ferencvaros": "Ferencváros",
+  "lask": "LASK",
+  "viking": "Viking",
+  "ararat-armenia": "Ararat-Armenia",
+  "celje": "Celje",
+  "aek": "AEK",
+  "levski-sofia": "Levski Sofia",
+  "nec-nijmegen": "NEC Nijmegen",
+  "dinamo-zagreb": "Dinamo Zagreb",
+  "viktoria-plzen": "Viktoria Plzeň",
+  "trabzonspor": "Trabzonspor",
+  "aarhus": "Aarhus",
+  "slovan-bratislava": "Slovan Bratislava",
   "nice": "Nice",
   "nottingham-forest": "Nottingham Forest",
   "olympiacos": "Olympiacos",
@@ -457,6 +499,7 @@ export const CLUB_ALIASES = {
   "como-1907": "como-1907",
   "corvinul-hunedoara": "corvinul-hunedoara",
   "coventry-city": "coventry-city",
+  "coventry": "coventry-city",
   "crvena-zvezda": "crvena-zvezda",
   "crvena-zvezda-beograd": "crvena-zvezda",
   "crystal-palace": "crystal-palace",
@@ -535,6 +578,25 @@ export const CLUB_ALIASES = {
   "mallorca": "mallorca",
   "man-city": "manchester-city",
   "man-u": "manchester-united",
+  "atl-madrid": "atletico-madrid",
+  "bod-glimt": "bodo-glimt",
+  "bodo-glimt-fk": "bodo-glimt",
+  "glimt": "bodo-glimt",
+  "aek-athens": "aek",
+  "din-zagreb": "dinamo-zagreb",
+  "gnk-dinamo-zagreb": "dinamo-zagreb",
+  "plzen": "viktoria-plzen",
+  "fc-viktoria-plzen": "viktoria-plzen",
+  "levski": "levski-sofia",
+  "nec": "nec-nijmegen",
+  "agf": "aarhus",
+  "agf-aarhus": "aarhus",
+  "sk-slovan-bratislava": "slovan-bratislava",
+  "s-bratislava": "slovan-bratislava",
+  "viking-fk": "viking",
+  "nk-celje": "celje",
+  "lask-linz": "lask",
+  "ararat-yerevan": "ararat-armenia",
   "man-united": "manchester-united",
   "man-utd": "manchester-united",
   "manchester-city": "manchester-city",
@@ -549,6 +611,7 @@ export const CLUB_ALIASES = {
   "mufc": "manchester-united",
   "napoli": "napoli",
   "newcastle": "newcastle",
+  "newcastle-united": "newcastle",
   "nice": "nice",
   "nottingham-forest": "nottingham-forest",
   "olympiacos": "olympiacos",
@@ -584,6 +647,7 @@ export const CLUB_ALIASES = {
   "real-sociedad": "real-sociedad",
   "red-star": "crvena-zvezda",
   "red-star-belgrade": "crvena-zvezda",
+  "steaua-rosie-belgrad": "crvena-zvezda",
   "roma": "roma",
   "royale-union-saint-gilloise": "union-saint-gilloise",
   "sassuolo": "sassuolo",

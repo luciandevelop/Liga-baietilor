@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { getCurrentSeason, getCurrentGameweek, loadUserPredictions, loadUserJoker } from "../services/predictionsService";
-import { listMatches, listenLiveGameweekScores, listGameweekScores, getUserSeasonPoints, listJokersForGameweek } from "../services/adminService";
+import { listMatches, listenLiveGameweekScores, listGameweekScores, getUserSeasonPoints } from "../services/adminService";
 import { getUserPublicProfiles } from "../services/profilesService";
 import useNow from "../hooks/useNow";
 import { usePrefersReducedMotion } from "../motion";
@@ -14,13 +14,11 @@ import PremiumCard from "../components/PremiumCard";
 import PremiumButton from "../components/PremiumButton";
 import ClubLogo from "../components/ClubLogo";
 import CompetitionBadge from "../components/CompetitionBadge";
+import CompetitionHeaderStrip from "../components/CompetitionHeaderStrip";
 import { getCompetitionTheme } from "../competitionThemes";
 import SplitFlapClock from "../components/SplitFlapClock";
 import MatchRailCard from "../components/MatchRailCard";
 import Pill from "../components/Pill";
-import FeedCard from "../components/FeedCard";
-import FeedDetailModal from "../components/FeedDetailModal";
-import { processRankChanges, processFinishedMatches, processJokerActivation, processUpcomingMatches, loadFullFeed } from "../services/feedService";
 
 const LOCK_MS = 30 * 60 * 1000;
 
@@ -36,7 +34,7 @@ const CTA_LABEL = {
 // Home — Sprint 1 "Home Premium". Aceeași logică de date ca înainte
 // (niciun apel nou către Firestore) — doar experiența Home + navigarea
 // s-au schimbat, cum a fost cerut explicit.
-export default function WelcomeScreen({ user, profile, isAdmin, onOpenAdmin, onOpenPredictions, onOpenLeaderboard, onOpenSpecials, onOpenFeed, onOpenProfile }) {
+export default function WelcomeScreen({ user, profile, isAdmin, onOpenAdmin, onOpenPredictions, onOpenLeaderboard, onOpenSpecials, onOpenProfile }) {
   const now = useNow(1000);
   const reduced = usePrefersReducedMotion();
 
@@ -57,17 +55,11 @@ export default function WelcomeScreen({ user, profile, isAdmin, onOpenAdmin, onO
   const [freshSeasonPoints, setFreshSeasonPoints] = useState(profile?.seasonPoints ?? null);
   const [profiles, setProfiles] = useState({});
 
-  const [feedTop, setFeedTop] = useState([]);
-  const [selectedFeedEvent, setSelectedFeedEvent] = useState(null);
-  const processedJokersRef = useRef(new Set());
+  const prevRanksRef = useRef(null);
+  const [feed, setFeed] = useState([]);
 
-  async function refreshFeedTop() {
-    try {
-      const { merged } = await loadFullFeed();
-      setFeedTop(merged.slice(0, 8));
-    } catch (err) {
-      console.error("Eroare la reîmprospătarea Feed-ului:", err);
-    }
+  function pushFeed(text, icon) {
+    setFeed((prev) => [{ id: `${Date.now()}-${Math.random()}`, text, icon, ts: Date.now(), mock: false }, ...prev].slice(0, 6));
   }
 
   function load() {
@@ -76,7 +68,8 @@ export default function WelcomeScreen({ user, profile, isAdmin, onOpenAdmin, onO
       setLoading(true);
       setCriticalError("");
       setStatsError("");
-      refreshFeedTop();
+      prevRanksRef.current = null;
+      setFeed([]);
 
       let season, gw, m;
       try {
@@ -101,31 +94,6 @@ export default function WelcomeScreen({ user, profile, isAdmin, onOpenAdmin, onO
         const joker = await loadUserJoker(gw.id, user.uid);
         setOwnJoker(joker);
 
-        // Meciuri terminate → eveniment de scor final. Sigur de rulat de
-        // fiecare dată (ID determinist per meci -> Firestore ignoră
-        // duplicatele, nu se creează a doua oară).
-        const finished = m.filter((x) => x.status === "finished" && x.realScoreA != null && x.realScoreB != null);
-        if (finished.length > 0) {
-          processFinishedMatches(finished).then((evs) => { if (evs.length > 0) refreshFeedTop(); }).catch((err) => console.error("Eroare Feed meciuri:", err));
-        }
-
-        // Jokerii TUTUROR jucătorilor, nu doar al userului curent —
-        // `processedJokersRef` evită re-anunțarea în aceeași sesiune,
-        // ID-ul determinist evită duplicarea în Firestore.
-        listJokersForGameweek(gw.id).then(async (jokers) => {
-          const newOnes = jokers.filter((j) => !processedJokersRef.current.has(`${j.gameweekId}_${j.userId}`));
-          if (newOnes.length === 0) return;
-          const profilesForJokers = await getUserPublicProfiles(newOnes.map((j) => j.userId));
-          let any = false;
-          for (const j of newOnes) {
-            processedJokersRef.current.add(`${j.gameweekId}_${j.userId}`);
-            const jm = m.find((x) => x.id === j.matchId);
-            const nickname = profilesForJokers[j.userId]?.nickname || j.userId;
-            if (jm) { await processJokerActivation(j, jm, nickname); any = true; }
-          }
-          if (any) refreshFeedTop();
-        }).catch((err) => console.error("Eroare Feed jokeri:", err));
-
         if (gw.status === "completed") {
           const rows = await listGameweekScores(gw.id);
           await applyRows(rows.map((r) => ({ ...r, uid: r.userId })));
@@ -149,18 +117,19 @@ export default function WelcomeScreen({ user, profile, isAdmin, onOpenAdmin, onO
       const p = await getUserPublicProfiles(sorted.map((r) => r.uid));
       setProfiles((prev) => ({ ...prev, ...p }));
 
-      // Clasamentul General (nu doar etapa curentă) — motorul de Feed
-      // decide singur ce merită raportat (lider nou, podium, top 10,
-      // salturi mari), nu textul de aici. Rezultatul se scrie o dată în
-      // Firestore (ID determinist -> fără duplicate), apoi Feed-ul se
-      // reîmprospătează din sursa unică (loadFullFeed), nu dintr-un
-      // array local separat.
-      try {
-        const { events } = await processRankChanges();
-        if (events.length > 0) await refreshFeedTop();
-      } catch (err) {
-        console.error("Eroare la procesarea evenimentelor de clasament:", err);
+      const prevRanks = prevRanksRef.current;
+      if (prevRanks) {
+        sorted.forEach((r) => {
+          const before = prevRanks[r.uid];
+          if (before !== undefined && r.rank < before) {
+            const meName = p[r.uid]?.nickname || r.uid;
+            pushFeed(`${meName} a urcat pe locul #${r.rank}`, "medal");
+          }
+        });
       }
+      const nextRanks = {};
+      sorted.forEach((r) => { nextRanks[r.uid] = r.rank; });
+      prevRanksRef.current = nextRanks;
     }
 
     return () => { if (unsub) unsub(); };
@@ -182,12 +151,8 @@ export default function WelcomeScreen({ user, profile, isAdmin, onOpenAdmin, onO
     if (staticFeedRef.current || !gameweek || matches.length === 0) return;
     staticFeedRef.current = true;
     const featuredIds = gameweek.featuredMatchIds || [];
-    // Toate meciurile care urmează (fereastră 7 zile), nu doar Meciul
-    // Săptămânii — fiecare primește context editorial STRICT dacă
-    // există conținut pentru echipele respective (regula zero).
-    processUpcomingMatches(matches, featuredIds)
-      .then((events) => { if (events.length > 0) refreshFeedTop(); })
-      .catch((err) => console.error("Eroare Feed meciuri viitoare:", err));
+    const motw = matches.find((m) => featuredIds.includes(m.id));
+    if (motw) pushFeed(`Meciul Săptămânii: ${motw.homeTeam} – ${motw.awayTeam} (Punctaj Dublu)`, "star");
   }, [gameweek, matches]);
 
   // Meciul principal (hero) — prioritate STRICTĂ, cerută explicit:
@@ -258,15 +223,25 @@ export default function WelcomeScreen({ user, profile, isAdmin, onOpenAdmin, onO
     .sort((a, b) => b.kickoffAt.toMillis() - a.kickoffAt.toMillis())
     .slice(0, 5);
 
+  // Feed: evenimente REALE (depășiri de rang, derby) + câteva exemple
+  // ilustrative, marcate explicit `mock: true` — cerute punctual pentru
+  // acest sprint, până există un jurnal real de evenimente (Joker
+  // folosit, scor exact ghicit). Nu se amestecă vizual ca fiind reale.
+  const mockFeedExtra = [
+    { id: "mock-1", text: "Cineva a activat Joker pe un meci al etapei", icon: "joker", mock: true },
+    { id: "mock-2", text: "Cineva a ghicit un scor exact", icon: "star", mock: true },
+  ];
+  const feedItems = [...feed, ...mockFeedExtra].slice(0, 6);
+
   return (
     <div style={{ minHeight: "100vh", background: color.bgBase, paddingBottom: 96 }}>
       {/* ── HERO — comprimat, ~50% din ecran ── */}
-      <CinematicBackdrop crowd rain style={{ height: "50vh", minHeight: 340, display: "flex", flexDirection: "column" }}>
+      <CinematicBackdrop crowd rain style={{ minHeight: 480, display: "flex", flexDirection: "column" }}>
         <AppHeader
           nickname={profile?.nickname || "Jucător"}
           points={(freshSeasonPoints ?? profile?.seasonPoints ?? ownRow?.totalPoints ?? 0).toLocaleString("ro-RO")}
           avatarId={profile?.avatarId}
-          hasNotification={feedTop.some((e) => e.important)}
+          hasNotification={feed.length > 0}
           onAvatarClick={onOpenProfile}
           onBellClick={() => handleComingSoon("Notificări")}
         />
@@ -280,52 +255,48 @@ export default function WelcomeScreen({ user, profile, isAdmin, onOpenAdmin, onO
 
           {!loading && gameweek && (
             heroMatch ? (
-              <>
-                <div style={{ display: "flex", justifyContent: "center", gap: 8, marginBottom: 6, flexWrap: "wrap" }}>
-                  <div style={{
-                    padding: "5px 12px", borderRadius: 999,
-                    border: `1px solid ${heroTheme.borderColor}`,
-                    boxShadow: `0 0 14px ${heroTheme.glowColor}`,
-                    background: heroTheme.badgeBackground,
-                  }}>
-                    <CompetitionBadge match={heroMatch} size="md" />
-                  </div>
-                </div>
-                <div style={{ display: "flex", justifyContent: "center", gap: 6, marginBottom: 6, flexWrap: "wrap" }}>
-                  {featuredMatch && heroMatch === featuredMatch && <span style={s.motwBadge}>⭐ Meciul Săptămânii · Punctaj Dublu</span>}
-                  {heroStatus === "live" && <Pill tone="green">● LIVE</Pill>}
-                  {heroStatus === "paused" && <Pill tone="gold">Pauză</Pill>}
-                  {heroStatus === "finished" && <Pill tone="gold">Final</Pill>}
-                  {heroStatus === "postponed" && <Pill tone="gold">Amânat</Pill>}
-                  {heroStatus === "cancelled" && <Pill tone="gold">Anulat</Pill>}
-                </div>
+              <div style={s.heroCard}>
+                <CompetitionHeaderStrip match={heroMatch} size="lg" />
 
-                <div style={s.matchup}>
-                  <div style={s.side}>
-                    <ClubLogo teamName={heroMatch.homeTeam} size={42} />
-                    <span style={s.tname}>{heroMatch.homeTeam}</span>
+                <div style={s.heroCardBody}>
+                  {(featuredMatch && heroMatch === featuredMatch) || heroStatus !== "scheduled" ? (
+                    <div style={{ display: "flex", justifyContent: "center", gap: 6, marginBottom: 10, flexWrap: "wrap" }}>
+                      {featuredMatch && heroMatch === featuredMatch && <span style={s.motwBadge}>⭐ Meciul Săptămânii · Punctaj Dublu</span>}
+                      {heroStatus === "live" && <Pill tone="green">● LIVE</Pill>}
+                      {heroStatus === "paused" && <Pill tone="gold">Pauză</Pill>}
+                      {heroStatus === "finished" && <Pill tone="gold">Final</Pill>}
+                      {heroStatus === "postponed" && <Pill tone="gold">Amânat</Pill>}
+                      {heroStatus === "cancelled" && <Pill tone="gold">Anulat</Pill>}
+                    </div>
+                  ) : null}
+
+                  <div style={s.matchup}>
+                    <div style={s.side}>
+                      <div style={s.logoRing}><ClubLogo teamName={heroMatch.homeTeam} size={60} /></div>
+                      <span style={s.tname}>{heroMatch.homeTeam}</span>
+                    </div>
+                    <span style={s.vsx}>VS</span>
+                    <div style={s.side}>
+                      <div style={s.logoRing}><ClubLogo teamName={heroMatch.awayTeam} size={60} /></div>
+                      <span style={s.tname}>{heroMatch.awayTeam}</span>
+                    </div>
                   </div>
-                  <span style={s.vsx}>VS</span>
-                  <div style={s.side}>
-                    <ClubLogo teamName={heroMatch.awayTeam} size={42} />
-                    <span style={s.tname}>{heroMatch.awayTeam}</span>
-                  </div>
+
+                  {heroStatus === "scheduled" && (
+                    <div style={s.flapWrap}>
+                      <div style={s.lockLabel}>Se blochează în</div>
+                      <SplitFlapClock remainingMs={remainingMs} />
+                    </div>
+                  )}
+                  {heroStatus === "live" && <div style={s.liveNote}>LIVE · rezultat neintrodus încă</div>}
+                  {heroStatus === "paused" && <div style={s.liveNote}>Meciul e la pauză</div>}
+                  {heroStatus === "finished" && <div style={s.finalScore}>{heroMatch.realScoreA} – {heroMatch.realScoreB}</div>}
+                  {heroStatus === "postponed" && <div style={s.liveNote}>Meci amânat — dată nouă în curând</div>}
+                  {heroStatus === "cancelled" && <div style={s.liveNote}>Meci anulat</div>}
+
+                  <div style={s.ctaWrap}><PremiumButton onClick={onOpenPredictions}>{CTA_LABEL[heroStatus]}</PremiumButton></div>
                 </div>
-
-                {heroStatus === "scheduled" && (
-                  <div style={s.flapWrap}>
-                    <div style={s.lockLabel}>Se blochează în</div>
-                    <SplitFlapClock remainingMs={remainingMs} />
-                  </div>
-                )}
-                {heroStatus === "live" && <div style={s.liveNote}>LIVE · rezultat neintrodus încă</div>}
-                {heroStatus === "paused" && <div style={s.liveNote}>Meciul e la pauză</div>}
-                {heroStatus === "finished" && <div style={s.finalScore}>{heroMatch.realScoreA} – {heroMatch.realScoreB}</div>}
-                {heroStatus === "postponed" && <div style={s.liveNote}>Meci amânat — dată nouă în curând</div>}
-                {heroStatus === "cancelled" && <div style={s.liveNote}>Meci anulat</div>}
-
-                <div style={s.ctaWrap}><PremiumButton onClick={onOpenPredictions}>{CTA_LABEL[heroStatus]}</PremiumButton></div>
-              </>
+              </div>
             ) : (
               <div style={s.centerNote}>Etapa asta nu are încă meciuri adăugate.</div>
             )
@@ -398,14 +369,13 @@ export default function WelcomeScreen({ user, profile, isAdmin, onOpenAdmin, onO
           )}
 
           <div style={s.feedSection}>
-            <div style={s.feedSectionHead}>
-              <div style={s.sectionLabel}>📰 Feed</div>
-              {onOpenFeed && <button type="button" style={s.seeAllBtn} onClick={onOpenFeed}>Vezi tot →</button>}
-            </div>
+            <div style={s.sectionLabel}>Activitate</div>
             <div style={s.feedList}>
-              {feedTop.length === 0 && <div style={s.feedEmpty}>Niciun eveniment încă — revino după primele rezultate.</div>}
-              {feedTop.map((e) => (
-                <FeedCard key={e.id} event={e} now={now} onClick={setSelectedFeedEvent} compact />
+              {feedItems.map((f) => (
+                <div key={f.id} style={s.feedRow}>
+                  <span style={s.feedMark}><FeedIcon name={f.icon} /></span>
+                  <span style={s.feedText}>{f.text}</span>
+                </div>
               ))}
             </div>
           </div>
@@ -431,7 +401,6 @@ export default function WelcomeScreen({ user, profile, isAdmin, onOpenAdmin, onO
       )}
 
       <BottomTabBar active="home" onChange={handleBottomTab} />
-      <FeedDetailModal event={selectedFeedEvent} onClose={() => setSelectedFeedEvent(null)} />
     </div>
   );
 }
@@ -472,6 +441,14 @@ function PressableCard({ children, onClick, reduced, style }) {
   );
 }
 
+function FeedIcon({ name }) {
+  const common = { width: 12, height: 12, viewBox: "0 0 24 24", fill: "none", stroke: color.goldLight, strokeWidth: 1.6, strokeLinecap: "round", strokeLinejoin: "round" };
+  if (name === "medal") return <svg {...common}><circle cx="12" cy="14" r="6" /><path d="M9 8L7 2M15 8l2-6" /></svg>;
+  if (name === "star") return <svg {...common}><path d="M12 3l2.6 5.9L21 9.6l-4.6 4.3L17.6 21 12 17.6 6.4 21l1.2-7.1L3 9.6l6.4-.7L12 3z" /></svg>;
+  if (name === "joker") return <svg {...common}><rect x="5" y="4" width="14" height="16" rx="2" /><path d="M9 9h6M9 13h6M9 17h3" /></svg>;
+  return <svg {...common}><path d="M7 4h10v4a5 5 0 01-10 0V4z" /><path d="M12 13v4M9 20h6M10 17h4" /></svg>;
+}
+
 const s = {
   wrap: { maxWidth: 480, margin: "0 auto", padding: "16px 16px 0" },
   centerNote: { textAlign: "center", color: color.textSecondary, fontSize: 13.5, padding: "40px 16px" },
@@ -487,16 +464,46 @@ const s = {
     boxShadow: shadow.elevated,
   },
 
-  heroBody: { flex: 1, display: "flex", flexDirection: "column", justifyContent: "center", alignItems: "center", padding: "6px 20px 16px", textAlign: "center" },
-  matchup: { display: "flex", alignItems: "flex-start", justifyContent: "center", gap: 16, marginBottom: 4 },
-  side: { display: "flex", flexDirection: "column", alignItems: "center", gap: 6, width: 78 },
-  tname: { fontFamily: font.display, fontWeight: 600, fontSize: 10.5, textTransform: "uppercase", letterSpacing: "0.02em", color: color.textPrimary },
-  vsx: { fontFamily: font.display, fontSize: 9, color: color.textFaint, fontWeight: 700, paddingTop: 14 },
-  flapWrap: { margin: "12px 0 14px", transform: "scale(0.82)" },
+  heroBody: { flex: 1, display: "flex", flexDirection: "column", justifyContent: "center", alignItems: "center", padding: "8px 16px 16px", textAlign: "center" },
+
+  // ── Cardul hero — compoziție unică (competiție + echipe + countdown +
+  // CTA), cu profunzime reală: gradient discret + glow + bordură, nu
+  // conținut plutind pe negru pur. Lățime plină, ca să domine ecranul. ──
+  heroCard: {
+    width: "100%", maxWidth: 400, borderRadius: radius.lg, overflow: "hidden",
+    background: "linear-gradient(180deg, rgba(212,175,55,0.07) 0%, rgba(18,20,28,0.92) 35%, rgba(10,11,16,0.96) 100%)",
+    border: "1px solid rgba(212,175,55,0.22)",
+    boxShadow: "0 0 40px -8px rgba(212,175,55,0.18), 0 20px 45px -20px rgba(0,0,0,0.7)",
+  },
+  heroCardBody: { padding: "16px 18px 18px" },
+
+  matchup: { display: "flex", alignItems: "flex-start", justifyContent: "center", gap: 14, marginBottom: 6 },
+  side: { display: "flex", flexDirection: "column", alignItems: "center", gap: 9, width: 108 },
+  logoRing: {
+    width: 76, height: 76, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center",
+    background: "radial-gradient(circle, rgba(212,175,55,0.14) 0%, rgba(212,175,55,0.02) 70%)",
+    border: "1px solid rgba(212,175,55,0.25)", boxShadow: "0 0 20px -4px rgba(212,175,55,0.3)",
+  },
+  tname: {
+    fontFamily: font.display, fontWeight: 700, fontSize: 13, textTransform: "uppercase", letterSpacing: "0.01em",
+    color: color.textPrimary, lineHeight: 1.25, minHeight: 32, display: "flex", alignItems: "center", justifyContent: "center",
+  },
+  vsx: {
+    fontFamily: font.display, fontSize: 12, color: color.goldLight, fontWeight: 800, letterSpacing: "0.05em",
+    marginTop: 26, flexShrink: 0, width: 30, height: 30, borderRadius: "50%",
+    display: "flex", alignItems: "center", justifyContent: "center",
+    background: "rgba(212,175,55,0.1)", border: "1px solid rgba(212,175,55,0.3)",
+  },
+
+  flapWrap: {
+    margin: "14px auto 16px", transform: "scale(0.88)", display: "inline-block",
+    padding: "10px 18px", borderRadius: radius.md, background: "rgba(255,255,255,0.03)",
+    border: "1px solid rgba(255,255,255,0.08)",
+  },
   lockLabel: { fontSize: 10, fontWeight: 700, color: color.textFaint, letterSpacing: "0.04em", textTransform: "uppercase", marginBottom: 6, fontFamily: font.body },
   liveNote: { fontSize: 11.5, color: "#8BD957", fontWeight: 700, margin: "12px 0", fontFamily: font.body },
   finalScore: { fontFamily: font.display, fontSize: 30, fontWeight: 800, color: color.textPrimary, margin: "8px 0 12px" },
-  ctaWrap: { width: "100%", maxWidth: 280 },
+  ctaWrap: { width: "100%", maxWidth: 280, margin: "0 auto" },
   motwBadge: {
     display: "inline-flex", alignItems: "center", gap: 5, fontSize: 10.5, fontWeight: 800, color: "#241B05",
     background: "linear-gradient(180deg, #FFF6D9, #D4AF37)", padding: "4px 10px", borderRadius: 999,
@@ -535,10 +542,14 @@ const s = {
   resultScore: { fontSize: 13, color: color.textPrimary, fontWeight: 800, fontFamily: font.display, flexShrink: 0, padding: "0 4px" },
 
   feedSection: { marginBottom: 22 },
-  feedSectionHead: { display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4 },
-  seeAllBtn: { background: "none", border: "none", color: color.goldLight, fontSize: 11.5, fontWeight: 700, cursor: "pointer", fontFamily: font.body },
-  feedList: { display: "flex", flexDirection: "column", gap: 6 },
-  feedEmpty: { fontSize: 11.5, color: color.textFaint, fontFamily: font.body, padding: "8px 0" },
+  feedList: { display: "flex", flexDirection: "column" },
+  feedRow: { display: "flex", alignItems: "center", gap: 12, padding: "9px 0" },
+  feedMark: {
+    width: 26, height: 26, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0,
+    background: "radial-gradient(circle at 35% 30%, rgba(212,175,55,0.22), rgba(212,175,55,0.06))", border: "1px solid rgba(212,175,55,0.32)",
+    boxShadow: shadow.rim,
+  },
+  feedText: { fontSize: 12, color: color.textSecondary, fontFamily: font.body },
 
   specialTop: { display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 },
   specialName: { fontFamily: font.display, fontSize: 14, fontWeight: 700, color: color.textPrimary },

@@ -4,11 +4,10 @@ import { color, font, radius, shadow } from "../matchdayTheme";
 export default function FeedDetailModal({ event, onClose }) {
   if (!event) return null;
   const isMatch = event.id.startsWith("match-final_");
-  const isEditorial = event.id.startsWith("editorial_");
+  const isUpcoming = event.id.startsWith("upcoming_");
   const isFun = event.id.startsWith("fun_");
   const isRank = event.id.startsWith("rank_");
   const isJoker = event.id.startsWith("joker_");
-  const isMotw = event.id.startsWith("motw_");
   const d = event.detail || {};
 
   return (
@@ -46,16 +45,22 @@ export default function FeedDetailModal({ event, onClose }) {
           </>
         )}
 
-        {(isMatch || isJoker || isMotw) && d.competitionName && (
+        {(isMatch || isJoker || isUpcoming) && d.competitionName && (
           <div style={s.factRow}>
             <span style={s.factLabel}>Competiție</span>
             <span style={s.factValue}>{d.competitionName}</span>
           </div>
         )}
-        {isMatch && d.status && (
+        {isMatch && (
           <div style={s.factRow}>
             <span style={s.factLabel}>Status</span>
             <span style={s.factValue}>Final</span>
+          </div>
+        )}
+        {isUpcoming && d.kickoffAt && (
+          <div style={s.factRow}>
+            <span style={s.factLabel}>Data și ora</span>
+            <span style={s.factValue}>{new Date(d.kickoffAt).toLocaleString("ro-RO", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}</span>
           </div>
         )}
         {isJoker && (
@@ -73,11 +78,19 @@ export default function FeedDetailModal({ event, onClose }) {
           </>
         )}
 
-        {isEditorial && event.article && (
-          <>
-            <div style={s.articleBody}>{event.article.body}</div>
-            <div style={s.sourceRow}>Sursă: {event.article.source}</div>
-          </>
+        {/* Context editorial — DOAR dacă există, STRICT legat de acest
+            meci (nu articole permanente de club). */}
+        {isUpcoming && d.editorialSnippets && d.editorialSnippets.length > 0 && (
+          <div style={s.snippetsWrap}>
+            <div style={s.snippetsLabel}>Context</div>
+            {d.editorialSnippets.map((snip) => (
+              <div key={snip.id} style={s.snippetCard}>
+                <div style={s.snippetTitle}>{snip.title}</div>
+                <div style={s.snippetBody}>{snip.body}</div>
+                <div style={s.sourceRow}>Sursă: {snip.source}</div>
+              </div>
+            ))}
+          </div>
         )}
 
         {isFun && (
@@ -119,6 +132,14 @@ const s = {
   factValue: { fontSize: 12.5, color: color.textPrimary, fontWeight: 600, fontFamily: font.body },
   articleBody: { fontSize: 13, color: color.textSecondary, fontFamily: font.body, lineHeight: 1.55, marginBottom: 10 },
   sourceRow: { fontSize: 10.5, color: color.textFaint, fontFamily: font.body, fontStyle: "italic", marginBottom: 8 },
+  snippetsWrap: { marginTop: 6, paddingTop: 10, borderTop: `1px solid ${color.borderSubtle}` },
+  snippetsLabel: {
+    fontSize: 9.5, fontWeight: 800, letterSpacing: "0.08em", color: color.textFaint,
+    marginBottom: 8, textTransform: "uppercase",
+  },
+  snippetCard: { marginBottom: 10 },
+  snippetTitle: { fontSize: 12.5, fontWeight: 700, color: color.textPrimary, fontFamily: font.body, marginBottom: 2 },
+  snippetBody: { fontSize: 12, color: color.textSecondary, fontFamily: font.body, lineHeight: 1.5, marginBottom: 3 },
   funBadge: {
     fontSize: 11, fontWeight: 800, color: color.gold, background: "rgba(212,175,55,0.1)",
     border: `1px solid ${color.goldBorder}`, borderRadius: radius.pill, padding: "4px 10px",

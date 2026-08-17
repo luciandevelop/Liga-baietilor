@@ -1,15 +1,7 @@
 import { useEffect, useState } from "react";
-import { listAllSpecialCompetitions, listSpecialPhases, openSpecialPhase, resolveSpecialPhase, loadAllSpecialPicks } from "../services/specialsService";
+import { listAllSpecialCompetitions, listSpecialPhases, openSpecialPhase, resolveSpecialPhase } from "../services/specialsService";
 import { PICK_TYPES } from "../specialDefinitions";
-import { resolveTeamOptions } from "../teamRegistry";
-import { resolveGolgheterOptions, GOLGHETER_ID } from "../golgheterRegistry";
 import SpecialResolvePicker from "../components/SpecialResolvePicker";
-import SpecialMonitoringPanel from "../components/SpecialMonitoringPanel";
-import ClubLogo from "../components/ClubLogo";
-import {
-  listRecentEventsForAdmin, listAdminFunItems, addFunItem, deleteFunItem,
-} from "../services/feedService";
-import { EDITORIAL_ARTICLES } from "../feedContent/editorialContent";
 import useNow from "../hooks/useNow";
 import {
   createSeason,
@@ -73,7 +65,6 @@ const TABS = [
   { id: "live", label: "Live" },
   { id: "featured", label: "Săptămânii" },
   { id: "speciale", label: "Speciale" },
-  { id: "feed", label: "Feed" },
   { id: "health", label: "Health Check" },
   { id: "config", label: "Config" },
 ];
@@ -132,7 +123,6 @@ export default function AdminScreen({ onBack }) {
   const [specialPhasesForSeason, setSpecialPhasesForSeason] = useState([]);
   const [optionsText, setOptionsText] = useState("");
   const [closesAtInput, setClosesAtInput] = useState("");
-  const [specialMonitoring, setSpecialMonitoring] = useState({ picks: [], loading: false });
   const [openSaving, setOpenSaving] = useState(false);
   const [openMsg, setOpenMsg] = useState("");
   const [resolveSelection, setResolveSelection] = useState(null);
@@ -489,7 +479,7 @@ export default function AdminScreen({ onBack }) {
   }
 
   useEffect(() => {
-    if (tab !== "config" && tab !== "speciale") return;
+    if (tab !== "config") return;
     listAllUsers()
       .then(setAllUsers)
       .catch((err) => console.error("Eroare la încărcarea listei de utilizatori:", err));
@@ -519,67 +509,6 @@ export default function AdminScreen({ onBack }) {
       .catch((err) => console.error("Eroare la încărcarea fazelor speciale:", err));
   }, [tab, selectedSeasonId, openMsg, resolveMsg]);
 
-  // Monitorizare — cine a ales, ce a ales, când. Se încarcă doar când
-  // faza chiar există (a fost deschisă) — pe fazele "neîschisă" nu are
-  // rost, nimeni nu poate avea încă un pick.
-  useEffect(() => {
-    if (!specialPhaseId || !specialPhasesForSeason.find((p) => p.phaseId === specialPhaseId)) {
-      setSpecialMonitoring({ picks: [], loading: false });
-      return;
-    }
-    setSpecialMonitoring({ picks: [], loading: true });
-    loadAllSpecialPicks(specialPhaseId)
-      .then((picks) => setSpecialMonitoring({ picks, loading: false }))
-      .catch((err) => {
-        console.error("Eroare la încărcarea monitorizării:", err);
-        setSpecialMonitoring({ picks: [], loading: false });
-      });
-  }, [specialPhaseId, specialPhasesForSeason, resolveMsg]);
-
-  // ── Feed (Admin) ──
-  const [feedEvents, setFeedEvents] = useState([]);
-  const [feedAdminFun, setFeedAdminFun] = useState([]);
-  const [feedLoading, setFeedLoading] = useState(false);
-  const [newFunLabel, setNewFunLabel] = useState("");
-  const [newFunText, setNewFunText] = useState("");
-  const [funSaving, setFunSaving] = useState(false);
-
-  useEffect(() => {
-    if (tab !== "feed") return;
-    setFeedLoading(true);
-    Promise.all([listRecentEventsForAdmin(), listAdminFunItems()])
-      .then(([events, adminFun]) => {
-        setFeedEvents(events);
-        setFeedAdminFun(adminFun);
-      })
-      .catch((err) => console.error("Eroare la încărcarea Feed-ului (admin):", err))
-      .finally(() => setFeedLoading(false));
-  }, [tab]);
-
-  async function handleAddFun() {
-    if (!newFunLabel.trim() || !newFunText.trim()) return;
-    setFunSaving(true);
-    try {
-      const id = await addFunItem({ label: newFunLabel.trim(), text: newFunText.trim() });
-      setFeedAdminFun((prev) => [...prev, { id, label: newFunLabel.trim(), text: newFunText.trim() }]);
-      setNewFunLabel("");
-      setNewFunText("");
-    } catch (err) {
-      console.error("Eroare la adăugarea FUN:", err);
-    } finally {
-      setFunSaving(false);
-    }
-  }
-
-  async function handleDeleteFun(id) {
-    try {
-      await deleteFunItem(id);
-      setFeedAdminFun((prev) => prev.filter((f) => f.id !== id));
-    } catch (err) {
-      console.error("Eroare la ștergerea FUN:", err);
-    }
-  }
-
   const specialCompetitions = listAllSpecialCompetitions();
   const specialComp = specialCompetitions.find((c) => c.id === specialCompId) || null;
   const specialPhaseDef = specialComp?.phases.find((p) => p.id === specialPhaseId) || null;
@@ -589,31 +518,12 @@ export default function AdminScreen({ onBack }) {
     return label.toLowerCase().trim().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
   }
 
-  // Opțiunile pentru faza selectată — din registrul de echipe (STRICT,
-  // niciun text liber) pentru optionsSource === "teams", sau din
-  // textarea (mecanismul existent, neschimbat) pentru "players" (Golgheter).
-  // Opțiuni din registru — DOAR dacă resolveTeamOptions/resolveGolgheterOptions
-  // întorc ceva (null = fază eliminatorie, admin introduce manual echipele
-  // reale calificate — vezi comentariul din teamRegistry.js).
-  const registryOptions = specialPhaseDef && specialComp
-    ? (specialPhaseDef.optionsSource === "teams"
-        ? resolveTeamOptions(specialComp.id, specialPhaseDef.id)
-        : specialPhaseDef.id === GOLGHETER_ID
-          ? resolveGolgheterOptions()
-          : null)
-    : null;
-  const isRegistryPhase = registryOptions !== null;
-  const teamOptionsPreview = registryOptions || [];
-
   async function handleOpenSpecialPhase() {
     if (!specialPhaseDef || !selectedSeasonId) return;
+    const labels = optionsText.split("\n").map((l) => l.trim()).filter(Boolean);
+    if (labels.length === 0) { setOpenMsg("Introdu cel puțin o opțiune."); return; }
     if (!closesAtInput) { setOpenMsg("Setează data de închidere."); return; }
-
-    const options = isRegistryPhase
-      ? teamOptionsPreview
-      : optionsText.split("\n").map((l) => l.trim()).filter(Boolean).map((label) => ({ id: slugifyOption(label), label }));
-
-    if (options.length === 0) { setOpenMsg(isRegistryPhase ? "Niciun candidat în registru pentru faza asta." : "Introdu cel puțin o opțiune."); return; }
+    const options = labels.map((label) => ({ id: slugifyOption(label), label }));
     setOpenSaving(true);
     setOpenMsg("");
     try {
@@ -991,46 +901,20 @@ export default function AdminScreen({ onBack }) {
                 {specialPhaseDef && !specialPhaseState && (
                   <>
                     <p style={s.hint}>
-                      Deschide „{specialPhaseDef.label}"
+                      Deschide „{specialPhaseDef.label}" — o linie = o opțiune. Userii aleg STRICT din listă,
+                      nu scriu liber (elimină potriviri greșite la scorare). Poți deschide orice fază, oricând —
+                      nicio ordine impusă.
                       {specialPhaseDef.requiresPhase && (
-                        <> (de obicei are sens după „{specialComp.phases.find((p) => p.id === specialPhaseDef.requiresPhase)?.label}", dar poți deschide și mai devreme — nicio ordine impusă)</>
+                        <> (De obicei are sens după „{specialComp.phases.find((p) => p.id === specialPhaseDef.requiresPhase)?.label}", dar poți deschide și mai devreme.)</>
                       )}
-                      .
                     </p>
-
-                    {isRegistryPhase ? (
-                      <>
-                        <p style={s.hint}>
-                          Opțiuni — direct din registru, {teamOptionsPreview.length} candidați.
-                          Userii aleg STRICT din listă, fără text liber.
-                        </p>
-                        <div style={s.teamsPreview}>
-                          {teamOptionsPreview.map((t) => (
-                            <span key={t.id} style={s.teamsPreviewChip}>
-                              {t.club && <ClubLogo teamName={t.club} size={16} />}
-                              {t.club ? `${t.label} (${t.club})` : t.label}
-                            </span>
-                          ))}
-                        </div>
-                      </>
-                    ) : (
-                      <>
-                        <p style={s.hint}>
-                          {specialPhaseDef.optionsSource === "teams"
-                            ? "Echipele reale calificate în faza asta (necunoscute dinainte — depind de tragerea la sorți). O linie = o echipă."
-                            : "O linie = un candidat."}
-                          {" "}Userii aleg STRICT din listă, nu scriu liber (elimină potriviri greșite la scorare).
-                        </p>
-                        <textarea
-                          style={s.textarea}
-                          rows={5}
-                          placeholder={specialPhaseDef.optionsSource === "teams" ? "PSG\nBayern\nInter\n..." : "Mbappé\nHaaland\nLewandowski\n..."}
-                          value={optionsText}
-                          onChange={(e) => setOptionsText(e.target.value)}
-                        />
-                      </>
-                    )}
-
+                    <textarea
+                      style={s.textarea}
+                      rows={5}
+                      placeholder={"PSG\nReal Madrid\nBayern\n..."}
+                      value={optionsText}
+                      onChange={(e) => setOptionsText(e.target.value)}
+                    />
                     <input
                       style={s.input}
                       type="datetime-local"
@@ -1044,19 +928,10 @@ export default function AdminScreen({ onBack }) {
                   </>
                 )}
 
-                {specialPhaseDef && specialPhaseState && (
-                  <SpecialMonitoringPanel
-                    phaseDef={specialPhaseDef}
-                    phaseState={specialPhaseState}
-                    allUsers={allUsers}
-                    monitoring={specialMonitoring}
-                    now={now}
-                  />
-                )}
-
                 {specialPhaseDef && specialPhaseState && specialPhaseState.status !== "resolved" && (
                   <>
                     <p style={s.hint}>
+                      Stare: <b>{specialPhaseState.status}</b> · {specialPhaseState.options?.length || 0} opțiuni.
                       Introdu rezultatul real ca să rezolvi faza — punctele se adaugă automat în Clasamentul General.
                     </p>
                     <SpecialResolvePicker
@@ -1076,59 +951,6 @@ export default function AdminScreen({ onBack }) {
                   <p style={s.hint}>Fază deja rezolvată — punctele au fost adăugate în Clasamentul General.</p>
                 )}
               </SectionCard>
-            )}
-
-            {/* ── Feed — evenimente automate, moderare editorial, FUN ── */}
-            {tab === "feed" && (
-              <>
-                <SectionCard title="Evenimente recente (automate)">
-                  {feedLoading && <p style={s.hint}>Se încarcă…</p>}
-                  {!feedLoading && feedEvents.length === 0 && <p style={s.hint}>Niciun eveniment încă.</p>}
-                  <div style={s.feedAdminList}>
-                    {feedEvents.map((e) => (
-                      <div key={e.id} style={s.feedAdminRow}>
-                        <div style={s.feedAdminRowHead}>
-                          <span style={s.feedAdminCategory}>{e.category}</span>
-                          <span style={s.feedAdminPriority}>prioritate {e.priority}</span>
-                        </div>
-                        <div style={s.feedAdminTitle}>{e.title}</div>
-                        <div style={s.feedAdminMeta}>{new Date(e.ts).toLocaleString("ro-RO")} · sursă: automat</div>
-                      </div>
-                    ))}
-                  </div>
-                </SectionCard>
-
-                <SectionCard title="Bancă de conținut editorial (context)">
-                  <p style={s.hint}>
-                    {EDITORIAL_ARTICLES.length} fragmente, pentru {new Set(EDITORIAL_ARTICLES.map((a) => a.teamId)).size} echipe.
-                    Nu mai apar de sine stătător — se atașează AUTOMAT doar la meciurile reale, viitoare, ale echipelor
-                    respective (fereastră de 7 zile), și dispar când meciul nu mai e "următor".
-                  </p>
-                </SectionCard>
-
-                <SectionCard title="FUN — adăugat de Admin">
-                  <p style={s.hint}>Astea se adaugă peste lista de bază (nu o înlocuiesc).</p>
-                  <input style={s.input} placeholder="Etichetă (ex: GLUMĂ, PROVERB)" value={newFunLabel} onChange={(e) => setNewFunLabel(e.target.value)} />
-                  <textarea style={s.textarea} rows={2} placeholder="Textul..." value={newFunText} onChange={(e) => setNewFunText(e.target.value)} />
-                  <button style={s.btn} disabled={funSaving} onClick={handleAddFun} type="button">
-                    {funSaving ? "Se salvează…" : "Adaugă"}
-                  </button>
-
-                  {feedAdminFun.length > 0 && (
-                    <div style={{ ...s.feedAdminList, marginTop: 10 }}>
-                      {feedAdminFun.map((f) => (
-                        <div key={f.id} style={s.feedAdminRowBetween}>
-                          <div>
-                            <div style={s.feedAdminCategory}>{f.label}</div>
-                            <div style={s.feedAdminTitle}>{f.text}</div>
-                          </div>
-                          <button type="button" style={s.smallBtn} onClick={() => handleDeleteFun(f.id)}>Șterge</button>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </SectionCard>
-              </>
             )}
 
             {/* ── Health Check — doar detectare + corecție manuală ────── */}
@@ -1331,30 +1153,6 @@ const s = {
     whiteSpace: "pre-line",
   },
   specialsOverview: { display: "flex", flexDirection: "column", gap: 4, margin: "10px 0" },
-  feedAdminList: { display: "flex", flexDirection: "column", gap: 6, marginTop: 8 },
-  feedAdminRow: {
-    background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 8, padding: "9px 11px",
-  },
-  feedAdminRowHidden: { opacity: 0.45 },
-  feedAdminRowHead: { display: "flex", justifyContent: "space-between", marginBottom: 3 },
-  feedAdminRowBetween: {
-    display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10,
-    background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 8, padding: "9px 11px",
-  },
-  feedAdminCategory: { fontSize: 9.5, fontWeight: 800, letterSpacing: "0.06em", color: "#D4AF37", textTransform: "uppercase" },
-  feedAdminPriority: { fontSize: 9.5, color: "#6B7385" },
-  feedAdminTitle: { fontSize: 12, fontWeight: 600, color: "#fff", marginTop: 1 },
-  feedAdminMeta: { fontSize: 10, color: "#6B7385", marginTop: 2 },
-  smallBtn: {
-    flexShrink: 0, background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.15)", borderRadius: 6,
-    padding: "6px 10px", fontSize: 10.5, fontWeight: 700, color: "#fff", cursor: "pointer",
-  },
-  teamsPreview: { display: "flex", flexWrap: "wrap", gap: 5, margin: "8px 0" },
-  teamsPreviewChip: {
-    display: "flex", alignItems: "center", gap: 5,
-    fontSize: 10.5, fontWeight: 600, color: "#C7CEDA", background: "rgba(255,255,255,0.05)",
-    border: "1px solid rgba(255,255,255,0.1)", borderRadius: 999, padding: "4px 10px",
-  },
   specialsOverviewRow: {
     display: "flex", alignItems: "center", gap: 8, width: "100%", background: "rgba(255,255,255,0.03)",
     border: "1px solid rgba(255,255,255,0.08)", borderRadius: 8, padding: "8px 10px", cursor: "pointer", textAlign: "left",
@@ -1413,7 +1211,7 @@ const s = {
   tabBtnActive: { background: color.goldGradient, color: color.goldOn, border: "none" },
   matchList: { display: "flex", flexDirection: "column", gap: 8, marginBottom: 14 },
   featuredRow: { display: "flex", alignItems: "flex-start", gap: 10, cursor: "pointer", flex: 1, minWidth: 0 },
-  matchRowWithDelete: { display: "flex", alignItems: "flex-start", gap: 8 },
+  matchRowWithDelete: { display: "flex", alignItems: "flex-start", gap: 8, flexWrap: "nowrap", width: "100%" },
   deleteBtn: {
     flexShrink: 0, marginTop: 14, width: 34, height: 34, borderRadius: radius.sm,
     background: color.redBg, border: `1px solid ${color.redBorder}`,

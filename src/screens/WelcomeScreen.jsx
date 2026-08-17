@@ -20,7 +20,7 @@ import MatchRailCard from "../components/MatchRailCard";
 import Pill from "../components/Pill";
 import FeedCard from "../components/FeedCard";
 import FeedDetailModal from "../components/FeedDetailModal";
-import { processRankChanges, processFinishedMatches, processJokerActivation, processFeaturedMatch, loadFullFeed } from "../services/feedService";
+import { processRankChanges, processFinishedMatches, processJokerActivation, processUpcomingMatches, loadFullFeed } from "../services/feedService";
 
 const LOCK_MS = 30 * 60 * 1000;
 
@@ -182,8 +182,12 @@ export default function WelcomeScreen({ user, profile, isAdmin, onOpenAdmin, onO
     if (staticFeedRef.current || !gameweek || matches.length === 0) return;
     staticFeedRef.current = true;
     const featuredIds = gameweek.featuredMatchIds || [];
-    const motw = matches.find((m) => featuredIds.includes(m.id));
-    if (motw) processFeaturedMatch(motw).then(() => refreshFeedTop()).catch((err) => console.error("Eroare Feed MOTW:", err));
+    // Toate meciurile care urmează (fereastră 7 zile), nu doar Meciul
+    // Săptămânii — fiecare primește context editorial STRICT dacă
+    // există conținut pentru echipele respective (regula zero).
+    processUpcomingMatches(matches, featuredIds)
+      .then((events) => { if (events.length > 0) refreshFeedTop(); })
+      .catch((err) => console.error("Eroare Feed meciuri viitoare:", err));
   }, [gameweek, matches]);
 
   // Meciul principal (hero) — prioritate STRICTĂ, cerută explicit:

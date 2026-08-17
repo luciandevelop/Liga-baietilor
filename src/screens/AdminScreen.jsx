@@ -7,8 +7,7 @@ import SpecialResolvePicker from "../components/SpecialResolvePicker";
 import SpecialMonitoringPanel from "../components/SpecialMonitoringPanel";
 import ClubLogo from "../components/ClubLogo";
 import {
-  listRecentEventsForAdmin, listHiddenEditorialIds, hideEditorialArticle, unhideEditorialArticle,
-  listAdminFunItems, addFunItem, deleteFunItem,
+  listRecentEventsForAdmin, listAdminFunItems, addFunItem, deleteFunItem,
 } from "../services/feedService";
 import { EDITORIAL_ARTICLES } from "../feedContent/editorialContent";
 import useNow from "../hooks/useNow";
@@ -539,7 +538,6 @@ export default function AdminScreen({ onBack }) {
 
   // ── Feed (Admin) ──
   const [feedEvents, setFeedEvents] = useState([]);
-  const [feedHiddenIds, setFeedHiddenIds] = useState(new Set());
   const [feedAdminFun, setFeedAdminFun] = useState([]);
   const [feedLoading, setFeedLoading] = useState(false);
   const [newFunLabel, setNewFunLabel] = useState("");
@@ -549,29 +547,14 @@ export default function AdminScreen({ onBack }) {
   useEffect(() => {
     if (tab !== "feed") return;
     setFeedLoading(true);
-    Promise.all([listRecentEventsForAdmin(), listHiddenEditorialIds(), listAdminFunItems()])
-      .then(([events, hidden, adminFun]) => {
+    Promise.all([listRecentEventsForAdmin(), listAdminFunItems()])
+      .then(([events, adminFun]) => {
         setFeedEvents(events);
-        setFeedHiddenIds(hidden);
         setFeedAdminFun(adminFun);
       })
       .catch((err) => console.error("Eroare la încărcarea Feed-ului (admin):", err))
       .finally(() => setFeedLoading(false));
   }, [tab]);
-
-  async function handleToggleEditorial(articleId) {
-    try {
-      if (feedHiddenIds.has(articleId)) {
-        await unhideEditorialArticle(articleId);
-        setFeedHiddenIds((prev) => { const n = new Set(prev); n.delete(articleId); return n; });
-      } else {
-        await hideEditorialArticle(articleId);
-        setFeedHiddenIds((prev) => new Set(prev).add(articleId));
-      }
-    } catch (err) {
-      console.error("Eroare la ascundere/reafișare articol:", err);
-    }
-  }
 
   async function handleAddFun() {
     if (!newFunLabel.trim() || !newFunText.trim()) return;
@@ -1115,26 +1098,12 @@ export default function AdminScreen({ onBack }) {
                   </div>
                 </SectionCard>
 
-                <SectionCard title="Articole editoriale — ascundere">
-                  <p style={s.hint}>{EDITORIAL_ARTICLES.length} articole în total · {feedHiddenIds.size} ascunse acum.</p>
-                  <div style={s.feedAdminList}>
-                    {EDITORIAL_ARTICLES.map((a) => {
-                      const hidden = feedHiddenIds.has(a.id);
-                      return (
-                        <div key={a.id} style={{ ...s.feedAdminRow, ...(hidden ? s.feedAdminRowHidden : {}) }}>
-                          <div style={s.feedAdminRowBetween}>
-                            <div>
-                              <div style={s.feedAdminTitle}>{a.title}</div>
-                              <div style={s.feedAdminMeta}>{a.teamId} · {a.category}</div>
-                            </div>
-                            <button type="button" style={s.smallBtn} onClick={() => handleToggleEditorial(a.id)}>
-                              {hidden ? "Reafișează" : "Ascunde"}
-                            </button>
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
+                <SectionCard title="Bancă de conținut editorial (context)">
+                  <p style={s.hint}>
+                    {EDITORIAL_ARTICLES.length} fragmente, pentru {new Set(EDITORIAL_ARTICLES.map((a) => a.teamId)).size} echipe.
+                    Nu mai apar de sine stătător — se atașează AUTOMAT doar la meciurile reale, viitoare, ale echipelor
+                    respective (fereastră de 7 zile), și dispar când meciul nu mai e "următor".
+                  </p>
                 </SectionCard>
 
                 <SectionCard title="FUN — adăugat de Admin">

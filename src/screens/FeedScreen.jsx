@@ -13,10 +13,22 @@ const FILTERS = [
   { id: "all", label: "Tot" },
   { id: FEED_CATEGORIES.CLASAMENT, label: "🔥 Clasament" },
   { id: FEED_CATEGORIES.MECIURI, label: "⚽ Meciuri" },
-  { id: FEED_CATEGORIES.CL, label: "🏆 Champions League" },
-  { id: FEED_CATEGORIES.ACTIVITATE, label: "🎯 Activitate" },
+  { id: FEED_CATEGORIES.JOKERI, label: "🎯 Jokeri" },
+  { id: "cl", label: "🏆 Champions League", competitionContains: "champions league" },
+  { id: "el", label: "🏆 Europa League", competitionContains: "europa league" },
+  { id: "uecl", label: "🏆 Conference League", competitionContains: "conference league" },
   { id: FEED_CATEGORIES.FUN, label: "😂 Fun" },
 ];
+
+function matchesFilter(event, filterId) {
+  if (filterId === "all") return true;
+  const filter = FILTERS.find((f) => f.id === filterId);
+  if (filter?.competitionContains) {
+    const comp = (event.detail?.competitionName || event.subtitle || "").toLowerCase();
+    return comp.includes(filter.competitionContains);
+  }
+  return event.category === filterId;
+}
 
 export default function FeedScreen({ onBack }) {
   const now = useNow(60000);
@@ -45,7 +57,7 @@ export default function FeedScreen({ onBack }) {
     })();
   }, []);
 
-  const filtered = filter === "all" ? events : events.filter((e) => e.category === filter);
+  const filtered = events.filter((e) => matchesFilter(e, filter));
   const visible = filtered.slice(0, visibleCount);
 
   return (

@@ -80,7 +80,7 @@ export default function MatchCard({ homeTeam, awayTeam, kickoffAt, status, compe
 }
 
 const s = {
-  card: { borderRadius: radius.lg },
+  card: { borderRadius: radius.lg, minWidth: 0 },
   teamsRow: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 },
   clubCol: { display: "flex", flexDirection: "column", alignItems: "center", gap: 6, flex: 1, minWidth: 0 },
   clubName: {

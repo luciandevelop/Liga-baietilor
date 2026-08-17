@@ -3,7 +3,7 @@ import { color, font, radius } from "../matchdayTheme";
 
 const CATEGORY_LABEL = {
   clasament: "CLASAMENT", meciuri: "MECIURI", "champions-league": "CHAMPIONS LEAGUE",
-  liga: "LIGA", activitate: "ACTIVITATE", fun: "FUN", fotbal: "FOTBAL",
+  liga: "LIGA", jokeri: "JOKERI", fun: "FUN", fotbal: "FOTBAL",
 };
 
 function relativeTime(ts, now) {

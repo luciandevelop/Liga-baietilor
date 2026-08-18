@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { getCurrentSeason, getCurrentGameweek, loadUserPredictions, loadUserJoker } from "../services/predictionsService";
+import { getCurrentSeason, getCurrentGameweek, loadUserPredictions, loadUserJoker, isMatchLocked } from "../services/predictionsService";
 import { listMatches, listenLiveGameweekScores, listGameweekScores, getUserSeasonPoints, listJokersForGameweek } from "../services/adminService";
 import { getUserPublicProfiles } from "../services/profilesService";
 import { processRankChanges, processFinishedMatches, processJokerActivation, processUpcomingMatches, loadFullFeed } from "../services/feedService";
@@ -210,7 +210,13 @@ export default function WelcomeScreen({ user, profile, isAdmin, onOpenAdmin, onO
 
   const heroPool = liveBucket.length ? liveBucket : scheduledBucket.length ? scheduledBucket : finishedBucket;
   const featuredMatch = heroPool.find((m) => featuredIds.includes(m.id));
-  const heroMatch = featuredMatch || heroPool[0] || allSorted[0] || null;
+  // Hero = ÎNTOTDEAUNA meciul cel mai apropiat cronologic (heroPool[0],
+  // deja sortat). "Meciul Săptămânii" NU mai forțează prioritate peste
+  // ordinea cronologică — dacă e departe în timp, insigna lui apare
+  // doar când chiar el ajunge să fie următorul meci, nu mai devreme.
+  // Bug real, semnalat direct: Espanyol–Real Madrid (93h) bloca hero-ul
+  // în fața unor meciuri cu mult mai apropiate (Celtic–LASK, 21h).
+  const heroMatch = heroPool[0] || allSorted[0] || null;
   const heroStatus = heroMatch ? getMatchStatus(heroMatch, now) : null;
   const heroTheme = heroMatch ? getCompetitionTheme(heroMatch.competitionId) : null;
   // Rail-ul "Urmează" — doar meciuri care CHIAR urmează: statusul real
@@ -314,6 +320,11 @@ export default function WelcomeScreen({ user, profile, isAdmin, onOpenAdmin, onO
                       <div style={s.lockLabel}>Se blochează în</div>
                       <SplitFlapClock remainingMs={remainingMs} />
                     </div>
+                  )}
+                  {heroStatus === "scheduled" && heroMatch && isMatchLocked(heroMatch) && (
+                    <button type="button" style={s.eyeBtn} onClick={() => setRevealMatch(heroMatch)} aria-label="Vezi pronosticurile">
+                      👁 <span style={s.eyeBtnLabel}>Vezi pronosticurile blocate</span>
+                    </button>
                   )}
                   {heroStatus === "live" && (
                     <div style={s.liveRevealWrap}>

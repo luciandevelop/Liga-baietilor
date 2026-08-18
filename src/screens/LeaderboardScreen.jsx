@@ -159,6 +159,11 @@ export default function LeaderboardScreen({ onBack, user }) {
   // date acolo, lista ieșea goală, chiar dacă chiar avea meciuri în etapa
   // pe care tocmai o deschisese.
   async function handleOpenPlayer(uid, rank, contextGwId = gameweek?.id) {
+    // Card-ul de jucător e un sub-ecran din perspectiva Back-ului — Android
+    // Back trebuie să-l închidă întâi, nu să sară direct la Home. Se
+    // împinge o intrare de istoric LOCALĂ acestui ecran (nu afectează
+    // App.jsx), simetrică cu popstate-ul de mai jos.
+    window.history.pushState({ leaderboardPlayerCard: uid }, "");
     setOpenUid(uid);
     setCardStats(null);
     setCardLoading(true);
@@ -171,6 +176,23 @@ export default function LeaderboardScreen({ onBack, user }) {
       setCardLoading(false);
     }
   }
+
+  // Închiderea din UI (✕) trece prin ACELAȘI drum ca Android Back —
+  // history.back() — nu setOpenUid("") direct. Popstate-ul de mai jos
+  // face efectiv închiderea, o singură sursă de adevăr pentru amândouă.
+  function closePlayerCard() {
+    window.history.back();
+  }
+
+  useEffect(() => {
+    function onPopState(event) {
+      if (!event.state?.leaderboardPlayerCard) {
+        setOpenUid("");
+      }
+    }
+    window.addEventListener("popstate", onPopState);
+    return () => window.removeEventListener("popstate", onPopState);
+  }, []);
 
   const scoredCount = gwRows.length;
 
@@ -306,7 +328,7 @@ export default function LeaderboardScreen({ onBack, user }) {
           avatarId={profiles[openUid]?.avatarId}
           rank={cardStats.rank}
           stats={cardStats}
-          onClose={() => setOpenUid("")}
+          onClose={closePlayerCard}
         />
       )}
     </div>

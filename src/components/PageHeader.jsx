@@ -12,7 +12,7 @@ export default function PageHeader({ eyebrow, title, subtitle, onBack, right }) 
         {right}
         {onBack && (
           <button style={s.backBtn} onClick={onBack} type="button">
-            Înapoi
+            <span style={s.backArrow}>←</span> Înapoi
           </button>
         )}
       </div>
@@ -47,9 +47,10 @@ const s = {
   subtitle: { fontSize: 12.5, color: color.textMuted, margin: "3px 0 0" },
   right: { display: "flex", alignItems: "center", gap: 8, flexShrink: 0 },
   backBtn: {
-    background: color.surfaceInset,
-    border: `1px solid ${color.border}`,
-    color: color.textMuted,
+    display: "flex", alignItems: "center", gap: 6,
+    background: "rgba(212,175,55,0.14)",
+    border: "1px solid rgba(212,175,55,0.55)",
+    color: "#F0D875",
     borderRadius: 10,
     padding: "8px 14px",
     fontSize: 12.5,
@@ -57,4 +58,5 @@ const s = {
     cursor: "pointer",
     fontFamily: font.body,
   },
+  backArrow: { fontSize: 14, lineHeight: 1, color: "#F0D875" },
 };

@@ -147,3 +147,14 @@ export async function tryLoadPrediction(matchId, uid) {
     return null;
   }
 }
+
+// ── Toate pronosticurile unui meci — DOAR pentru afișare după lock/live/
+// finished. Regulile Firestore (predictions) resping complet interogarea
+// dacă meciul nu e încă blocat (fiecare document trebuie să treacă
+// isAfterLock individual) — nu ascundem noi în UI, chiar serverul refuză.
+// Se apelează STRICT la cerere (deschiderea acordeonului sau a 👁),
+// niciodată la încărcarea Home sau a listei complete de meciuri.
+export async function listPredictionsForMatch(matchId) {
+  const snap = await getDocs(query(collection(db, "predictions"), where("matchId", "==", matchId)));
+  return snap.docs.map((d) => d.data());
+}

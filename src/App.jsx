@@ -217,7 +217,7 @@ export default function App() {
   }
 
   if (view === "predictions") {
-    return <PredictionsScreen user={user} onBack={goBack} scrollToMatchId={predictionsTarget} />;
+    return <PredictionsScreen user={user} isAdmin={isAdmin} onBack={goBack} scrollToMatchId={predictionsTarget} />;
   }
 
   if (view === "leaderboard") {

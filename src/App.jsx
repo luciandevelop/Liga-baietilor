@@ -26,10 +26,46 @@ export default function App() {
   const [profileState, setProfileState] = useState("idle");
   const [profileError, setProfileError] = useState("");
   const [isAdmin, setIsAdmin] = useState(false);
-  const [view, setView] = useState("welcome"); // "welcome" | "admin"
+  const [view, setView] = useState("welcome"); // "welcome" | "admin" | "predictions" | "leaderboard" | "specials" | "feed" | "profile"
   // Meciul-țintă când "Progres etapă" e apăsat — PredictionsScreen derulează
   // automat la el, în loc să deschidă mereu lista de la început.
   const [predictionsTarget, setPredictionsTarget] = useState(null);
+
+  // ── Istoric real de navigare, pe window.history — NU un router nou,
+  // doar API-ul nativ. O singură sursă de adevăr: butonul "Înapoi" din UI
+  // ȘI Android Back fizic fac EXACT același lucru (history.back()), nu
+  // două logici separate. Fără asta, orice schimbare de "view" era doar
+  // state React, fără nicio intrare în istoricul browserului — Android
+  // Back ieșea direct din aplicație de pe orice ecran intern.
+  const navigatingFromPopRef = useRef(false);
+
+  function navigateTo(nextView, extra) {
+    setView(nextView);
+    if (extra && "predictionsTarget" in extra) setPredictionsTarget(extra.predictionsTarget ?? null);
+    if (navigatingFromPopRef.current) return; // venim deja dintr-un popstate, nu mai împingem din nou
+    window.history.pushState({ view: nextView, predictionsTarget: extra?.predictionsTarget ?? null }, "");
+  }
+
+  function goBack() {
+    window.history.back();
+  }
+
+  useEffect(() => {
+    // Ancora de bază — starea inițială (Home), ca să existe mereu ceva
+    // de comparat la primul popstate.
+    window.history.replaceState({ view: "welcome", predictionsTarget: null }, "");
+
+    function handlePopState(event) {
+      navigatingFromPopRef.current = true;
+      const nextView = event.state?.view || "welcome";
+      setView(nextView);
+      setPredictionsTarget(event.state?.predictionsTarget ?? null);
+      navigatingFromPopRef.current = false;
+    }
+
+    window.addEventListener("popstate", handlePopState);
+    return () => window.removeEventListener("popstate", handlePopState);
+  }, []);
 
   // Incrementat la fiecare loadProfile() nou și la logout — orice cerere
   // în zbor care nu mai corespunde cu requestRef.current curent la momentul
@@ -156,7 +192,7 @@ export default function App() {
   // Verificat ÎNAINTE de blocarea de nickname — admin trebuie să poată
   // intra în panou chiar dacă nu și-a ales încă nickname-ul (cerut explicit).
   if (view === "admin" && isAdmin) {
-    return <AdminScreen onBack={() => setView("welcome")} />;
+    return <AdminScreen onBack={goBack} />;
   }
 
   if (profileState === "needs-nickname") {
@@ -164,7 +200,7 @@ export default function App() {
       <NicknameScreen
         user={user}
         isAdmin={isAdmin}
-        onOpenAdmin={() => setView("admin")}
+        onOpenAdmin={() => navigateTo("admin")}
         onDone={(updated) => {
           setProfile((prev) => ({ ...prev, ...updated }));
           setProfileState("ready");
@@ -174,19 +210,19 @@ export default function App() {
   }
 
   if (view === "predictions") {
-    return <PredictionsScreen user={user} onBack={() => setView("welcome")} scrollToMatchId={predictionsTarget} />;
+    return <PredictionsScreen user={user} onBack={goBack} scrollToMatchId={predictionsTarget} />;
   }
 
   if (view === "leaderboard") {
-    return <LeaderboardScreen user={user} onBack={() => setView("welcome")} />;
+    return <LeaderboardScreen user={user} onBack={goBack} />;
   }
 
   if (view === "specials") {
-    return <SpecialsScreen user={user} onBack={() => setView("welcome")} />;
+    return <SpecialsScreen user={user} onBack={goBack} />;
   }
 
   if (view === "feed") {
-    return <FeedScreen onBack={() => setView("welcome")} />;
+    return <FeedScreen onBack={goBack} />;
   }
 
   if (view === "profile") {
@@ -195,8 +231,8 @@ export default function App() {
         user={user}
         profile={profile}
         isAdmin={isAdmin}
-        onOpenAdmin={() => setView("admin")}
-        onBack={() => setView("welcome")}
+        onOpenAdmin={() => navigateTo("admin")}
+        onBack={goBack}
       />
     );
   }
@@ -206,12 +242,12 @@ export default function App() {
       user={user}
       profile={profile}
       isAdmin={isAdmin}
-      onOpenAdmin={() => setView("admin")}
-      onOpenPredictions={(matchId) => { setPredictionsTarget(matchId || null); setView("predictions"); }}
-      onOpenLeaderboard={() => setView("leaderboard")}
-      onOpenSpecials={() => setView("specials")}
-      onOpenFeed={() => setView("feed")}
-      onOpenProfile={() => setView("profile")}
+      onOpenAdmin={() => navigateTo("admin")}
+      onOpenPredictions={(matchId) => navigateTo("predictions", { predictionsTarget: matchId || null })}
+      onOpenLeaderboard={() => navigateTo("leaderboard")}
+      onOpenSpecials={() => navigateTo("specials")}
+      onOpenFeed={() => navigateTo("feed")}
+      onOpenProfile={() => navigateTo("profile")}
     />
   );
 }

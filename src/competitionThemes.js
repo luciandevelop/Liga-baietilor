@@ -163,6 +163,30 @@ export const COMPETITION_THEMES = {
     badgeTextColor: "#5CD98E",
     pattern: "diagonal",
   },
+  "cupa-romaniei": {
+    name: "Cupa României",
+    primaryColor: "#D4AF37",
+    secondaryColor: "#8B1E3F",
+    accentColor: "#002B7F",
+    borderColor: "rgba(212,175,55,0.4)",
+    glowColor: "rgba(212,175,55,0.32)",
+    backgroundGradient: "linear-gradient(135deg, rgba(212,175,55,0.2), rgba(139,30,63,0.05))",
+    badgeBackground: "rgba(212,175,55,0.2)",
+    badgeTextColor: "#F0D875",
+    pattern: "diagonal",
+  },
+  "liga-2-romania": {
+    name: "Liga 2",
+    primaryColor: "#5A6472",
+    secondaryColor: "#8B1E3F",
+    accentColor: "#FCD116",
+    borderColor: "rgba(90,100,114,0.4)",
+    glowColor: "rgba(90,100,114,0.3)",
+    backgroundGradient: "linear-gradient(135deg, rgba(90,100,114,0.2), rgba(139,30,63,0.05))",
+    badgeBackground: "rgba(90,100,114,0.2)",
+    badgeTextColor: "#B4BBC7",
+    pattern: "diagonal",
+  },
 };
 
 // Fallback neutru — pentru orice slug de competiție fără temă definită.
@@ -204,6 +228,10 @@ const COMPETITION_NAME_ALIASES = {
   "liga-1": "superliga",
   "liga-i": "superliga",
   "liga-portugal": "primeira-liga",
+  "cupa-romaniei-betano": "cupa-romaniei",
+  "liga-2": "liga-2-romania",
+  "liga-ii": "liga-2-romania",
+  "liga-2-casa-pariurilor": "liga-2-romania",
 };
 
 export function resolveCompetitionPreset(rawName) {

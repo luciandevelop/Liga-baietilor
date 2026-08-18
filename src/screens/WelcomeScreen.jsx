@@ -319,7 +319,7 @@ export default function WelcomeScreen({ user, profile, isAdmin, onOpenAdmin, onO
                   {heroStatus === "postponed" && <div style={s.liveNote}>Meci amânat — dată nouă în curând</div>}
                   {heroStatus === "cancelled" && <div style={s.liveNote}>Meci anulat</div>}
 
-                  <div style={s.ctaWrap}><PremiumButton onClick={onOpenPredictions}>{CTA_LABEL[heroStatus]}</PremiumButton></div>
+                  <div style={s.ctaWrap}><PremiumButton onClick={() => onOpenPredictions(heroMatch?.id)}>{CTA_LABEL[heroStatus]}</PremiumButton></div>
                 </div>
               </div>
             ) : (
@@ -360,7 +360,7 @@ export default function WelcomeScreen({ user, profile, isAdmin, onOpenAdmin, onO
                     emphasizeCountdown={i < 3}
                     isFeatured={featuredIds.includes(m.id)}
                     featuredIndex={featuredIds.includes(m.id) ? featuredIds.indexOf(m.id) + 1 : null}
-                    onClick={onOpenPredictions}
+                    onClick={() => onOpenPredictions(m.id)}
                   />
                 ))}
               </div>
@@ -372,14 +372,14 @@ export default function WelcomeScreen({ user, profile, isAdmin, onOpenAdmin, onO
               <div style={s.sectionLabel}>Ultimele rezultate</div>
               <div style={s.resultsList}>
                 {/* Implicit vizibil: DOAR ultimul meci terminat. */}
-                <ResultRow match={recentResults[0]} onClick={onOpenPredictions} />
+                <ResultRow match={recentResults[0]} onClick={() => onOpenPredictions(recentResults[0].id)} />
 
                 {recentResults.length > 1 && (
                   <>
                     <div style={{ ...s.accordionBody, gridTemplateRows: resultsOpen ? "1fr" : "0fr" }}>
                       <div style={{ overflow: "hidden" }}>
                         {recentResults.slice(1).map((m) => (
-                          <ResultRow key={m.id} match={m} onClick={onOpenPredictions} />
+                          <ResultRow key={m.id} match={m} onClick={() => onOpenPredictions(m.id)} />
                         ))}
                       </div>
                     </div>

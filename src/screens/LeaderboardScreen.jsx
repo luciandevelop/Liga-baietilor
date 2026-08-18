@@ -199,7 +199,12 @@ export default function LeaderboardScreen({ onBack, user }) {
   return (
     <div style={layout.page}>
       <div style={layout.wrap}>
-        <PageHeader title="Clasament" onBack={onBack} />
+        {/* zIndex peste overlay-ul Player Card-ului (100) — Back trebuie
+            să rămână complet vizibil și apăsabil chiar și cu modalul
+            deschis, nu "spălat" de fundalul lui întunecat. */}
+        <div style={{ position: "relative", zIndex: 101 }}>
+          <PageHeader title="Clasament" onBack={onBack} />
+        </div>
 
         <div style={s.tabRow}>
           <button style={{ ...s.tabBtn, ...(tab === "gameweek" ? s.tabBtnActive : {}) }} onClick={() => setTab("gameweek")}>

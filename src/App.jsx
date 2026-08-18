@@ -43,7 +43,14 @@ export default function App() {
     setView(nextView);
     if (extra && "predictionsTarget" in extra) setPredictionsTarget(extra.predictionsTarget ?? null);
     if (navigatingFromPopRef.current) return; // venim deja dintr-un popstate, nu mai împingem din nou
-    window.history.pushState({ view: nextView, predictionsTarget: extra?.predictionsTarget ?? null }, "");
+    // Plasă de siguranță: history.pushState cere date serializabile (nu
+    // obiecte DOM, evenimente etc.) — dacă vreun apelator pasează din
+    // greșeală ceva de genul (ex. un buton neîmpachetat, event -> arg),
+    // NU lăsăm crash-ul să scoată utilizatorul din aplicație. Păstrăm
+    // doar tipuri simple (string/number), orice altceva devine null.
+    const rawTarget = extra?.predictionsTarget;
+    const safeTarget = (typeof rawTarget === "string" || typeof rawTarget === "number") ? rawTarget : null;
+    window.history.pushState({ view: nextView, predictionsTarget: safeTarget }, "");
   }
 
   function goBack() {

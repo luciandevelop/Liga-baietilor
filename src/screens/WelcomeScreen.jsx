@@ -22,6 +22,7 @@ import MatchRailCard from "../components/MatchRailCard";
 import Pill from "../components/Pill";
 import FeedCard from "../components/FeedCard";
 import FeedDetailModal from "../components/FeedDetailModal";
+import PredictionsRevealSheet from "../components/PredictionsRevealSheet";
 
 const LOCK_MS = 30 * 60 * 1000;
 
@@ -60,6 +61,7 @@ export default function WelcomeScreen({ user, profile, isAdmin, onOpenAdmin, onO
 
   const [feedTop, setFeedTop] = useState([]);
   const [selectedFeedEvent, setSelectedFeedEvent] = useState(null);
+  const [revealMatch, setRevealMatch] = useState(null); // meciul LIVE deschis cu 👁, sau null
   const processedJokersRef = useRef(new Set());
 
   async function refreshFeedTop() {
@@ -313,7 +315,14 @@ export default function WelcomeScreen({ user, profile, isAdmin, onOpenAdmin, onO
                       <SplitFlapClock remainingMs={remainingMs} />
                     </div>
                   )}
-                  {heroStatus === "live" && <div style={s.liveNote}>LIVE · rezultat neintrodus încă</div>}
+                  {heroStatus === "live" && (
+                    <div style={s.liveRevealWrap}>
+                      <div style={s.liveNote}>LIVE · rezultat neintrodus încă</div>
+                      <button type="button" style={s.eyeBtn} onClick={() => setRevealMatch(heroMatch)} aria-label="Vezi pronosticurile">
+                        👁 <span style={s.eyeBtnLabel}>Cine mai e în joc?</span>
+                      </button>
+                    </div>
+                  )}
                   {heroStatus === "paused" && <div style={s.liveNote}>Meciul e la pauză</div>}
                   {heroStatus === "finished" && <div style={s.finalScore}>{heroMatch.realScoreA} – {heroMatch.realScoreB}</div>}
                   {heroStatus === "postponed" && <div style={s.liveNote}>Meci amânat — dată nouă în curând</div>}
@@ -428,6 +437,15 @@ export default function WelcomeScreen({ user, profile, isAdmin, onOpenAdmin, onO
 
       <BottomTabBar active="home" onChange={handleBottomTab} />
       <FeedDetailModal event={selectedFeedEvent} onClose={() => setSelectedFeedEvent(null)} />
+      {revealMatch && (
+        <PredictionsRevealSheet
+          match={revealMatch}
+          isFeatured={(gameweek?.featuredMatchIds || []).includes(revealMatch.id)}
+          currentUserId={user.uid}
+          isAdmin={isAdmin}
+          onClose={() => setRevealMatch(null)}
+        />
+      )}
     </div>
   );
 }
@@ -521,6 +539,13 @@ const s = {
   },
   lockLabel: { fontSize: 10, fontWeight: 700, color: color.textFaint, letterSpacing: "0.04em", textTransform: "uppercase", marginBottom: 6, fontFamily: font.body },
   liveNote: { fontSize: 11.5, color: "#8BD957", fontWeight: 700, margin: "12px 0", fontFamily: font.body },
+  liveRevealWrap: { display: "flex", flexDirection: "column", alignItems: "center", gap: 8, margin: "12px 0" },
+  eyeBtn: {
+    display: "flex", alignItems: "center", gap: 6, background: "rgba(212,175,55,0.1)",
+    border: "1px solid rgba(212,175,55,0.35)", borderRadius: 999, padding: "6px 14px",
+    fontSize: 11.5, cursor: "pointer", color: color.goldLight, fontFamily: font.body, fontWeight: 700,
+  },
+  eyeBtnLabel: { fontSize: 11.5, fontWeight: 700 },
   finalScore: { fontFamily: font.display, fontSize: 30, fontWeight: 800, color: color.textPrimary, margin: "8px 0 12px" },
   ctaWrap: { width: "100%", maxWidth: 280, margin: "0 auto" },
   motwBadge: {

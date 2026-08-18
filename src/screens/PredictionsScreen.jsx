@@ -10,11 +10,13 @@ import {
   isMatchLocked,
 } from "../services/predictionsService";
 import { listMatches } from "../services/adminService";
+import { getMatchStatus } from "../utils/matchStatus";
 import MatchPredictionCard from "../components/MatchPredictionCard";
+import PredictionsRevealSheet from "../components/PredictionsRevealSheet";
 import { color, font, radius } from "../matchdayTheme";
 import useNow from "../hooks/useNow";
 
-export default function PredictionsScreen({ user, onBack, scrollToMatchId }) {
+export default function PredictionsScreen({ user, isAdmin, onBack, scrollToMatchId }) {
   // Re-render la fiecare 30s — face ca isMatchLocked(m) să reflecte mereu
   // ora reală curentă, fără refresh manual. Nu e sursa de securitate
   // (aceea rămâne firestore.rules), doar sincronizează UI-ul cu ea.
@@ -35,6 +37,12 @@ export default function PredictionsScreen({ user, onBack, scrollToMatchId }) {
   const [joker, setJoker] = useState(null); // { matchId } | null
   const [jokerSaving, setJokerSaving] = useState(false);
   const [jokerError, setJokerError] = useState("");
+
+  // ── Subtab nou: "mine" (implicit) vs "locked" (toate pronosticurile
+  // meciurilor blocate, secundar, nu concurează cu restul aplicației). ──
+  const [subtab, setSubtab] = useState("mine");
+  const [expandedLockedId, setExpandedLockedId] = useState(null);
+  const [revealMatch, setRevealMatch] = useState(null); // 👁 — meci LIVE deschis în sheet
 
   const load = useCallback(async () => {
     setLoadState("loading");
@@ -134,6 +142,18 @@ export default function PredictionsScreen({ user, onBack, scrollToMatchId }) {
     }
   }, [scrollToMatchId, loadState, matches]);
 
+  // Implicit: cel mai recent meci blocat (kickoff cel mai apropiat de
+  // acum, dintre cele deja blocate) — deschis automat, o singură dată.
+  const lockedDefaultRef = useRef(false);
+  useEffect(() => {
+    if (lockedDefaultRef.current || loadState !== "ready" || matches.length === 0) return;
+    const locked = matches.filter((m) => isMatchLocked(m)).sort((a, b) => b.kickoffAt.toMillis() - a.kickoffAt.toMillis());
+    if (locked.length > 0) {
+      setExpandedLockedId(locked[0].id);
+      lockedDefaultRef.current = true;
+    }
+  }, [loadState, matches]);
+
   function updateMatch(matchId, patch) {
     setPredictions((prev) => ({ ...prev, [matchId]: { ...prev[matchId], ...patch } }));
   }
@@ -232,6 +252,8 @@ export default function PredictionsScreen({ user, onBack, scrollToMatchId }) {
   const jokerMatch = joker ? matches.find((x) => x.id === joker.matchId) : null;
   const jokerMatchLocked = jokerMatch ? isMatchLocked(jokerMatch) : false;
 
+  const lockedMatches = matches.filter((m) => isMatchLocked(m)).sort((a, b) => b.kickoffAt.toMillis() - a.kickoffAt.toMillis());
+
   return (
     <div style={s.page}>
       <div style={s.wrap}>
@@ -242,49 +264,99 @@ export default function PredictionsScreen({ user, onBack, scrollToMatchId }) {
         {matches.length === 0 ? (
           <div style={s.emptyState}>Etapa asta nu are încă meciuri adăugate.</div>
         ) : (
-          <div style={s.matchList}>
-            {matches.map((m) => {
-              const locked = isMatchLocked(m);
-              const isFeatured = featuredMatchIds.includes(m.id);
-              const featuredIndex = isFeatured ? featuredMatchIds.indexOf(m.id) + 1 : null;
-              const isJoker = joker?.matchId === m.id;
-              const sState = saveState[m.id] || {};
+          <>
+            <div style={s.subtabRow}>
+              <button type="button" style={{ ...s.subtabBtn, ...(subtab === "mine" ? s.subtabBtnActive : {}) }} onClick={() => setSubtab("mine")}>
+                Meciurile mele
+              </button>
+              <button type="button" style={{ ...s.subtabBtn, ...(subtab === "locked" ? s.subtabBtnActive : {}) }} onClick={() => setSubtab("locked")}>
+                Pronosticuri blocate {lockedMatches.length > 0 ? `(${lockedMatches.length})` : ""}
+              </button>
+            </div>
 
-              // Meciul care ARE deja Jokerul: poate fi doar renunțat, și doar
-              // dacă nu e locked. Orice alt meci: butonul e dezactivat COMPLET
-              // cât timp Jokerul e activ altundeva — nu se mai poate "muta"
-              // silențios dintr-un click; userul trebuie să se întoarcă la
-              // meciul original și să apese "Renunță" acolo, explicit.
-              const jokerDisabled = isJoker
-                ? locked || jokerSaving
-                : isFeatured || locked || jokerSaving || Boolean(joker);
+            {subtab === "mine" && (
+              <div style={s.matchList}>
+                {matches.map((m) => {
+                  const locked = isMatchLocked(m);
+                  const isFeatured = featuredMatchIds.includes(m.id);
+                  const featuredIndex = isFeatured ? featuredMatchIds.indexOf(m.id) + 1 : null;
+                  const isJoker = joker?.matchId === m.id;
+                  const sState = saveState[m.id] || {};
+                  const isLive = getMatchStatus(m) === "live";
 
-              return (
-                <div key={m.id} data-match-id={m.id}>
-                  <MatchPredictionCard
-                    match={m}
-                    prediction={predictions[m.id]}
-                    onChange={(patch) => updateMatch(m.id, patch)}
-                    onSave={() => handleSaveMatch(m)}
-                    saving={!!sState.saving}
-                    saveStatus={sState.status}
-                    saveError={sState.error}
-                    isSaved={savedMatchIds.has(m.id)}
-                    locked={locked}
-                    isFeatured={isFeatured}
-                    featuredIndex={featuredIndex}
-                    isJoker={isJoker}
-                    onToggleJoker={() => (isJoker ? handleRemoveJoker() : handleSetJoker(m))}
-                    jokerDisabled={jokerDisabled}
-                    jokerUsedElsewhereNote={!isJoker && joker && jokerMatch ? `Jokerul e activ pe ${jokerMatch.homeTeam} vs ${jokerMatch.awayTeam}` : null}
-                    currentUid={user.uid}
-                  />
-                </div>
-              );
-            })}
-          </div>
+                  // Meciul care ARE deja Jokerul: poate fi doar renunțat, și doar
+                  // dacă nu e locked. Orice alt meci: butonul e dezactivat COMPLET
+                  // cât timp Jokerul e activ altundeva — nu se mai poate "muta"
+                  // silențios dintr-un click; userul trebuie să se întoarcă la
+                  // meciul original și să apese "Renunță" acolo, explicit.
+                  const jokerDisabled = isJoker
+                    ? locked || jokerSaving
+                    : isFeatured || locked || jokerSaving || Boolean(joker);
+
+                  return (
+                    <div key={m.id} data-match-id={m.id}>
+                      <MatchPredictionCard
+                        match={m}
+                        prediction={predictions[m.id]}
+                        onChange={(patch) => updateMatch(m.id, patch)}
+                        onSave={() => handleSaveMatch(m)}
+                        saving={!!sState.saving}
+                        saveStatus={sState.status}
+                        saveError={sState.error}
+                        isSaved={savedMatchIds.has(m.id)}
+                        locked={locked}
+                        isFeatured={isFeatured}
+                        featuredIndex={featuredIndex}
+                        isJoker={isJoker}
+                        onToggleJoker={() => (isJoker ? handleRemoveJoker() : handleSetJoker(m))}
+                        jokerDisabled={jokerDisabled}
+                        jokerUsedElsewhereNote={!isJoker && joker && jokerMatch ? `Jokerul e activ pe ${jokerMatch.homeTeam} vs ${jokerMatch.awayTeam}` : null}
+                        currentUid={user.uid}
+                      />
+                      {isLive && (
+                        <button type="button" style={s.eyeInlineBtn} onClick={() => setRevealMatch(m)} aria-label="Vezi pronosticurile">
+                          👁 Cine mai e în joc?
+                        </button>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
+            {subtab === "locked" && (
+              <div style={s.lockedList}>
+                {lockedMatches.length === 0 && <div style={s.emptyState}>Niciun meci blocat încă.</div>}
+                {lockedMatches.map((m) => {
+                  const isExpanded = expandedLockedId === m.id;
+                  return (
+                    <div key={m.id} style={s.lockedItem}>
+                      <button type="button" style={s.lockedHeader} onClick={() => setExpandedLockedId(isExpanded ? null : m.id)}>
+                        <span style={s.lockedHeaderTeams}>{m.homeTeam} — {m.awayTeam}</span>
+                        <span style={s.lockedHeaderChevron}>{isExpanded ? "▾" : "›"}</span>
+                      </button>
+                      {isExpanded && (
+                        <div style={s.lockedInline}>
+                          <PredictionsRevealSheet match={m} currentUserId={user.uid} isFeatured={featuredMatchIds.includes(m.id)} isAdmin={isAdmin} inline />
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </>
         )}
       </div>
+      {revealMatch && (
+        <PredictionsRevealSheet
+          match={revealMatch}
+          currentUserId={user.uid}
+          isFeatured={featuredMatchIds.includes(revealMatch.id)}
+          isAdmin={isAdmin}
+          onClose={() => setRevealMatch(null)}
+        />
+      )}
     </div>
   );
 }
@@ -333,4 +405,29 @@ const s = {
     borderRadius: 10, padding: "8px 12px", marginBottom: 14, fontFamily: font.body,
   },
   matchList: { display: "flex", flexDirection: "column", gap: 10 },
+
+  subtabRow: { display: "flex", gap: 8, marginBottom: 16 },
+  subtabBtn: {
+    flex: 1, background: "rgba(255,255,255,0.03)", border: `1px solid ${color.border}`, color: color.textMuted,
+    borderRadius: radius.sm, padding: "10px 8px", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: font.body,
+  },
+  subtabBtnActive: { background: color.goldGradient, color: color.goldOn, border: "none" },
+
+  eyeInlineBtn: {
+    display: "flex", alignItems: "center", justifyContent: "center", gap: 6, width: "100%", marginTop: 6,
+    background: "rgba(212,175,55,0.08)", border: "1px solid rgba(212,175,55,0.3)", borderRadius: radius.sm,
+    padding: "8px 0", fontSize: 11.5, fontWeight: 700, color: color.goldLight, cursor: "pointer", fontFamily: font.body,
+  },
+
+  lockedList: { display: "flex", flexDirection: "column", gap: 8 },
+  lockedItem: {
+    background: color.surfaceElevated, border: `1px solid ${color.border}`, borderRadius: radius.md, overflow: "hidden",
+  },
+  lockedHeader: {
+    display: "flex", alignItems: "center", justifyContent: "space-between", width: "100%",
+    background: "none", border: "none", padding: "12px 14px", cursor: "pointer",
+  },
+  lockedHeaderTeams: { fontSize: 12.5, fontWeight: 700, color: color.textPrimary, fontFamily: font.body },
+  lockedHeaderChevron: { fontSize: 14, color: color.textFaint },
+  lockedInline: { padding: "0 14px 14px" },
 };

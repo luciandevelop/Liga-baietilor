@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { onAuthStateChanged } from "firebase/auth";
 import { auth } from "./firebase";
 import { ensureUserProfile, translateAuthError, logout, consumePendingNickname, needsNicknamePrompt } from "./services/authService";
-import { checkIsAdmin } from "./services/adminService";
+import { checkIsAdmin, getPlayerStatus } from "./services/adminService";
 import AuthScreen from "./screens/AuthScreen";
 import WelcomeScreen from "./screens/WelcomeScreen";
 import AdminScreen from "./screens/AdminScreen";
@@ -12,8 +12,9 @@ import SpecialsScreen from "./screens/SpecialsScreen";
 import FeedScreen from "./screens/FeedScreen";
 import ProfileScreen from "./screens/ProfileScreen";
 import NicknameScreen from "./screens/NicknameScreen";
+import PendingApprovalScreen from "./screens/PendingApprovalScreen";
 
-// profileState: "idle" | "checking" | "ready" | "needs-nickname" | "error"
+// profileState: "idle" | "checking" | "ready" | "needs-nickname" | "pending" | "disabled" | "error"
 // Stare centrală, unică — nimic altceva din aplicație nu mai apelează
 // ensureUserProfile. WelcomeScreen NU mai afișează nimic doar pentru că
 // există un user Firebase Auth — trebuie explicit profileState === "ready".
@@ -126,6 +127,14 @@ export default function App() {
       const adminStatus = await checkIsAdmin(u.uid);
       if (requestRef.current !== myRequestId) return;
       setIsAdmin(adminStatus);
+      // Admin NU poate fi blocat NICIODATĂ de statusul de aprobare, indiferent
+      // ce are în users/{uid}.status — altfel un admin dezactivat din greșeală
+      // s-ar bloca singur pe dinafară, fără nicio cale de intrare.
+      const playerStatus = getPlayerStatus(data);
+      if (!adminStatus && playerStatus !== "active") {
+        setProfileState(playerStatus === "pending" ? "pending" : "disabled");
+        return;
+      }
       setProfileState(needsNicknamePrompt(data) ? "needs-nickname" : "ready");
     } catch (err) {
       if (requestRef.current !== myRequestId) return; // cerere învechită, ignorăm
@@ -172,6 +181,10 @@ export default function App() {
         <p style={loadingTextStyle}>Se pregătește contul…</p>
       </div>
     );
+  }
+
+  if (profileState === "pending" || profileState === "disabled") {
+    return <PendingApprovalScreen status={profileState} />;
   }
 
   if (profileState === "error") {

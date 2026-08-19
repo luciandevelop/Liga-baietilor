@@ -104,10 +104,10 @@ const s = {
   wrap: { marginTop: 10 },
   toggleBtn: {
     display: "flex", alignItems: "center", justifyContent: "space-between", width: "100%",
-    background: color.surfaceInset, border: `1px solid ${color.border}`, borderRadius: radius.sm,
-    padding: "9px 12px", cursor: "pointer", fontSize: 11.5, fontWeight: 700, color: color.textSecondary, fontFamily: font.body,
+    background: "rgba(212,175,55,0.1)", border: "1px solid rgba(212,175,55,0.35)", borderRadius: radius.sm,
+    padding: "9px 12px", cursor: "pointer", fontSize: 11.5, fontWeight: 700, color: color.goldLight, fontFamily: font.body,
   },
-  chevron: { color: color.textFaint, fontSize: 11, transition: "transform 200ms ease" },
+  chevron: { color: color.goldLight, fontSize: 11, transition: "transform 200ms ease" },
   body: { marginTop: 8 },
   centerNote: { textAlign: "center", fontSize: 11, color: color.textFaint, padding: "10px 0", fontFamily: font.body },
 

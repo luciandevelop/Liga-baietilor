@@ -258,6 +258,21 @@ export async function listMatches(gameweekId) {
   return list.sort((a, b) => a.kickoffAt.toMillis() - b.kickoffAt.toMillis());
 }
 
+// ── REALTIME — sursă unică pentru Home ȘI Pronosticuri, ca ambele să nu
+// mai poată diverge NICIODATĂ pe același meci. BUG P0 REPARAT: listMatches()
+// de mai sus era citit O SINGURĂ DATĂ la montarea ecranului (getDocs simplu),
+// deci scorul rămânea "înghețat" la momentul deschiderii — de-aici 3 valori
+// diferite pentru același meci LIVE, în funcție de CÂND a fost deschis
+// fiecare ecran. onSnapshot elimină complet asta.
+export function listenMatches(gameweekId, onRows) {
+  const q = query(collection(db, "matches"), where("gameweekId", "==", gameweekId));
+  return onSnapshot(q, (snap) => {
+    const list = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+    list.sort((a, b) => a.kickoffAt.toMillis() - b.kickoffAt.toMillis());
+    onRows(list);
+  });
+}
+
 // Toate meciurile din toate etapele — DOAR pentru Health Check (citire
 // pură, fără filtru de etapă). Nu e folosită de niciun alt ecran.
 export async function listAllMatches() {

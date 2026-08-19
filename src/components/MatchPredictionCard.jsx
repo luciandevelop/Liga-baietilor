@@ -85,16 +85,32 @@ export default function MatchPredictionCard({
 
         {locked ? (
           <div style={s.lockedBox}>
-            <div style={s.lockedScore}>
-              {p.scoreA !== "" && p.scoreA !== undefined ? p.scoreA : "–"}
-              {" – "}
-              {p.scoreB !== "" && p.scoreB !== undefined ? p.scoreB : "–"}
-            </div>
-            <div style={s.lockedMeta}>
-              C:{p.corners !== "" && p.corners !== undefined ? p.corners : "–"} · Ct:{" "}
-              {p.cards !== "" && p.cards !== undefined ? p.cards : "–"}
-            </div>
-            <span style={s.lockedTag}>PRONOSTIC BLOCAT</span>
+            {match.status === "finished" && match.realScoreA != null && match.realScoreB != null ? (
+              <>
+                <div style={s.lockedScore}>{match.realScoreA} – {match.realScoreB}</div>
+                <span style={s.finalTag}>REZULTAT FINAL</span>
+                {p.scoreA !== "" && p.scoreA !== undefined && (
+                  <div style={s.ownPredictionNote}>
+                    Pronosticul tău: {p.scoreA}–{p.scoreB}
+                    {p.corners !== "" && p.corners !== undefined ? ` · C:${p.corners}` : ""}
+                    {p.cards !== "" && p.cards !== undefined ? ` · Ct:${p.cards}` : ""}
+                  </div>
+                )}
+              </>
+            ) : (
+              <>
+                <div style={s.lockedScore}>
+                  {p.scoreA !== "" && p.scoreA !== undefined ? p.scoreA : "–"}
+                  {" – "}
+                  {p.scoreB !== "" && p.scoreB !== undefined ? p.scoreB : "–"}
+                </div>
+                <div style={s.lockedMeta}>
+                  C:{p.corners !== "" && p.corners !== undefined ? p.corners : "–"} · Ct:{" "}
+                  {p.cards !== "" && p.cards !== undefined ? p.cards : "–"}
+                </div>
+                <span style={s.lockedTag}>PRONOSTIC BLOCAT</span>
+              </>
+            )}
             <FriendsPredictions matchId={match.id} currentUid={currentUid} homeTeam={match.homeTeam} awayTeam={match.awayTeam} />
           </div>
         ) : (
@@ -202,5 +218,13 @@ const s = {
     display: "inline-block", fontSize: 9.5, fontWeight: 800, letterSpacing: "0.05em", color: "#F0555A",
     background: "rgba(240,85,90,0.12)", border: "1px solid rgba(240,85,90,0.35)", borderRadius: 999, padding: "3px 10px",
     fontFamily: font.body,
+  },
+  finalTag: {
+    display: "inline-block", fontSize: 9.5, fontWeight: 800, letterSpacing: "0.05em", color: color.goldLight,
+    background: "rgba(212,175,55,0.12)", border: "1px solid rgba(212,175,55,0.4)", borderRadius: 999, padding: "3px 10px",
+    fontFamily: font.body,
+  },
+  ownPredictionNote: {
+    fontSize: 10.5, color: color.textFaint, fontFamily: font.body, marginTop: 8,
   },
 };

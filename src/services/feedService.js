@@ -4,7 +4,7 @@ import {
 } from "firebase/firestore";
 import { db } from "../firebase";
 import {
-  detectRankChangeEvents, buildMatchFinalEvent, buildJokerEvent, buildUpcomingMatchEvent,
+  detectRankChangeEvents, buildMatchFinalEvent, buildJokerEvent, buildUpcomingMatchEvent, buildLiveMatchEvent,
   mergeFeedEvents, FEED_CATEGORIES,
 } from "./feedEngine";
 import { listGeneralLeaderboard, listAllUsers } from "./adminService";
@@ -64,6 +64,16 @@ export async function processFinishedMatches(matches) {
     await Promise.all(matches.map((m) => deleteDoc(doc(db, "feedEvents", `upcoming_${m.id}`)).catch(() => {})));
   }
   return events;
+}
+
+// ── Eveniment LIVE (gol / cartonaș roșu) — apelat direct din Admin,
+// imediat ce introduce evenimentul. Un singur eveniment nou în Feed per
+// apel — ID determinist, deci reîncercarea unei scrieri eșuate nu
+// dublează nimic. ──
+export async function processLiveMatchEvent(match, event) {
+  const feedEvent = buildLiveMatchEvent(match, event);
+  if (feedEvent) await saveFeedEvents([feedEvent]);
+  return feedEvent;
 }
 
 export async function processJokerActivation(joker, match, nickname) {

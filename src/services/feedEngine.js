@@ -32,6 +32,7 @@ export const FEED_CATEGORIES = {
 export const PRIORITY = {
   RANK_MAXIMA: 100,   // schimbare de lider, intrare/ieșire din TOP 3, salt foarte mare (5+)
   RANK_MARE: 90,       // intrare/ieșire din TOP 10, depășire directă, salt 3-4
+  LIVE_EVENT: 72,      // gol/cartonaș roșu, introdus manual de admin, în timpul meciului
   MATCH_RESULT: 70,    // rezultat final de meci
   JOKER: 60,           // Joker activat
   UPCOMING_IMPORTANT: 50, // meci important care urmează (ex. Meciul Săptămânii)
@@ -180,6 +181,40 @@ export function buildUpcomingMatchEvent(match, editorialSnippets, isImportant) {
       editorialSnippets: editorialSnippets || [],
     },
   };
+}
+
+// ── Eveniment LIVE (gol / cartonaș roșu) — introdus MANUAL de admin, în
+// timp real, cât meciul se joacă. Date reale, nu inventate: minutul,
+// tipul și echipa vin exact din ce a scris admin, nimic presupus sau
+// generat automat. ID determinist pe evenimentul propriu-zis (nu pe
+// timestamp) — reprocesarea aceluiași eveniment nu-l dublează. ──
+export function buildLiveMatchEvent(match, event) {
+  const teamName = event.team === "home" ? match.homeTeam : match.awayTeam;
+  const scoreLine = (match.realScoreA != null && match.realScoreB != null)
+    ? ` · ${match.homeTeam} ${match.realScoreA}-${match.realScoreB} ${match.awayTeam}`
+    : "";
+
+  if (event.type === "goal") {
+    return {
+      id: `liveevent_${event.id}`,
+      category: FEED_CATEGORIES.MECIURI, priority: PRIORITY.LIVE_EVENT, ts: Date.now(),
+      icon: "whistle", important: true,
+      title: event.player ? `⚽ GOL! ${event.player} (${teamName})` : `⚽ GOL! ${teamName}`,
+      subtitle: `Minutul ${event.minute}${scoreLine}`,
+      detail: { competitionName: match.competitionName, matchId: match.id, minute: event.minute, team: event.team, player: event.player || null },
+    };
+  }
+  if (event.type === "red_card") {
+    return {
+      id: `liveevent_${event.id}`,
+      category: FEED_CATEGORIES.MECIURI, priority: PRIORITY.LIVE_EVENT, ts: Date.now(),
+      icon: "whistle", important: true,
+      title: event.player ? `🟥 Cartonaș roșu — ${event.player} (${teamName})` : `🟥 Cartonaș roșu — ${teamName}`,
+      subtitle: `Minutul ${event.minute}${scoreLine}`,
+      detail: { competitionName: match.competitionName, matchId: match.id, minute: event.minute, team: event.team, player: event.player || null },
+    };
+  }
+  return null;
 }
 
 export function mergeFeedEvents(...groups) {

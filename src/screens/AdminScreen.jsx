@@ -41,6 +41,10 @@ import {
   listRecentEventsForAdmin, listAdminFunItems, addFunItem, deleteFunItem,
 } from "../services/feedService";
 import { EDITORIAL_ARTICLES } from "../feedContent/editorialContent";
+import LiveEventPanel from "../components/LiveEventPanel";
+import {
+  listAllUsersWithStatus, approveUser, rejectUser, deactivateUser, reactivateUser,
+} from "../services/adminService";
 import { color, font, layout, radius } from "../theme";
 
 // Ordonare operațională pentru secțiunea de Rezultate: meciurile FĂRĂ
@@ -70,6 +74,7 @@ const TABS = [
   { id: "featured", label: "Săptămânii" },
   { id: "speciale", label: "Speciale" },
   { id: "feed", label: "Feed" },
+  { id: "players", label: "👥 Jucători" },
   { id: "health", label: "Health Check" },
   { id: "config", label: "Config" },
 ];
@@ -133,6 +138,37 @@ export default function AdminScreen({ onBack }) {
   const [resolveSelection, setResolveSelection] = useState(null);
   const [resolveSaving, setResolveSaving] = useState(false);
   const [resolveMsg, setResolveMsg] = useState("");
+
+  // ── Jucători (Admin) ──
+  const [players, setPlayers] = useState([]);
+  const [playersLoading, setPlayersLoading] = useState(false);
+  const [playerActionUid, setPlayerActionUid] = useState(""); // uid-ul cu acțiune în curs, pt. disable pe buton
+
+  useEffect(() => {
+    if (tab !== "players") return;
+    setPlayersLoading(true);
+    listAllUsersWithStatus()
+      .then(setPlayers)
+      .catch((err) => console.error("Eroare la încărcarea jucătorilor:", err))
+      .finally(() => setPlayersLoading(false));
+  }, [tab]);
+
+  async function handlePlayerAction(uid, action) {
+    setPlayerActionUid(uid);
+    try {
+      if (action === "approve") await approveUser(uid);
+      else if (action === "reject") await rejectUser(uid);
+      else if (action === "deactivate") await deactivateUser(uid);
+      else if (action === "reactivate") await reactivateUser(uid);
+      setPlayers((prev) => prev.map((p) => (p.uid === uid
+        ? { ...p, status: action === "approve" || action === "reactivate" ? "active" : "disabled" }
+        : p)));
+    } catch (err) {
+      console.error("Eroare la acțiunea asupra jucătorului:", err);
+    } finally {
+      setPlayerActionUid("");
+    }
+  }
 
   // ── Feed (Admin) ──
   const [feedEvents, setFeedEvents] = useState([]);
@@ -788,13 +824,15 @@ export default function AdminScreen({ onBack }) {
               ) : (
                 <div style={s.matchList}>
                   {resultsOrderedMatches.map((m) => (
-                    <MatchResultCard
-                      key={m.id}
-                      match={m}
-                      onSave={(values) => handleSaveResult(m.id, values)}
-                      onChangeStatus={(newStatus) => handleChangeStatus(m.id, newStatus)}
-                      disabled={currentGameweek?.status === "completed"}
-                    />
+                    <div key={m.id}>
+                      <MatchResultCard
+                        match={m}
+                        onSave={(values) => handleSaveResult(m.id, values)}
+                        onChangeStatus={(newStatus) => handleChangeStatus(m.id, newStatus)}
+                        disabled={currentGameweek?.status === "completed"}
+                      />
+                      {m.status === "live" && <LiveEventPanel match={m} />}
+                    </div>
                   ))}
                   {resultsOrderedMatches.length === 0 && (
                     <EmptyState icon="🔍" title="Niciun meci nu corespunde căutării." />
@@ -1001,6 +1039,80 @@ export default function AdminScreen({ onBack }) {
                   <p style={s.hint}>Fază deja rezolvată — punctele au fost adăugate în Clasamentul General.</p>
                 )}
               </SectionCard>
+            )}
+
+            {/* ── Jucători — aprobare conturi noi, dezactivare/reactivare ── */}
+            {tab === "players" && (
+              <>
+                {(() => {
+                  const pending = players.filter((p) => p.status === "pending");
+                  const active = players.filter((p) => p.status === "active");
+                  const disabled = players.filter((p) => p.status === "disabled");
+                  return (
+                    <>
+                      {pending.length > 0 && (
+                        <SectionCard title={`Cereri noi (${pending.length})`}>
+                          <div style={s.feedAdminList}>
+                            {pending.map((p) => (
+                              <div key={p.uid} style={s.playerRow}>
+                                <div style={s.playerInfo}>
+                                  <div style={s.feedAdminTitle}>{p.nickname || "(fără nickname încă)"}</div>
+                                  <div style={s.feedAdminMeta}>{p.email || p.uid}</div>
+                                </div>
+                                <div style={s.playerActions}>
+                                  <button type="button" style={s.approveBtn} disabled={playerActionUid === p.uid} onClick={() => handlePlayerAction(p.uid, "approve")}>
+                                    Aprobă
+                                  </button>
+                                  <button type="button" style={s.rejectBtn} disabled={playerActionUid === p.uid} onClick={() => handlePlayerAction(p.uid, "reject")}>
+                                    Respinge
+                                  </button>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </SectionCard>
+                      )}
+
+                      <SectionCard title={`Jucători activi (${active.length})`}>
+                        {playersLoading && <p style={s.hint}>Se încarcă…</p>}
+                        <div style={s.feedAdminList}>
+                          {active.map((p) => (
+                            <div key={p.uid} style={s.playerRow}>
+                              <div style={s.playerInfo}>
+                                <div style={s.feedAdminTitle}>{p.nickname || p.uid}</div>
+                                <div style={s.feedAdminMeta}>
+                                  {p.email ? `${p.email} · ` : ""}{p.seasonPoints ?? 0}p · {p.gameweeksPlayed ?? 0} etape
+                                </div>
+                              </div>
+                              <button type="button" style={s.smallBtn} disabled={playerActionUid === p.uid} onClick={() => handlePlayerAction(p.uid, "deactivate")}>
+                                Dezactivează
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      </SectionCard>
+
+                      {disabled.length > 0 && (
+                        <SectionCard title={`Dezactivați (${disabled.length})`}>
+                          <div style={s.feedAdminList}>
+                            {disabled.map((p) => (
+                              <div key={p.uid} style={{ ...s.playerRow, opacity: 0.6 }}>
+                                <div style={s.playerInfo}>
+                                  <div style={s.feedAdminTitle}>{p.nickname || p.uid}</div>
+                                  <div style={s.feedAdminMeta}>{p.email || p.uid}</div>
+                                </div>
+                                <button type="button" style={s.smallBtn} disabled={playerActionUid === p.uid} onClick={() => handlePlayerAction(p.uid, "reactivate")}>
+                                  Reactivează
+                                </button>
+                              </div>
+                            ))}
+                          </div>
+                        </SectionCard>
+                      )}
+                    </>
+                  );
+                })()}
+              </>
             )}
 
             {/* ── Feed — evenimente automate, articole editoriale, FUN ── */}
@@ -1272,6 +1384,20 @@ const s = {
   smallBtn: {
     flexShrink: 0, background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.15)", borderRadius: 6,
     padding: "6px 10px", fontSize: 10.5, fontWeight: 700, color: "#fff", cursor: "pointer",
+  },
+  playerRow: {
+    display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10,
+    background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 8, padding: "10px 12px",
+  },
+  playerInfo: { minWidth: 0, flex: 1 },
+  playerActions: { display: "flex", gap: 6, flexShrink: 0 },
+  approveBtn: {
+    background: "rgba(52,199,89,0.15)", border: "1px solid rgba(52,199,89,0.4)", color: "#34C759",
+    borderRadius: 6, padding: "6px 12px", fontSize: 10.5, fontWeight: 700, cursor: "pointer",
+  },
+  rejectBtn: {
+    background: "rgba(240,85,90,0.12)", border: "1px solid rgba(240,85,90,0.35)", color: "#F0555A",
+    borderRadius: 6, padding: "6px 12px", fontSize: 10.5, fontWeight: 700, cursor: "pointer",
   },
   specialsOverviewRow: {
     display: "flex", alignItems: "center", gap: 8, width: "100%", background: "rgba(255,255,255,0.03)",

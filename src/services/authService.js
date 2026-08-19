@@ -133,6 +133,9 @@ export async function ensureUserProfile(user, nickname) {
         avatarId: null,
         seasonPoints: 0,
         gameweeksPlayed: 0,
+        status: "pending", // NOU — cont nou, neaprobat încă. Userii deja
+        // existenți NU au deloc acest câmp, tratat ca "activ" retroactiv
+        // (grandfathered) — vezi isActivePlayer() în firestore.rules.
       });
     }
 

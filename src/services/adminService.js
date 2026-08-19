@@ -772,8 +772,14 @@ export async function publishLiveScores(gameweekId) {
 // unsubscribe — apelantul TREBUIE să o cheme la unmount.
 export function listenLiveGameweekScores(gameweekId, onRows) {
   const q = query(collection(db, "gameweekLiveScores"), where("gameweekId", "==", gameweekId));
+  let activeUids = null;
+  listActiveUserIds().then((set) => { activeUids = set; });
   return onSnapshot(q, (snap) => {
-    const rows = snap.docs.map((d) => d.data());
+    let rows = snap.docs.map((d) => d.data());
+    // Filtrare activă — dacă lista de uid-uri active nu s-a încărcat încă
+    // (prima fracțiune de secundă), afișăm nefiltrat o dată, apoi corect
+    // la următorul update (rar, nu merită blocarea primului randare).
+    if (activeUids) rows = rows.filter((r) => activeUids.has(r.userId));
     // BUG REPARAT: lipsea complet sortarea aici — Firestore întoarce
     // documentele în ordine arbitrară (nu garantat după rank), deci
     // locul 2 putea apărea înaintea locului 1 doar pentru că документul
@@ -879,8 +885,11 @@ export async function getUserNicknames(uids) {
 // greșeală. Fallback defensiv: documente vechi fără `rank` (dinainte de
 // acest fix) merg la coadă, sortate după totalPoints între ele.
 export async function listGameweekScores(gameweekId) {
-  const snap = await getDocs(query(collection(db, "gameweekScores"), where("gameweekId", "==", gameweekId)));
-  const rows = snap.docs.map((d) => d.data());
+  const [snap, activeUids] = await Promise.all([
+    getDocs(query(collection(db, "gameweekScores"), where("gameweekId", "==", gameweekId))),
+    listActiveUserIds(),
+  ]);
+  const rows = snap.docs.map((d) => d.data()).filter((r) => activeUids.has(r.userId));
   rows.sort((a, b) => {
     const aHasRank = typeof a.rank === "number";
     const bHasRank = typeof b.rank === "number";
@@ -896,7 +905,9 @@ export async function listGameweekScores(gameweekId) {
 // deja citibil de orice user autentificat.
 export async function listGeneralLeaderboard() {
   const snap = await getDocs(collection(db, "users"));
-  const rows = snap.docs.map((d) => d.data());
+  const rows = snap.docs
+    .map((d) => d.data())
+    .filter((r) => getPlayerStatus(r) === "active");
   rows.sort((a, b) => (b.seasonPoints || 0) - (a.seasonPoints || 0));
   return rows;
 }
@@ -935,11 +946,13 @@ export async function listSeasonLeaderboard(seasonId) {
   const completedIds = gameweeks.filter((g) => g.status === "completed").map((g) => g.id);
   if (completedIds.length === 0) return [];
 
+  const activeUids = await listActiveUserIds();
   const scoresByUser = {};
   await Promise.all(
     completedIds.map(async (gwId) => {
       const rows = await listGameweekScores(gwId);
       rows.forEach((r) => {
+        if (!activeUids.has(r.userId)) return; // exclus din clasamentul ACTIV, istoricul rămâne în Firestore
         if (!scoresByUser[r.userId]) scoresByUser[r.userId] = { uid: r.userId, totalPoints: 0 };
         scoresByUser[r.userId].totalPoints += r.totalPoints || 0;
       });
@@ -1160,4 +1173,114 @@ export async function getUserSeasonPoints(uid) {
 export async function listJokersForGameweek(gameweekId) {
   const snap = await getDocs(query(collection(db, "jokers"), where("gameweekId", "==", gameweekId)));
   return snap.docs.map((d) => d.data());
+}
+
+// ══════════════════════════════════════════════════════════════════
+// GESTIUNEA JUCĂTORILOR — tab nou "Jucători" din Admin.
+//
+// Status posibil pe users/{uid}.status: "pending" | "active" | "disabled".
+// LIPSA câmpului (userii creați înainte de acest sistem) = tratat ca
+// "active" — grandfathered, nu blocăm retroactiv grupul existent. Doar
+// conturile NOI primesc "pending" explicit la creare (authService.js).
+// ══════════════════════════════════════════════════════════════════
+
+// Statusul normalizat al unui user — pentru afișare/filtrare uniformă,
+// indiferent dacă documentul are sau nu câmpul (userii vechi).
+export function getPlayerStatus(userData) {
+  if (!userData) return "active";
+  return userData.status || "active";
+}
+
+// Toți userii, cu statusul normalizat — pentru tab-ul "Jucători".
+// Include și emailul din subdocumentul privat (Admin are voie să-l
+// citească — regula: isOwner || isAdmin pe users/{uid}/private/profile).
+export async function listAllUsersWithStatus() {
+  const snap = await getDocs(collection(db, "users"));
+  const rows = await Promise.all(snap.docs.map(async (d) => {
+    const data = d.data();
+    let email = "", createdAt = null, lastLoginAt = null;
+    try {
+      const privSnap = await getDoc(doc(db, "users", d.id, "private", "profile"));
+      if (privSnap.exists()) {
+        const p = privSnap.data();
+        email = p.email || "";
+        createdAt = p.createdAt || null;
+        lastLoginAt = p.lastLoginAt || null;
+      }
+    } catch (err) {
+      // Fără acces sau document lipsă — nu blocăm restul listei pentru atât.
+    }
+    return { uid: d.id, ...data, status: getPlayerStatus(data), email, createdAt, lastLoginAt };
+  }));
+  rows.sort((a, b) => (a.nickname || "").localeCompare(b.nickname || ""));
+  return rows;
+}
+
+// Aprobă un cont "pending" -> "active". Doar Admin poate scrie (regula
+// users/{uid}: allow update, delete: if isAdmin() — fără restricții de
+// câmpuri pentru Admin).
+export async function approveUser(uid) {
+  await updateDoc(doc(db, "users", uid), { status: "active" });
+}
+
+// Respinge un cont "pending" -> "disabled". IMPORTANT — asta NU șterge
+// contul din Firebase Authentication (clientul nu are și nu trebuie să
+// aibă acea capacitate — necesită Admin SDK, adică un backend/Cloud
+// Function, inexistent acum în proiect). Userul respins rămâne autentificat
+// cu Firebase Auth, dar blocat complet în aplicație (vezi App.jsx —
+// ecranul dedicat pentru status "disabled").
+export async function rejectUser(uid) {
+  await updateDoc(doc(db, "users", uid), { status: "disabled" });
+}
+
+// Dezactivare — metoda NORMALĂ de scoatere din competiție. Istoricul
+// (predicții, scoruri) NU este atins, doar acest câmp.
+export async function deactivateUser(uid) {
+  await updateDoc(doc(db, "users", uid), { status: "disabled" });
+}
+
+export async function reactivateUser(uid) {
+  await updateDoc(doc(db, "users", uid), { status: "active" });
+}
+
+// ══════════════════════════════════════════════════════════════════
+// EVENIMENTE LIVE (minut, gol, cartonaș roșu) — introduse manual de
+// Admin, cât meciul se joacă. Stocate direct pe documentul meciului
+// (matchEvents: array) — NU necesită nicio regulă Firestore nouă,
+// scrierea e deja acoperită de "matches: allow write: if isAdmin()".
+// ══════════════════════════════════════════════════════════════════
+
+export async function setLiveMinute(matchId, minute) {
+  await updateDoc(doc(db, "matches", matchId), { liveMinute: minute });
+}
+
+export async function addMatchEvent(matchId, { type, team, minute, player }) {
+  const matchRef = doc(db, "matches", matchId);
+  const snap = await getDoc(matchRef);
+  if (!snap.exists()) throw new Error("Meciul nu există.");
+  const existing = snap.data().matchEvents || [];
+  const event = { id: `${matchId}_${Date.now()}`, type, team, minute, player: player || null, ts: Date.now() };
+  await updateDoc(matchRef, { matchEvents: [...existing, event] });
+  return event;
+}
+
+export async function removeMatchEvent(matchId, eventId) {
+  const matchRef = doc(db, "matches", matchId);
+  const snap = await getDoc(matchRef);
+  if (!snap.exists()) return;
+  const existing = snap.data().matchEvents || [];
+  await updateDoc(matchRef, { matchEvents: existing.filter((e) => e.id !== eventId) });
+}
+
+
+// ── Filtrare activă pe clasamente — un Set de uid-uri active/grandfathered,
+// calculat o singură dată, reutilizat pentru toate cele 4 surse de
+// clasament (General, Sezon, Etapă, Live). Userii dezactivați/pending
+// dispar din clasamentele ACTIVE, dar rândurile lor istorice (gameweekScores
+// deja scrise) NU sunt șterse din Firestore — doar excluse la afișare. ──
+export async function listActiveUserIds() {
+  const snap = await getDocs(collection(db, "users"));
+  const active = new Set();
+  snap.docs.forEach((d) => { if (getPlayerStatus(d.data()) === "active") active.add(d.id); });
+  return active;
 }

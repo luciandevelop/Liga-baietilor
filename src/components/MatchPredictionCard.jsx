@@ -2,6 +2,7 @@ import NumericStepper from "./NumericStepper";
 import ClubLogo from "./ClubLogo";
 import CompetitionHeaderStrip from "./CompetitionHeaderStrip";
 import FriendsPredictions from "./FriendsPredictions";
+import LiveMatchDetails from "./LiveMatchDetails";
 import { getMatchStatus, MATCH_STATUS_LABEL, MATCH_STATUS_TONE } from "../utils/matchStatus";
 import { getCompetitionTheme } from "../competitionThemes";
 import { color, font, radius, shadow } from "../matchdayTheme";
@@ -85,15 +86,30 @@ export default function MatchPredictionCard({
 
         {locked ? (
           <div style={s.lockedBox}>
-            {match.status === "finished" && match.realScoreA != null && match.realScoreB != null ? (
+            {(match.status === "finished" || match.status === "live" || match.status === "paused") && match.realScoreA != null && match.realScoreB != null ? (
               <>
                 <div style={s.lockedScore}>{match.realScoreA} – {match.realScoreB}</div>
-                <span style={s.finalTag}>REZULTAT FINAL</span>
+                {match.status === "finished" ? (
+                  <span style={s.finalTag}>REZULTAT FINAL</span>
+                ) : (
+                  <span style={s.liveTag}>● LIVE{match.liveMinute != null ? ` ${match.liveMinute}'` : ""}{match.status === "paused" ? " · Pauză" : ""}</span>
+                )}
+                <LiveMatchDetails match={match} compact />
                 {p.scoreA !== "" && p.scoreA !== undefined && (
                   <div style={s.ownPredictionNote}>
                     Pronosticul tău: {p.scoreA}–{p.scoreB}
                     {p.corners !== "" && p.corners !== undefined ? ` · C:${p.corners}` : ""}
                     {p.cards !== "" && p.cards !== undefined ? ` · Ct:${p.cards}` : ""}
+                  </div>
+                )}
+              </>
+            ) : (match.status === "live" || match.status === "paused") ? (
+              <>
+                <div style={s.lockedScore}>– – –</div>
+                <span style={s.liveTag}>● LIVE · rezultat neintrodus încă</span>
+                {p.scoreA !== "" && p.scoreA !== undefined && (
+                  <div style={s.ownPredictionNote}>
+                    Pronosticul tău: {p.scoreA}–{p.scoreB}
                   </div>
                 )}
               </>
@@ -222,6 +238,11 @@ const s = {
   finalTag: {
     display: "inline-block", fontSize: 9.5, fontWeight: 800, letterSpacing: "0.05em", color: color.goldLight,
     background: "rgba(212,175,55,0.12)", border: "1px solid rgba(212,175,55,0.4)", borderRadius: 999, padding: "3px 10px",
+    fontFamily: font.body,
+  },
+  liveTag: {
+    display: "inline-block", fontSize: 9.5, fontWeight: 800, letterSpacing: "0.05em", color: "#8BD957",
+    background: "rgba(139,217,87,0.12)", border: "1px solid rgba(139,217,87,0.4)", borderRadius: 999, padding: "3px 10px",
     fontFamily: font.body,
   },
   ownPredictionNote: {

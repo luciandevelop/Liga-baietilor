@@ -10,7 +10,7 @@ export default function LiveMatchDetails({ match, compact = false }) {
   const minute = match.liveMinute;
   const events = match.matchEvents || [];
   const goals = events.filter((e) => e.type === "goal").sort((a, b) => a.minute - b.minute);
-  const redCards = events.filter((e) => e.type === "red-card").sort((a, b) => a.minute - b.minute);
+  const redCards = events.filter((e) => e.type === "red_card").sort((a, b) => a.minute - b.minute);
 
   if (goals.length === 0 && redCards.length === 0 && minute == null) return null;
 

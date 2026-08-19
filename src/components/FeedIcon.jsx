@@ -29,6 +29,10 @@ export default function FeedIcon({ name, size = 12, tint }) {
       return <svg {...common}><path d="M3 9l9-5 9 5-9 5-9-5z" /><path d="M7 12v5c2 2 8 2 10 0v-5" /></svg>;
     case "fun":
       return <svg {...common}><circle cx="12" cy="12" r="9" /><path d="M8 14s1.5 2 4 2 4-2 4-2M9 9h.01M15 9h.01" /></svg>;
+    case "goal":
+      return <svg {...common}><circle cx="12" cy="12" r="9" /><path d="M12 6l3.5 2.5-1.3 4.1H9.8L8.5 8.5 12 6z" /><path d="M12 3v3M4.5 8l3.5 2M19.5 8l-3.5 2M6 18l3-4.5M18 18l-3-4.5" /></svg>;
+    case "redcard":
+      return <svg {...common} stroke="none" fill={tint || "#F0555A"}><rect x="7" y="3" width="10" height="18" rx="1.5" transform="rotate(-12 12 12)" /></svg>;
     case "info":
     default:
       return <svg {...common}><path d="M7 4h10v4a5 5 0 01-10 0V4z" /><path d="M12 13v4M9 20h6M10 17h4" /></svg>;

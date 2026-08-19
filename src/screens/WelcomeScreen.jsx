@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { getCurrentSeason, getCurrentGameweek, loadUserPredictions, loadUserJoker, isMatchLocked } from "../services/predictionsService";
-import { listMatches, listenLiveGameweekScores, listGameweekScores, getUserSeasonPoints, listJokersForGameweek } from "../services/adminService";
+import { listenMatches, listenLiveGameweekScores, listGameweekScores, getUserSeasonPoints, listJokersForGameweek } from "../services/adminService";
 import { getUserPublicProfiles } from "../services/profilesService";
 import { processRankChanges, processFinishedMatches, processJokerActivation, processUpcomingMatches, loadFullFeed } from "../services/feedService";
 import useNow from "../hooks/useNow";
@@ -23,6 +23,7 @@ import Pill from "../components/Pill";
 import FeedCard from "../components/FeedCard";
 import FeedDetailModal from "../components/FeedDetailModal";
 import PredictionsRevealSheet from "../components/PredictionsRevealSheet";
+import LiveMatchDetails from "../components/LiveMatchDetails";
 
 const LOCK_MS = 30 * 60 * 1000;
 
@@ -74,22 +75,21 @@ export default function WelcomeScreen({ user, profile, isAdmin, onOpenAdmin, onO
   }
 
   function load() {
-    let unsub = null;
+    let unsubMatches = null;
+    let unsubScores = null;
     (async () => {
       setLoading(true);
       setCriticalError("");
       setStatsError("");
       refreshFeedTop();
 
-      let season, gw, m;
+      let season, gw;
       try {
         season = await getCurrentSeason();
         if (!season) { setGameweek(null); setLoading(false); return; }
         gw = await getCurrentGameweek(season.id);
         setGameweek(gw);
         if (!gw) { setLoading(false); return; }
-        m = await listMatches(gw.id);
-        setMatches(m);
       } catch (err) {
         console.error("Eroare critică la încărcarea Home:", err);
         setCriticalError(err.message || err.code || "Eroare necunoscută");
@@ -98,23 +98,18 @@ export default function WelcomeScreen({ user, profile, isAdmin, onOpenAdmin, onO
       }
       setLoading(false);
 
-      try {
-        const preds = await loadUserPredictions(user.uid, m.map((x) => x.id));
-        setPredictions(preds);
-        const joker = await loadUserJoker(gw.id, user.uid);
-        setOwnJoker(joker);
+      // ── REALTIME pe meciuri — sursă unică cu Pronosticuri (listenMatches),
+      // ca scorul/minutul/evenimentele LIVE să nu mai poată "îngheța" la
+      // momentul deschiderii ecranului. BUG P0 reparat aici. ──
+      const predictionsLoadedRef = { current: false };
+      unsubMatches = listenMatches(gw.id, (m) => {
+        setMatches(m);
 
-        // Meciuri terminate → eveniment de scor final. Sigur de rulat de
-        // fiecare dată (ID determinist per meci -> Firestore ignoră
-        // duplicatele, nu se creează a doua oară).
         const finished = m.filter((x) => x.status === "finished" && x.realScoreA != null && x.realScoreB != null);
         if (finished.length > 0) {
           processFinishedMatches(finished).then((evs) => { if (evs.length > 0) refreshFeedTop(); }).catch((err) => console.error("Eroare Feed meciuri:", err));
         }
 
-        // Jokerii TUTUROR jucătorilor, nu doar al userului curent —
-        // `processedJokersRef` evită re-anunțarea în aceeași sesiune,
-        // ID-ul determinist evită duplicarea în Firestore.
         listJokersForGameweek(gw.id).then(async (jokers) => {
           const newOnes = jokers.filter((j) => !processedJokersRef.current.has(`${j.gameweekId}_${j.userId}`));
           if (newOnes.length === 0) return;
@@ -129,11 +124,25 @@ export default function WelcomeScreen({ user, profile, isAdmin, onOpenAdmin, onO
           if (any) refreshFeedTop();
         }).catch((err) => console.error("Eroare Feed jokeri:", err));
 
+        // Predicțiile proprii — au nevoie de ID-urile reale ale meciurilor,
+        // disponibile abia aici (realtime). O singură dată e suficient
+        // (nu se schimbă predicțiile PROPRII quando altcineva actualizează
+        // scorul altui meci) — refolosim predictionsLoadedRef ca gardă.
+        if (!predictionsLoadedRef.current) {
+          predictionsLoadedRef.current = true;
+          loadUserPredictions(user.uid, m.map((x) => x.id)).then(setPredictions).catch((err) => console.error("Eroare predicții proprii:", err));
+        }
+      });
+
+      try {
+        const joker = await loadUserJoker(gw.id, user.uid);
+        setOwnJoker(joker);
+
         if (gw.status === "completed") {
           const rows = await listGameweekScores(gw.id);
           await applyRows(rows.map((r) => ({ ...r, uid: r.userId })));
         } else {
-          unsub = listenLiveGameweekScores(gw.id, (rows) => {
+          unsubScores = listenLiveGameweekScores(gw.id, (rows) => {
             applyRows(rows.map((r) => ({ ...r, uid: r.userId }))).catch((err) => {
               console.error("Eroare la procesarea clasamentului live:", err);
               setStatsError("Clasamentul live nu s-a putut încărca complet.");
@@ -165,7 +174,7 @@ export default function WelcomeScreen({ user, profile, isAdmin, onOpenAdmin, onO
       }
     }
 
-    return () => { if (unsub) unsub(); };
+    return () => { if (unsubMatches) unsubMatches(); if (unsubScores) unsubScores(); };
   }
 
   useEffect(load, [user.uid]);
@@ -219,6 +228,12 @@ export default function WelcomeScreen({ user, profile, isAdmin, onOpenAdmin, onO
   const heroMatch = heroPool[0] || allSorted[0] || null;
   const heroStatus = heroMatch ? getMatchStatus(heroMatch, now) : null;
   const heroTheme = heroMatch ? getCompetitionTheme(heroMatch.competitionId) : null;
+  // Meciuri LIVE suplimentare (dincolo de cel din hero) — BUG P0 reparat:
+  // înainte dispăreau complet, nu apăreau nici în hero (doar heroPool[0]),
+  // nici în "Urmează" (filtrat strict la "scheduled"). Acum au propria
+  // secțiune, vizibilă imediat, fără să intre în Pronosticuri ca să afli
+  // că mai există meciuri în desfășurare.
+  const otherLiveMatches = liveBucket.slice(1);
   // Rail-ul "Urmează" — doar meciuri care CHIAR urmează: statusul real
   // (nu cel brut din Firestore) trebuie să fie "scheduled". Un meci rămas
   // pe status "scheduled" în bază dar cu ora deja trecută e tratat LIVE
@@ -295,7 +310,7 @@ export default function WelcomeScreen({ user, profile, isAdmin, onOpenAdmin, onO
                   {(featuredMatch && heroMatch === featuredMatch) || heroStatus !== "scheduled" ? (
                     <div style={{ display: "flex", justifyContent: "center", gap: 6, marginBottom: 10, flexWrap: "wrap" }}>
                       {featuredMatch && heroMatch === featuredMatch && <span style={s.motwBadge}>⭐ Meciul Săptămânii · Punctaj Dublu</span>}
-                      {heroStatus === "live" && <Pill tone="green">● LIVE</Pill>}
+                      {heroStatus === "live" && <Pill tone="green">● LIVE{heroMatch.liveMinute != null ? ` · ${heroMatch.liveMinute}'` : ""}</Pill>}
                       {heroStatus === "paused" && <Pill tone="gold">Pauză</Pill>}
                       {heroStatus === "finished" && <Pill tone="gold">Final</Pill>}
                       {heroStatus === "postponed" && <Pill tone="gold">Amânat</Pill>}
@@ -327,15 +342,35 @@ export default function WelcomeScreen({ user, profile, isAdmin, onOpenAdmin, onO
                     </button>
                   )}
                   {heroStatus === "live" && (
-                    <div style={s.liveRevealWrap}>
-                      <div style={s.liveNote}>LIVE · rezultat neintrodus încă</div>
-                      <button type="button" style={s.eyeBtn} onClick={() => setRevealMatch(heroMatch)} aria-label="Vezi pronosticurile">
-                        👁 <span style={s.eyeBtnLabel}>Cine mai e în joc?</span>
-                      </button>
-                    </div>
+                    <>
+                      {heroMatch.realScoreA != null && heroMatch.realScoreB != null ? (
+                        <div style={s.finalScore}>{heroMatch.realScoreA} – {heroMatch.realScoreB}</div>
+                      ) : (
+                        <div style={s.liveNote}>LIVE · rezultat neintrodus încă</div>
+                      )}
+                      <LiveMatchDetails match={heroMatch} />
+                      <div style={s.liveRevealWrap}>
+                        <button type="button" style={s.eyeBtn} onClick={() => setRevealMatch(heroMatch)} aria-label="Vezi pronosticurile">
+                          👁 <span style={s.eyeBtnLabel}>Cine mai e în joc?</span>
+                        </button>
+                      </div>
+                    </>
                   )}
-                  {heroStatus === "paused" && <div style={s.liveNote}>Meciul e la pauză</div>}
-                  {heroStatus === "finished" && <div style={s.finalScore}>{heroMatch.realScoreA} – {heroMatch.realScoreB}</div>}
+                  {heroStatus === "paused" && (
+                    <>
+                      {heroMatch.realScoreA != null && heroMatch.realScoreB != null && (
+                        <div style={s.finalScore}>{heroMatch.realScoreA} – {heroMatch.realScoreB}</div>
+                      )}
+                      <div style={s.liveNote}>Meciul e la pauză</div>
+                      <LiveMatchDetails match={heroMatch} />
+                    </>
+                  )}
+                  {heroStatus === "finished" && (
+                    <>
+                      <div style={s.finalScore}>{heroMatch.realScoreA} – {heroMatch.realScoreB}</div>
+                      <LiveMatchDetails match={heroMatch} />
+                    </>
+                  )}
                   {heroStatus === "postponed" && <div style={s.liveNote}>Meci amânat — dată nouă în curând</div>}
                   {heroStatus === "cancelled" && <div style={s.liveNote}>Meci anulat</div>}
 
@@ -366,6 +401,37 @@ export default function WelcomeScreen({ user, profile, isAdmin, onOpenAdmin, onO
                 {predictedCount >= totalMatches ? "Etapa este completă." : `Mai ai ${totalMatches - predictedCount} meciuri.`}
               </div>
             </PressableCard>
+          )}
+
+          {otherLiveMatches.length > 0 && (
+            <div style={s.otherLiveSection}>
+              <div style={s.otherLiveLabel}>🔴 ALTE MECIURI LIVE ({otherLiveMatches.length})</div>
+              <div style={s.otherLiveList}>
+                {otherLiveMatches.map((m) => (
+                  <div key={m.id} style={s.otherLiveCard}>
+                    <div style={s.otherLiveTop}>
+                      <ClubLogo teamName={m.homeTeam} size={34} />
+                      <div style={s.otherLiveMid}>
+                        <div style={s.otherLiveTeams}>{m.homeTeam} – {m.awayTeam}</div>
+                        <div style={s.otherLiveScoreRow}>
+                          {m.realScoreA != null && m.realScoreB != null ? (
+                            <span style={s.otherLiveScore}>{m.realScoreA} – {m.realScoreB}</span>
+                          ) : (
+                            <span style={s.otherLiveScorePending}>rezultat neintrodus</span>
+                          )}
+                          <span style={s.otherLiveMinute}>● LIVE{m.liveMinute != null ? ` ${m.liveMinute}'` : ""}</span>
+                        </div>
+                      </div>
+                      <ClubLogo teamName={m.awayTeam} size={34} />
+                    </div>
+                    <LiveMatchDetails match={m} compact />
+                    <button type="button" style={s.otherLiveEyeBtn} onClick={() => setRevealMatch(m)}>
+                      👁 Cine mai e în joc?
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
           )}
 
           {railMatches.length > 0 && (
@@ -557,6 +623,24 @@ const s = {
     fontSize: 11.5, cursor: "pointer", color: color.goldLight, fontFamily: font.body, fontWeight: 700,
   },
   eyeBtnLabel: { fontSize: 11.5, fontWeight: 700 },
+
+  otherLiveSection: { marginBottom: 20 },
+  otherLiveLabel: { fontSize: 11, fontWeight: 800, letterSpacing: "0.05em", color: "#F0555A", marginBottom: 10, fontFamily: font.body },
+  otherLiveList: { display: "flex", flexDirection: "column", gap: 10 },
+  otherLiveCard: {
+    background: "rgba(240,85,90,0.05)", border: "1px solid rgba(240,85,90,0.25)", borderRadius: radius.md, padding: 14,
+  },
+  otherLiveTop: { display: "flex", alignItems: "center", gap: 10 },
+  otherLiveMid: { flex: 1, minWidth: 0, textAlign: "center" },
+  otherLiveTeams: { fontSize: 11.5, fontWeight: 700, color: color.textPrimary, fontFamily: font.body, marginBottom: 3 },
+  otherLiveScoreRow: { display: "flex", alignItems: "center", justifyContent: "center", gap: 8 },
+  otherLiveScore: { fontFamily: font.display, fontSize: 18, fontWeight: 800, color: color.textPrimary },
+  otherLiveScorePending: { fontSize: 10.5, color: color.textFaint, fontFamily: font.body },
+  otherLiveMinute: { fontSize: 10, fontWeight: 800, color: "#8BD957", fontFamily: font.body },
+  otherLiveEyeBtn: {
+    width: "100%", marginTop: 8, background: "rgba(212,175,55,0.1)", border: "1px solid rgba(212,175,55,0.35)",
+    borderRadius: 999, padding: "7px 0", fontSize: 11, fontWeight: 700, color: color.goldLight, cursor: "pointer", fontFamily: font.body,
+  },
   finalScore: { fontFamily: font.display, fontSize: 30, fontWeight: 800, color: color.textPrimary, margin: "8px 0 12px" },
   ctaWrap: { width: "100%", maxWidth: 280, margin: "0 auto" },
   motwBadge: {

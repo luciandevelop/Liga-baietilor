@@ -9,7 +9,7 @@ import {
   deleteJoker,
   isMatchLocked,
 } from "../services/predictionsService";
-import { listMatches } from "../services/adminService";
+import { listenMatches } from "../services/adminService";
 import { getMatchStatus } from "../utils/matchStatus";
 import MatchPredictionCard from "../components/MatchPredictionCard";
 import PredictionsRevealSheet from "../components/PredictionsRevealSheet";
@@ -43,12 +43,17 @@ export default function PredictionsScreen({ user, isAdmin, onBack, scrollToMatch
   const [subtab, setSubtab] = useState("mine");
   const [expandedLockedId, setExpandedLockedId] = useState(null);
   const [revealMatch, setRevealMatch] = useState(null); // 👁 — meci LIVE deschis în sheet
+  const [finishedExpanded, setFinishedExpanded] = useState(false); // acordeon "meciuri încheiate"
+
+  const unsubMatchesRef = useRef(null);
+  const formInitedRef = useRef(false);
 
   const load = useCallback(async () => {
     setLoadState("loading");
     setLoadError("");
+    formInitedRef.current = false;
 
-    let s, gw, m;
+    let s, gw;
 
     try {
       s = await getCurrentSeason();
@@ -76,28 +81,8 @@ export default function PredictionsScreen({ user, isAdmin, onBack, scrollToMatch
       return;
     }
 
-    try {
-      m = await listMatches(gw.id);
-    } catch (err) {
-      console.error("Eroare la încărcarea meciurilor:", err);
-      setLoadError("Încărcare meciuri: " + (err.message || err.code));
-      setLoadState("error");
-      return;
-    }
-
     setSeason(s);
     setGameweek(gw);
-    setMatches(m);
-
-    let existing;
-    try {
-      existing = await loadUserPredictions(user.uid, m.map((x) => x.id));
-    } catch (err) {
-      console.error("Eroare la încărcarea predicțiilor proprii:", err);
-      setLoadError("Încărcare predicții proprii: " + (err.message || err.code));
-      setLoadState("error");
-      return;
-    }
 
     let existingJoker = null;
     try {
@@ -107,25 +92,46 @@ export default function PredictionsScreen({ user, isAdmin, onBack, scrollToMatch
       // Nu blocăm toată pagina pentru asta — Jokerul e opțional, restul funcționează.
       setJokerError("Nu s-a putut încărca Jokerul: " + (err.message || err.code));
     }
-
-    const initial = {};
-    m.forEach((match) => {
-      const p = existing[match.id];
-      initial[match.id] = {
-        scoreA: p?.scoreA ?? 0,
-        scoreB: p?.scoreB ?? 0,
-        corners: p?.corners ?? 8,
-        cards: p?.cards ?? 3,
-      };
-    });
-    setPredictions(initial);
-    setSavedMatchIds(new Set(Object.keys(existing)));
     setJoker(existingJoker);
-    setLoadState("ready");
+
+    // ── REALTIME pe meciuri — aceeași sursă unică (listenMatches) ca Home.
+    // BUG P0 reparat aici: înainte, listMatches() era o citire O SINGURĂ
+    // DATĂ (getDocs), deci scorul rămânea "înghețat" la momentul deschiderii
+    // ecranului — de-aici valori diferite față de Admin/Home pentru
+    // ACELAȘI meci. ──
+    if (unsubMatchesRef.current) unsubMatchesRef.current();
+    unsubMatchesRef.current = listenMatches(gw.id, async (m) => {
+      setMatches(m);
+
+      if (!formInitedRef.current) {
+        formInitedRef.current = true;
+        try {
+          const existing = await loadUserPredictions(user.uid, m.map((x) => x.id));
+          const initial = {};
+          m.forEach((match) => {
+            const p = existing[match.id];
+            initial[match.id] = {
+              scoreA: p?.scoreA ?? 0,
+              scoreB: p?.scoreB ?? 0,
+              corners: p?.corners ?? 8,
+              cards: p?.cards ?? 3,
+            };
+          });
+          setPredictions(initial);
+          setSavedMatchIds(new Set(Object.keys(existing)));
+          setLoadState("ready");
+        } catch (err) {
+          console.error("Eroare la încărcarea predicțiilor proprii:", err);
+          setLoadError("Încărcare predicții proprii: " + (err.message || err.code));
+          setLoadState("error");
+        }
+      }
+    });
   }, [user.uid]);
 
   useEffect(() => {
     load();
+    return () => { if (unsubMatchesRef.current) unsubMatchesRef.current(); };
   }, [load]);
 
   // Derulează automat la meciul-țintă (venit din "Progres etapă" pe Home),
@@ -254,6 +260,24 @@ export default function PredictionsScreen({ user, isAdmin, onBack, scrollToMatch
 
   const lockedMatches = matches.filter((m) => isMatchLocked(m)).sort((a, b) => b.kickoffAt.toMillis() - a.kickoffAt.toMillis());
 
+  // ── Prioritate obligatorie pentru "Meciurile mele": LIVE > programate
+  // (cronologic) > finalizate (jos, cu accordion). Bug real semnalat —
+  // înainte, lista era doar ordinea brută din listenMatches (cronologică
+  // simplă), deci un meci FINAL cu kickoff mai devreme apărea înaintea
+  // unui meci LIVE cu kickoff mai târziu. ──
+  const liveMatches = matches.filter((m) => ["live", "paused"].includes(getMatchStatus(m)));
+  const scheduledMatches = matches
+    .filter((m) => getMatchStatus(m) === "scheduled")
+    .slice()
+    .sort((a, b) => a.kickoffAt.toMillis() - b.kickoffAt.toMillis());
+  const finishedMatches = matches
+    .filter((m) => getMatchStatus(m) === "finished")
+    .slice()
+    .sort((a, b) => b.kickoffAt.toMillis() - a.kickoffAt.toMillis()); // cel mai recent primul
+
+  const topMatches = [...liveMatches, ...scheduledMatches];
+  const finishedVisible = finishedExpanded ? finishedMatches : finishedMatches.slice(0, 1);
+
   return (
     <div style={s.page}>
       <div style={s.wrap}>
@@ -274,55 +298,71 @@ export default function PredictionsScreen({ user, isAdmin, onBack, scrollToMatch
               </button>
             </div>
 
-            {subtab === "mine" && (
-              <div style={s.matchList}>
-                {matches.map((m) => {
-                  const locked = isMatchLocked(m);
-                  const isFeatured = featuredMatchIds.includes(m.id);
-                  const featuredIndex = isFeatured ? featuredMatchIds.indexOf(m.id) + 1 : null;
-                  const isJoker = joker?.matchId === m.id;
-                  const sState = saveState[m.id] || {};
-                  const isLive = getMatchStatus(m) === "live";
+            {subtab === "mine" && (() => {
+              const renderCard = (m) => {
+                const locked = isMatchLocked(m);
+                const isFeatured = featuredMatchIds.includes(m.id);
+                const featuredIndex = isFeatured ? featuredMatchIds.indexOf(m.id) + 1 : null;
+                const isJoker = joker?.matchId === m.id;
+                const sState = saveState[m.id] || {};
+                const isLive = getMatchStatus(m) === "live";
 
-                  // Meciul care ARE deja Jokerul: poate fi doar renunțat, și doar
-                  // dacă nu e locked. Orice alt meci: butonul e dezactivat COMPLET
-                  // cât timp Jokerul e activ altundeva — nu se mai poate "muta"
-                  // silențios dintr-un click; userul trebuie să se întoarcă la
-                  // meciul original și să apese "Renunță" acolo, explicit.
-                  const jokerDisabled = isJoker
-                    ? locked || jokerSaving
-                    : isFeatured || locked || jokerSaving || Boolean(joker);
+                // Meciul care ARE deja Jokerul: poate fi doar renunțat, și doar
+                // dacă nu e locked. Orice alt meci: butonul e dezactivat COMPLET
+                // cât timp Jokerul e activ altundeva — nu se mai poate "muta"
+                // silențios dintr-un click; userul trebuie să se întoarcă la
+                // meciul original și să apese "Renunță" acolo, explicit.
+                const jokerDisabled = isJoker
+                  ? locked || jokerSaving
+                  : isFeatured || locked || jokerSaving || Boolean(joker);
 
-                  return (
-                    <div key={m.id} data-match-id={m.id}>
-                      <MatchPredictionCard
-                        match={m}
-                        prediction={predictions[m.id]}
-                        onChange={(patch) => updateMatch(m.id, patch)}
-                        onSave={() => handleSaveMatch(m)}
-                        saving={!!sState.saving}
-                        saveStatus={sState.status}
-                        saveError={sState.error}
-                        isSaved={savedMatchIds.has(m.id)}
-                        locked={locked}
-                        isFeatured={isFeatured}
-                        featuredIndex={featuredIndex}
-                        isJoker={isJoker}
-                        onToggleJoker={() => (isJoker ? handleRemoveJoker() : handleSetJoker(m))}
-                        jokerDisabled={jokerDisabled}
-                        jokerUsedElsewhereNote={!isJoker && joker && jokerMatch ? `Jokerul e activ pe ${jokerMatch.homeTeam} vs ${jokerMatch.awayTeam}` : null}
-                        currentUid={user.uid}
-                      />
-                      {isLive && (
-                        <button type="button" style={s.eyeInlineBtn} onClick={() => setRevealMatch(m)} aria-label="Vezi pronosticurile">
-                          👁 Cine mai e în joc?
+                return (
+                  <div key={m.id} data-match-id={m.id}>
+                    <MatchPredictionCard
+                      match={m}
+                      prediction={predictions[m.id]}
+                      onChange={(patch) => updateMatch(m.id, patch)}
+                      onSave={() => handleSaveMatch(m)}
+                      saving={!!sState.saving}
+                      saveStatus={sState.status}
+                      saveError={sState.error}
+                      isSaved={savedMatchIds.has(m.id)}
+                      locked={locked}
+                      isFeatured={isFeatured}
+                      featuredIndex={featuredIndex}
+                      isJoker={isJoker}
+                      onToggleJoker={() => (isJoker ? handleRemoveJoker() : handleSetJoker(m))}
+                      jokerDisabled={jokerDisabled}
+                      jokerUsedElsewhereNote={!isJoker && joker && jokerMatch ? `Jokerul e activ pe ${jokerMatch.homeTeam} vs ${jokerMatch.awayTeam}` : null}
+                      currentUid={user.uid}
+                    />
+                    {isLive && (
+                      <button type="button" style={s.eyeInlineBtn} onClick={() => setRevealMatch(m)} aria-label="Vezi pronosticurile">
+                        👁 Cine mai e în joc?
+                      </button>
+                    )}
+                  </div>
+                );
+              };
+
+              return (
+                <div style={s.matchList}>
+                  {topMatches.map(renderCard)}
+
+                  {finishedMatches.length > 0 && (
+                    <div style={s.finishedSection}>
+                      <div style={s.finishedLabel}>Meciuri încheiate</div>
+                      {finishedVisible.map(renderCard)}
+                      {finishedMatches.length > 1 && (
+                        <button type="button" style={s.finishedToggleBtn} onClick={() => setFinishedExpanded((v) => !v)}>
+                          {finishedExpanded ? "Ascunde meciurile încheiate" : `Vezi toate meciurile încheiate (${finishedMatches.length})`}
                         </button>
                       )}
                     </div>
-                  );
-                })}
-              </div>
-            )}
+                  )}
+                </div>
+              );
+            })()}
 
             {subtab === "locked" && (
               <div style={s.lockedList}>
@@ -405,6 +445,12 @@ const s = {
     borderRadius: 10, padding: "8px 12px", marginBottom: 14, fontFamily: font.body,
   },
   matchList: { display: "flex", flexDirection: "column", gap: 10 },
+  finishedSection: { display: "flex", flexDirection: "column", gap: 10, marginTop: 6 },
+  finishedLabel: { fontSize: 11, fontWeight: 800, letterSpacing: "0.05em", color: color.textFaint, fontFamily: font.body, textTransform: "uppercase" },
+  finishedToggleBtn: {
+    width: "100%", background: "rgba(255,255,255,0.03)", border: `1px solid ${color.border}`, borderRadius: radius.sm,
+    padding: "10px 0", fontSize: 11.5, fontWeight: 700, color: color.textSecondary, cursor: "pointer", fontFamily: font.body,
+  },
 
   subtabRow: { display: "flex", gap: 8, marginBottom: 16 },
   subtabBtn: {

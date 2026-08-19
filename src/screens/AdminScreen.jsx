@@ -3,6 +3,7 @@ import { listAllSpecialCompetitions, listSpecialPhases, openSpecialPhase, resolv
 import { PICK_TYPES } from "../specialDefinitions";
 import SpecialResolvePicker from "../components/SpecialResolvePicker";
 import useNow from "../hooks/useNow";
+import { getMatchStatus } from "../utils/matchStatus";
 import {
   createSeason,
   listSeasons,
@@ -52,12 +53,19 @@ import { color, font, layout, radius } from "../theme";
 // care au deja rezultat salvat (tot sortate după kickoffAt). Nu inventăm
 // un status "live" — nu există sursă live, doar kickoffAt + existența
 // rezultatului.
+// Prioritate obligatorie pentru tab-ul Rezultate: LIVE/Pauză primele
+// (permanent), apoi programate (cronologic), apoi finalizate — jos. Bug
+// real semnalat: un meci LIVE "se pierdea" mai jos în listă în timpul
+// serii, cât Admin actualiza manual scorurile și avea nevoie să ajungă
+// instant la el. ACEASTA e funcția chiar folosită la randare (linia
+// resultsOrderedMatches = sortForResults(filteredMatches)) — nu una nouă,
+// separată, care ar fi fost calculată degeaba.
+const STATUS_PRIORITY = { live: 0, paused: 0, scheduled: 1, finished: 2, postponed: 1, cancelled: 2 };
 function sortForResults(matches) {
-  const hasResult = (m) => m.realScoreA !== null && m.realScoreA !== undefined;
   return [...matches].sort((a, b) => {
-    const aDone = hasResult(a);
-    const bDone = hasResult(b);
-    if (aDone !== bDone) return aDone ? 1 : -1;
+    const pa = STATUS_PRIORITY[getMatchStatus(a)] ?? 1;
+    const pb = STATUS_PRIORITY[getMatchStatus(b)] ?? 1;
+    if (pa !== pb) return pa - pb;
     return a.kickoffAt.toMillis() - b.kickoffAt.toMillis();
   });
 }

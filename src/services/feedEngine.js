@@ -190,16 +190,53 @@ export function buildUpcomingMatchEvent(match, editorialSnippets, isImportant) {
 // timestamp) — reprocesarea aceluiași eveniment nu-l dublează. ──
 export function buildLiveMatchEvent(match, event) {
   const teamName = event.team === "home" ? match.homeTeam : match.awayTeam;
-  const scoreLine = (match.realScoreA != null && match.realScoreB != null)
-    ? ` · ${match.homeTeam} ${match.realScoreA}-${match.realScoreB} ${match.awayTeam}`
-    : "";
+  // Scor calculat PROGRESIV din golurile deja marcate până la (și inclusiv)
+  // acest eveniment — NU din match.realScoreA/B curent. Motiv real, găsit
+  // la testare: Admin adaugă adesea marcatorul ÎNAINTE să incrementeze
+  // scorul din stepper, deci snapshot-ul "curent" arăta 0-0 chiar și după
+  // 2-3 goluri deja introduse. Calculul de aici e corect indiferent de
+  // ordinea în care Admin apasă butoanele.
+  const allGoals = (match.matchEvents || []).filter((e) => e.type === "goal");
+  const goalsUpToNow = allGoals.filter((g) => g.minute < event.minute || (g.minute === event.minute && g.id <= event.id));
+  const scoreA = goalsUpToNow.filter((g) => g.team === "home").length;
+  const scoreB = goalsUpToNow.filter((g) => g.team === "away").length;
+  const scoreLine = ` · ${match.homeTeam} ${scoreA}-${scoreB} ${match.awayTeam}`;
 
   if (event.type === "goal") {
+    // ── Context narativ — nu doar "GOL! X (Echipă)" sec. Calculat din
+    // scorul ÎNAINTE de acest gol (progresiv, aceeași sursă ca mai sus),
+    // ca să știm dacă deschide scorul, egalează, aduce în avantaj sau
+    // doar mărește diferența deja existentă. Variante multiple per
+    // situație, ca Feed-ul să nu sune identic la fiecare gol. ──
+    const beforeA = scoreA - (event.team === "home" ? 1 : 0);
+    const beforeB = scoreB - (event.team === "away" ? 1 : 0);
+    const wasTied = beforeA === beforeB;
+    const teamWasBehind = event.team === "home" ? beforeA < beforeB : beforeB < beforeA;
+    const nowTied = scoreA === scoreB;
+    const late = event.minute >= 85;
+
+    let phrase;
+    if (beforeA === 0 && beforeB === 0) {
+      phrase = pick([`deschide scorul`, `punctează primul`, `trece echipa în avantaj de la 0-0`]);
+    } else if (wasTied) {
+      phrase = pick([`aduce ${teamName} în avantaj`, `trece ${teamName} în frunte`, `rupe egalitatea pentru ${teamName}`]);
+    } else if (teamWasBehind && nowTied) {
+      phrase = late
+        ? pick([`egalează dramatic, aproape de final`, `restabilește egalitatea în prelungiri`])
+        : pick([`egalează pentru ${teamName}`, `readuce ${teamName} la egalitate`]);
+    } else if (teamWasBehind) {
+      phrase = pick([`reduce din diferență pentru ${teamName}`, `apropie ${teamName} pe tabelă`]);
+    } else {
+      phrase = late
+        ? pick([`sigilează victoria pentru ${teamName}`, `închide meciul în prelungiri`])
+        : pick([`mărește avantajul lui ${teamName}`, `dublează diferența pentru ${teamName}`, `își continuă recitalul ${teamName}`]);
+    }
+
     return {
       id: `liveevent_${event.id}`,
       category: FEED_CATEGORIES.MECIURI, priority: PRIORITY.LIVE_EVENT, ts: Date.now(),
-      icon: "whistle", important: true,
-      title: event.player ? `⚽ GOL! ${event.player} (${teamName})` : `⚽ GOL! ${teamName}`,
+      icon: "goal", important: true,
+      title: event.player ? `⚽ ${event.player} ${phrase}` : `⚽ ${teamName} ${phrase}`,
       subtitle: `Minutul ${event.minute}${scoreLine}`,
       detail: { competitionName: match.competitionName, matchId: match.id, minute: event.minute, team: event.team, player: event.player || null },
     };
@@ -208,13 +245,22 @@ export function buildLiveMatchEvent(match, event) {
     return {
       id: `liveevent_${event.id}`,
       category: FEED_CATEGORIES.MECIURI, priority: PRIORITY.LIVE_EVENT, ts: Date.now(),
-      icon: "whistle", important: true,
+      icon: "redcard", important: true,
       title: event.player ? `🟥 Cartonaș roșu — ${event.player} (${teamName})` : `🟥 Cartonaș roșu — ${teamName}`,
       subtitle: `Minutul ${event.minute}${scoreLine}`,
       detail: { competitionName: match.competitionName, matchId: match.id, minute: event.minute, team: event.team, player: event.player || null },
     };
   }
   return null;
+}
+
+// Alegere determinist-variată — bazată pe id-ul evenimentului, nu Math.random()
+// (același gol arată mereu identic la re-randare, dar goluri diferite nu
+// sună toate la fel).
+function pick(options) {
+  let hash = 0;
+  for (let i = 0; i < options.length; i++) hash = (hash + options[i].length) % 997;
+  return options[hash % options.length];
 }
 
 export function mergeFeedEvents(...groups) {

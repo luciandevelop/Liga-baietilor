@@ -10,6 +10,7 @@ import {
   listGameweeks,
 } from "../services/adminService";
 import { getUserPublicProfiles } from "../services/profilesService";
+import { getAllSurpriseResults } from "../services/surprisesService";
 import PlayerCard from "../components/PlayerCard";
 import PageHeader from "../components/PageHeader";
 import PlayerRankRow from "../components/PlayerRankRow";
@@ -39,6 +40,24 @@ export default function LeaderboardScreen({ onBack, user }) {
   const [gameweek, setGameweek] = useState(null); // etapa curentă SAU ultima finalizată (fallback)
   const [usedFallback, setUsedFallback] = useState(false);
   const [gwRows, setGwRows] = useState([]);
+  const [surprisePointsByUid, setSurprisePointsByUid] = useState({});
+
+  // Puncte din Surprizele Săptămânii pentru ETAPA afișată — DOAR citire
+  // pentru afișare (badge lângă rând), nu atinge deloc totalPoints
+  // stocat în gameweekScores. getAllSurpriseResults întoarce array gol
+  // (nu eroare) dacă nimic nu e încă rezolvat — regula Firestore respinge
+  // interogarea până la primul Resolve, exact ca la predicții/lock.
+  useEffect(() => {
+    if (!gameweek?.id) { setSurprisePointsByUid({}); return; }
+    let cancelled = false;
+    getAllSurpriseResults(gameweek.id).then((results) => {
+      if (cancelled) return;
+      const map = {};
+      results.forEach((r) => { map[r.uid] = (r.mainPoints || 0) + (r.bonusPoints || 0); });
+      setSurprisePointsByUid(map);
+    }).catch(() => { if (!cancelled) setSurprisePointsByUid({}); });
+    return () => { cancelled = true; };
+  }, [gameweek?.id]);
   const [gwLive, setGwLive] = useState(false);
 
   const [seasonRows, setSeasonRows] = useState([]);
@@ -245,6 +264,7 @@ export default function LeaderboardScreen({ onBack, user }) {
                 pointsFromMatches={r.pointsFromMatches}
                 rankingBonus={r.rankingBonus}
                 totalPoints={r.totalPoints}
+                surprisePoints={surprisePointsByUid[r.uid]}
                 top3={r.rank <= 3}
                 showBonus={!gwLive}
                 onClick={() => handleOpenPlayer(r.uid, r.rank)}

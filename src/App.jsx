@@ -11,6 +11,7 @@ import LeaderboardScreen from "./screens/LeaderboardScreen";
 import SpecialsScreen from "./screens/SpecialsScreen";
 import FeedScreen from "./screens/FeedScreen";
 import ProfileScreen from "./screens/ProfileScreen";
+import SurprisesScreen from "./screens/SurprisesScreen";
 import NicknameScreen from "./screens/NicknameScreen";
 import PendingApprovalScreen from "./screens/PendingApprovalScreen";
 
@@ -245,6 +246,10 @@ export default function App() {
     return <FeedScreen onBack={goBack} />;
   }
 
+  if (view === "surprises") {
+    return <SurprisesScreen user={user} onBack={goBack} />;
+  }
+
   if (view === "profile") {
     return (
       <ProfileScreen
@@ -252,6 +257,7 @@ export default function App() {
         profile={profile}
         isAdmin={isAdmin}
         onOpenAdmin={() => navigateTo("admin")}
+        onOpenSurprises={() => navigateTo("surprises")}
         onBack={goBack}
       />
     );
@@ -267,6 +273,7 @@ export default function App() {
       onOpenLeaderboard={() => navigateTo("leaderboard")}
       onOpenSpecials={() => navigateTo("specials")}
       onOpenFeed={() => navigateTo("feed")}
+      onOpenSurprises={() => navigateTo("surprises")}
       onOpenProfile={() => navigateTo("profile")}
     />
   );

@@ -39,13 +39,17 @@ import StatusBadge from "../components/StatusBadge";
 import PlayerRankRow from "../components/PlayerRankRow";
 import EmptyState from "../components/EmptyState";
 import {
-  listRecentEventsForAdmin, listAdminFunItems, addFunItem, deleteFunItem,
+  listRecentEventsForAdmin, listAdminFunItems, addFunItem, deleteFunItem, deleteAllLiveMatchEvents,
 } from "../services/feedService";
 import { EDITORIAL_ARTICLES } from "../feedContent/editorialContent";
 import LiveEventPanel from "../components/LiveEventPanel";
 import {
   listAllUsersWithStatus, approveUser, rejectUser, deactivateUser, reactivateUser,
 } from "../services/adminService";
+import {
+  MAIN_CATALOG, BONUS_CATALOG, getWeeklySurprise, getSecretMain, getSecretBonus,
+  configureSurprise, revealMain, revealBonus, resolveMain, resolveBonus, getSurpriseStatus,
+} from "../services/surprisesService";
 import { color, font, layout, radius } from "../theme";
 
 // Ordonare operațională pentru secțiunea de Rezultate: meciurile FĂRĂ
@@ -81,6 +85,7 @@ const TABS = [
   { id: "live", label: "Live" },
   { id: "featured", label: "Săptămânii" },
   { id: "speciale", label: "Speciale" },
+  { id: "surprises", label: "🎭 Surprize" },
   { id: "feed", label: "Feed" },
   { id: "players", label: "👥 Jucători" },
   { id: "health", label: "Health Check" },
@@ -152,6 +157,60 @@ export default function AdminScreen({ onBack }) {
   const [playersLoading, setPlayersLoading] = useState(false);
   const [playerActionUid, setPlayerActionUid] = useState(""); // uid-ul cu acțiune în curs, pt. disable pe buton
 
+  // ── Surprizele Săptămânii (Admin) ──
+  const [surprisesData, setSurprisesData] = useState({}); // gameweekId -> { public, secretMain, secretBonus }
+  const [surprisesLoading, setSurprisesLoading] = useState(false);
+  const [surpriseActionKey, setSurpriseActionKey] = useState(""); // "{gwId}_{action}" cu acțiune în curs
+
+  useEffect(() => {
+    if (tab !== "surprises" || gameweeks.length === 0) return;
+    setSurprisesLoading(true);
+    Promise.all(gameweeks.map(async (gw) => {
+      const [pub, sm, sb] = await Promise.all([getWeeklySurprise(gw.id), getSecretMain(gw.id), getSecretBonus(gw.id)]);
+      return [gw.id, { public: pub, secretMain: sm, secretBonus: sb }];
+    })).then((entries) => {
+      setSurprisesData(Object.fromEntries(entries));
+    }).finally(() => setSurprisesLoading(false));
+  }, [tab, gameweeks]);
+
+  async function handleConfigureSurprise(gameweekId, field, value) {
+    const key = `${gameweekId}_config`;
+    setSurpriseActionKey(key);
+    try {
+      await configureSurprise(gameweekId, { [field]: value });
+      setSurprisesData((prev) => ({
+        ...prev,
+        [gameweekId]: {
+          ...prev[gameweekId],
+          secretMain: field === "mainType" ? { ...prev[gameweekId]?.secretMain, type: value } : prev[gameweekId]?.secretMain,
+          secretBonus: field === "bonusType" ? { ...prev[gameweekId]?.secretBonus, type: value } : prev[gameweekId]?.secretBonus,
+        },
+      }));
+    } catch (err) {
+      console.error("Eroare la configurare Surpriză:", err);
+    } finally {
+      setSurpriseActionKey("");
+    }
+  }
+
+  async function handleSurpriseAction(gameweekId, action) {
+    const key = `${gameweekId}_${action}`;
+    setSurpriseActionKey(key);
+    try {
+      if (action === "revealMain") await revealMain(gameweekId);
+      else if (action === "revealBonus") await revealBonus(gameweekId);
+      else if (action === "resolveMain") await resolveMain(gameweekId);
+      else if (action === "resolveBonus") await resolveBonus(gameweekId);
+      const [pub, sm, sb] = await Promise.all([getWeeklySurprise(gameweekId), getSecretMain(gameweekId), getSecretBonus(gameweekId)]);
+      setSurprisesData((prev) => ({ ...prev, [gameweekId]: { public: pub, secretMain: sm, secretBonus: sb } }));
+    } catch (err) {
+      console.error(`Eroare la ${action}:`, err);
+      alert(err.message || "Eroare — vezi consola.");
+    } finally {
+      setSurpriseActionKey("");
+    }
+  }
+
   useEffect(() => {
     if (tab !== "players") return;
     setPlayersLoading(true);
@@ -185,6 +244,23 @@ export default function AdminScreen({ onBack }) {
   const [newFunLabel, setNewFunLabel] = useState("");
   const [newFunText, setNewFunText] = useState("");
   const [funSaving, setFunSaving] = useState(false);
+  const [cleaningLiveEvents, setCleaningLiveEvents] = useState(false);
+  const [cleanupMessage, setCleanupMessage] = useState("");
+
+  async function handleCleanupLiveEvents() {
+    setCleaningLiveEvents(true);
+    setCleanupMessage("");
+    try {
+      const count = await deleteAllLiveMatchEvents();
+      setCleanupMessage(count > 0 ? `Șterse ${count} evenimente vechi (goluri/cartonașe).` : "Nu erau evenimente vechi de șters.");
+      setFeedEvents((prev) => prev.filter((e) => !e.id.startsWith("liveevent_")));
+    } catch (err) {
+      console.error("Eroare la curățarea evenimentelor live:", err);
+      setCleanupMessage("Eroare — vezi consola.");
+    } finally {
+      setCleaningLiveEvents(false);
+    }
+  }
 
   useEffect(() => {
     if (tab !== "feed") return;
@@ -1123,10 +1199,103 @@ export default function AdminScreen({ onBack }) {
               </>
             )}
 
+            {/* ── Surprizele Săptămânii ── */}
+            {tab === "surprises" && (
+              <SectionCard title="🎭 Surprizele Săptămânii — configurare pe tot sezonul">
+                <p style={s.hint}>
+                  Alege tipul pentru fiecare etapă din timp — userii NU văd tipul până apeși Dezvăluie.
+                  „(în curând)" = mecanica nu e încă implementată, neselectabilă.
+                </p>
+                {surprisesLoading && <p style={s.hint}>Se încarcă…</p>}
+                {gameweeks.length === 0 && <p style={s.hint}>Niciun sezon/etapă selectate — alege din tab-ul Config.</p>}
+
+                {gameweeks.map((gw) => {
+                  const data = surprisesData[gw.id] || {};
+                  const status = getSurpriseStatus(data.public);
+                  const statusLabel = status === "locked" ? "🔒 BLOCATĂ" : status === "active" ? "⚡ ACTIVĂ" : "✅ REZOLVATĂ";
+                  const mainType = data.secretMain?.type || "";
+                  const bonusType = data.secretBonus?.type || "";
+                  const mainRevealed = !!data.public?.mainRevealed;
+                  const bonusRevealed = !!data.public?.bonusRevealed;
+                  const mainResolved = !!data.public?.mainResolved;
+                  const bonusResolved = !!data.public?.bonusResolved;
+
+                  return (
+                    <div key={gw.id} style={s.surpriseGwCard}>
+                      <div style={s.surpriseGwHead}>
+                        <span style={s.surpriseGwTitle}>{gw.title || `Etapa ${gw.number}`}</span>
+                        <span style={s.surpriseGwStatus}>{statusLabel}</span>
+                      </div>
+
+                      <div style={s.surpriseRow}>
+                        <label style={s.surpriseLabel}>🏆 MAIN</label>
+                        <select
+                          style={s.surpriseSelect}
+                          value={mainType}
+                          disabled={mainRevealed}
+                          onChange={(e) => handleConfigureSurprise(gw.id, "mainType", e.target.value)}
+                        >
+                          <option value="">— alege —</option>
+                          {MAIN_CATALOG.map((c) => (
+                            <option key={c.id} value={c.id} disabled={!c.active}>{c.label}{!c.active ? " (în curând)" : ""}</option>
+                          ))}
+                        </select>
+                        {!mainRevealed ? (
+                          <button type="button" style={s.smallBtn} disabled={!mainType || surpriseActionKey === `${gw.id}_revealMain`}
+                            onClick={() => handleSurpriseAction(gw.id, "revealMain")}>
+                            🏆 Dezvăluie
+                          </button>
+                        ) : !mainResolved ? (
+                          <button type="button" style={s.approveBtn} disabled={surpriseActionKey === `${gw.id}_resolveMain`}
+                            onClick={() => handleSurpriseAction(gw.id, "resolveMain")}>
+                            Rezolvă
+                          </button>
+                        ) : (
+                          <span style={s.doneTag}>✓ gata</span>
+                        )}
+                      </div>
+
+                      <div style={s.surpriseRow}>
+                        <label style={s.surpriseLabel}>🎁 BONUS</label>
+                        <select
+                          style={s.surpriseSelect}
+                          value={bonusType}
+                          disabled={bonusRevealed}
+                          onChange={(e) => handleConfigureSurprise(gw.id, "bonusType", e.target.value)}
+                        >
+                          <option value="">— alege —</option>
+                          {BONUS_CATALOG.map((c) => (
+                            <option key={c.id} value={c.id} disabled={!c.active}>{c.label}{!c.active ? " (în curând)" : ""}</option>
+                          ))}
+                        </select>
+                        {!bonusRevealed ? (
+                          <button type="button" style={s.smallBtn} disabled={!bonusType || surpriseActionKey === `${gw.id}_revealBonus`}
+                            onClick={() => handleSurpriseAction(gw.id, "revealBonus")}>
+                            🎁 Dezvăluie
+                          </button>
+                        ) : !bonusResolved ? (
+                          <button type="button" style={s.approveBtn} disabled={surpriseActionKey === `${gw.id}_resolveBonus`}
+                            onClick={() => handleSurpriseAction(gw.id, "resolveBonus")}>
+                            Rezolvă
+                          </button>
+                        ) : (
+                          <span style={s.doneTag}>✓ gata</span>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </SectionCard>
+            )}
+
             {/* ── Feed — evenimente automate, articole editoriale, FUN ── */}
             {tab === "feed" && (
               <>
                 <SectionCard title="Evenimente recente (automate)">
+                  <button type="button" style={s.smallBtn} disabled={cleaningLiveEvents} onClick={handleCleanupLiveEvents}>
+                    {cleaningLiveEvents ? "Se curăță…" : "🧹 Șterge golurile/cartonașele vechi (text greșit)"}
+                  </button>
+                  {cleanupMessage && <p style={s.hint}>{cleanupMessage}</p>}
                   {feedLoading && <p style={s.hint}>Se încarcă…</p>}
                   {!feedLoading && feedEvents.length === 0 && <p style={s.hint}>Niciun eveniment încă.</p>}
                   <div style={s.feedAdminList}>
@@ -1397,6 +1566,19 @@ const s = {
     display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10,
     background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 8, padding: "10px 12px",
   },
+  surpriseGwCard: {
+    background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 10, padding: 12, marginBottom: 10,
+  },
+  surpriseGwHead: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 },
+  surpriseGwTitle: { fontSize: 12.5, fontWeight: 700, color: "#fff" },
+  surpriseGwStatus: { fontSize: 10.5, fontWeight: 700, color: "#D4AF37" },
+  surpriseRow: { display: "flex", alignItems: "center", gap: 6, marginBottom: 8 },
+  surpriseLabel: { fontSize: 11, fontWeight: 700, color: "#B4BBC7", width: 62, flexShrink: 0 },
+  surpriseSelect: {
+    flex: 1, background: "#12141C", border: "1px solid rgba(255,255,255,0.15)", borderRadius: 6,
+    padding: "8px 6px", fontSize: 11, color: "#fff",
+  },
+  doneTag: { fontSize: 10.5, fontWeight: 700, color: "#8BD957", flexShrink: 0 },
   playerInfo: { minWidth: 0, flex: 1 },
   playerActions: { display: "flex", gap: 6, flexShrink: 0 },
   approveBtn: {

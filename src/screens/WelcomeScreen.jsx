@@ -24,6 +24,7 @@ import FeedCard from "../components/FeedCard";
 import FeedDetailModal from "../components/FeedDetailModal";
 import PredictionsRevealSheet from "../components/PredictionsRevealSheet";
 import LiveMatchDetails from "../components/LiveMatchDetails";
+import { getWeeklySurprise, getSecretMain, getSecretBonus, MAIN_CATALOG, BONUS_CATALOG } from "../services/surprisesService";
 
 const LOCK_MS = 30 * 60 * 1000;
 
@@ -39,7 +40,7 @@ const CTA_LABEL = {
 // Home — Sprint 1 "Home Premium". Aceeași logică de date ca înainte
 // (niciun apel nou către Firestore) — doar experiența Home + navigarea
 // s-au schimbat, cum a fost cerut explicit.
-export default function WelcomeScreen({ user, profile, isAdmin, onOpenAdmin, onOpenPredictions, onOpenLeaderboard, onOpenSpecials, onOpenFeed, onOpenProfile }) {
+export default function WelcomeScreen({ user, profile, isAdmin, onOpenAdmin, onOpenPredictions, onOpenLeaderboard, onOpenSpecials, onOpenFeed, onOpenSurprises, onOpenProfile }) {
   const now = useNow(1000);
   const reduced = usePrefersReducedMotion();
 
@@ -63,6 +64,7 @@ export default function WelcomeScreen({ user, profile, isAdmin, onOpenAdmin, onO
   const [feedTop, setFeedTop] = useState([]);
   const [selectedFeedEvent, setSelectedFeedEvent] = useState(null);
   const [revealMatch, setRevealMatch] = useState(null); // meciul LIVE deschis cu 👁, sau null
+  const [surpriseTeaser, setSurpriseTeaser] = useState(null); // { mainLabel, bonusLabel } | null
   const processedJokersRef = useRef(new Set());
 
   async function refreshFeedTop() {
@@ -187,6 +189,31 @@ export default function WelcomeScreen({ user, profile, isAdmin, onOpenAdmin, onO
       .then(setFreshSeasonPoints)
       .catch((err) => console.error("Eroare la reîmprospătarea punctajului din header:", err));
   }, [user.uid]);
+
+  // Teaser Surprizele Săptămânii — încărcat o dată per etapă, doar
+  // starea publică (revealed/nu) + tipul, DACĂ e deja dezvăluit. Nu e
+  // nimic secret aici — secret/main e oricum inaccesibil înainte de
+  // reveal, la nivel de regulă Firestore, nu doar ascuns în UI.
+  useEffect(() => {
+    if (!gameweek) return;
+    let cancelled = false;
+    (async () => {
+      const pub = await getWeeklySurprise(gameweek.id);
+      if (!pub || cancelled) { if (!cancelled) setSurpriseTeaser(null); return; }
+      const [sm, sb] = await Promise.all([
+        pub.mainRevealed ? getSecretMain(gameweek.id) : null,
+        pub.bonusRevealed ? getSecretBonus(gameweek.id) : null,
+      ]);
+      if (cancelled) return;
+      setSurpriseTeaser({
+        mainRevealed: !!pub.mainRevealed,
+        bonusRevealed: !!pub.bonusRevealed,
+        mainLabel: sm ? (MAIN_CATALOG.find((c) => c.id === sm.type)?.label || sm.type) : null,
+        bonusLabel: sb ? (BONUS_CATALOG.find((c) => c.id === sb.type)?.label || sb.type) : null,
+      });
+    })();
+    return () => { cancelled = true; };
+  }, [gameweek?.id]);
 
   const staticFeedRef = useRef(false);
   useEffect(() => {
@@ -401,6 +428,23 @@ export default function WelcomeScreen({ user, profile, isAdmin, onOpenAdmin, onO
                 {predictedCount >= totalMatches ? "Etapa este completă." : `Mai ai ${totalMatches - predictedCount} meciuri.`}
               </div>
             </PressableCard>
+          )}
+
+          {surpriseTeaser && (
+            <button type="button" style={s.surpriseTeaserRow} onClick={onOpenSurprises}>
+              <span style={s.surpriseTeaserLeft}>🎭 Surpriza Săptămânii</span>
+              <span style={s.surpriseTeaserRight}>
+                {!surpriseTeaser.mainRevealed && !surpriseTeaser.bonusRevealed ? (
+                  "🔒 Două surprize te așteaptă"
+                ) : (
+                  <>
+                    {surpriseTeaser.mainRevealed ? `🏆 ${surpriseTeaser.mainLabel}` : "🏆 🔒"}
+                    {"  ·  "}
+                    {surpriseTeaser.bonusRevealed ? `🎁 ${surpriseTeaser.bonusLabel}` : "🎁 🔒"}
+                  </>
+                )}
+              </span>
+            </button>
           )}
 
           {otherLiveMatches.length > 0 && (
@@ -625,6 +669,14 @@ const s = {
   eyeBtnLabel: { fontSize: 11.5, fontWeight: 700 },
 
   otherLiveSection: { marginBottom: 20 },
+  surpriseTeaserRow: {
+    display: "flex", alignItems: "center", justifyContent: "space-between", width: "100%",
+    background: "linear-gradient(90deg, rgba(212,175,55,0.1), rgba(139,58,138,0.08))",
+    border: "1px solid rgba(212,175,55,0.3)", borderRadius: radius.md, padding: "12px 14px",
+    marginBottom: 16, cursor: "pointer", fontFamily: font.body,
+  },
+  surpriseTeaserLeft: { fontSize: 12, fontWeight: 700, color: color.textPrimary },
+  surpriseTeaserRight: { fontSize: 11.5, fontWeight: 700, color: color.goldLight },
   otherLiveLabel: { fontSize: 11, fontWeight: 800, letterSpacing: "0.05em", color: "#F0555A", marginBottom: 10, fontFamily: font.body },
   otherLiveList: { display: "flex", flexDirection: "column", gap: 10 },
   otherLiveCard: {

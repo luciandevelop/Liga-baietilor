@@ -65,28 +65,47 @@ export default function RouletteExperience({ gameweekId, uid, deadlinePassed, on
 
   return (
     <div style={s.wrap}>
+      <style>{`
+        @keyframes rouletteGlowPulse { 0%,100% { box-shadow: 0 0 30px -4px rgba(212,175,55,0.4); } 50% { box-shadow: 0 0 50px -2px rgba(212,175,55,0.7); } }
+        @keyframes rouletteLightChase { 0% { opacity: 0.3; } 50% { opacity: 1; } 100% { opacity: 0.3; } }
+      `}</style>
       <div style={s.wheelArea}>
         <div style={s.pointer}>▼</div>
+        <div style={s.outerRing}>
+          {Array.from({ length: 24 }).map((_, i) => (
+            <div
+              key={i}
+              style={{
+                ...s.ringDot,
+                transform: `rotate(${i * 15}deg) translateY(-118px)`,
+                animation: `rouletteLightChase 1.6s ease-in-out ${(i % 6) * 0.12}s infinite`,
+              }}
+            />
+          ))}
+        </div>
         <div
           style={{
             ...s.wheel,
+            ...((phase === "decide" || phase === "final") ? { animation: "rouletteGlowPulse 2.2s ease-in-out infinite" } : {}),
             background: `conic-gradient(${WHEEL_ORDER.map((v, i) => `${SEGMENT_COLOR[v]} ${i * SEGMENT_ANGLE}deg ${(i + 1) * SEGMENT_ANGLE}deg`).join(", ")})`,
             transform: `rotate(${rotation}deg)`,
             transition: phase === "spinning" ? "transform 3.2s cubic-bezier(0.15, 0.75, 0.25, 1)" : "none",
           }}
         >
+          <div style={s.glossOverlay} />
           {WHEEL_ORDER.map((v, i) => (
             <div
               key={i}
               style={{
                 ...s.segmentLabel,
-                transform: `rotate(${i * SEGMENT_ANGLE + SEGMENT_ANGLE / 2}deg) translateY(-88px)`,
+                transform: `rotate(${i * SEGMENT_ANGLE + SEGMENT_ANGLE / 2}deg) translateY(-102px)`,
               }}
             >
               {v}
             </div>
           ))}
         </div>
+        <div style={s.centerHub}>🎰</div>
       </div>
 
       {phase === "ready" && !deadlinePassed && (
@@ -137,11 +156,27 @@ const s = {
     border: "1px solid rgba(212,175,55,0.3)", borderRadius: radius.lg, padding: "20px 16px",
     display: "flex", flexDirection: "column", alignItems: "center",
   },
-  wheelArea: { position: "relative", width: 200, height: 200, marginBottom: 18 },
-  pointer: { position: "absolute", top: -6, left: "50%", transform: "translateX(-50%)", fontSize: 22, color: "#D4AF37", zIndex: 2, filter: "drop-shadow(0 0 4px rgba(212,175,55,0.8))" },
+  wheelArea: { position: "relative", width: 260, height: 260, marginBottom: 18, display: "flex", alignItems: "center", justifyContent: "center" },
+  pointer: { position: "absolute", top: 4, left: "50%", transform: "translateX(-50%)", fontSize: 24, color: "#D4AF37", zIndex: 3, filter: "drop-shadow(0 0 6px rgba(212,175,55,0.9))" },
+  outerRing: { position: "absolute", top: "50%", left: "50%", width: 0, height: 0 },
+  ringDot: {
+    position: "absolute", top: 0, left: 0, width: 5, height: 5, marginLeft: -2.5, marginTop: -2.5,
+    borderRadius: "50%", background: "#D4AF37", boxShadow: "0 0 6px 1px rgba(212,175,55,0.8)",
+  },
   wheel: {
-    width: 200, height: 200, borderRadius: "50%", position: "relative",
-    border: "3px solid rgba(212,175,55,0.5)", boxShadow: "0 0 30px -6px rgba(212,175,55,0.4)",
+    position: "relative", width: 216, height: 216, borderRadius: "50%",
+    border: "4px solid rgba(212,175,55,0.55)", boxShadow: "0 0 30px -4px rgba(212,175,55,0.4), inset 0 2px 6px rgba(0,0,0,0.4)",
+    zIndex: 1,
+  },
+  glossOverlay: {
+    position: "absolute", inset: 0, borderRadius: "50%", pointerEvents: "none",
+    background: "linear-gradient(160deg, rgba(255,255,255,0.22) 0%, rgba(255,255,255,0.02) 35%, transparent 55%)",
+  },
+  centerHub: {
+    position: "absolute", top: "50%", left: "50%", transform: "translate(-50%, -50%)", zIndex: 2,
+    width: 46, height: 46, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center",
+    background: "radial-gradient(circle, #2A2110, #12141C)", border: "2px solid rgba(212,175,55,0.6)",
+    fontSize: 18, boxShadow: "0 0 14px -2px rgba(212,175,55,0.6)",
   },
   segmentLabel: {
     position: "absolute", top: "50%", left: "50%", width: 24, height: 24, marginLeft: -12, marginTop: -12,

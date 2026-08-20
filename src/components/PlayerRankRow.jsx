@@ -3,7 +3,7 @@ import PlayerAvatar from "./PlayerAvatar";
 
 const MEDAL = { 1: "🥇", 2: "🥈", 3: "🥉" };
 
-export default function PlayerRankRow({ rank, nickname, avatarId, pointsFromMatches, rankingBonus, totalPoints, onClick, top3, showBonus = true }) {
+export default function PlayerRankRow({ rank, nickname, avatarId, pointsFromMatches, rankingBonus, totalPoints, surprisePoints, onClick, top3, showBonus = true }) {
   // Când etapa e activă (showBonus=false), "punctele reale" sunt DOAR cele
   // din meciuri — bonusul de poziție nu există încă vizual, nu doar
   // ascuns ca cifră separată în timp ce totalul îl include pe ascuns.
@@ -27,6 +27,9 @@ export default function PlayerRankRow({ rank, nickname, avatarId, pointsFromMatc
         <span style={{ ...s.bonus, color: rankingBonus >= 0 ? color.green : color.red }}>
           {rankingBonus >= 0 ? "+" : ""}{rankingBonus}p
         </span>
+      )}
+      {surprisePoints !== undefined && surprisePoints > 0 && (
+        <span style={s.surpriseBadge}>🎭 +{surprisePoints}p</span>
       )}
       <span style={s.total}>{displayTotal}p</span>
     </button>
@@ -58,6 +61,10 @@ const s = {
   },
   pts: { fontSize: 11.5, color: color.textMuted, flexShrink: 0 },
   bonus: { fontSize: 11.5, fontWeight: 700, flexShrink: 0, width: 44, textAlign: "right" },
+  surpriseBadge: {
+    fontSize: 10, fontWeight: 800, color: "#D4AF37", flexShrink: 0,
+    background: "rgba(212,175,55,0.12)", border: "1px solid rgba(212,175,55,0.35)", borderRadius: 999, padding: "2px 6px",
+  },
   total: {
     fontSize: 14.5, fontWeight: 700, color: color.goldLight, flexShrink: 0, width: 54,
     textAlign: "right", fontFamily: font.display,

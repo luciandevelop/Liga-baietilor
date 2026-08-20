@@ -30,6 +30,17 @@ export async function listLiveFeedEvents({ max = 150 } = {}) {
   return snap.docs.map((d) => d.data());
 }
 
+// ── Curățare țintită — DOAR evenimentele "liveevent_" (goluri/cartonașe
+// roșii), scrise cu textul vechi înainte de reparație. Nu atinge nimic
+// altceva din Feed (clasament, rezultate finale, Jokeri, FUN) — golurile
+// viitoare se rescriu automat, corect, la următorul eveniment real.
+export async function deleteAllLiveMatchEvents() {
+  const snap = await getDocs(collection(db, "feedEvents"));
+  const staleIds = snap.docs.map((d) => d.id).filter((id) => id.startsWith("liveevent_"));
+  await Promise.all(staleIds.map((id) => deleteDoc(doc(db, "feedEvents", id))));
+  return staleIds.length;
+}
+
 // ── Schimbări de clasament — PERSISTENTE, într-o tranzacție (vezi
 // comentariul din versiunea anterioară — neschimbat aici, era deja
 // corect). ──

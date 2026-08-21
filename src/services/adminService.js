@@ -1397,12 +1397,26 @@ export async function getLiveGameweekPoints(gameweekId) {
     predictionsByUserAndMatch[`${p.matchId}_${p.userId}`] = p;
   });
 
-  const jokerSnap = await getDocs(query(collection(db, "jokers"), where("gameweekId", "==", gameweekId)));
-  const jokerMatchByUser = {};
-  jokerSnap.docs.forEach((d) => {
-    const j = d.data();
-    jokerMatchByUser[j.userId] = j.matchId;
-  });
+  // BUG CRITIC REPARAT: userii OBIȘNUIȚI pot citi DOAR propriul Joker
+  // (regula Firestore) — un query pe TOATE jokerele etapei era respins
+  // COMPLET pentru orice user care nu e Admin, iar eroarea oprea tot
+  // calculul, lăsând Clasamentul permanent gol pentru toată lumea în
+  // afară de Admin (exact simptomul semnalat: prietenul, logat cu email,
+  // vedea mereu "nu are rezultate", nu doar o clipă). Acum: dacă
+  // interogarea eșuează (user obișnuit), continuăm FĂRĂ informația de
+  // Joker — restul calculului (scorul din meciuri) rămâne corect, doar
+  // bonusul ×2 de Joker nu se aplică în acest caz degradat.
+  let jokerMatchByUser = {};
+  try {
+    const jokerSnap = await getDocs(query(collection(db, "jokers"), where("gameweekId", "==", gameweekId)));
+    jokerSnap.docs.forEach((d) => {
+      const j = d.data();
+      jokerMatchByUser[j.userId] = j.matchId;
+    });
+  } catch (err) {
+    // Normal pentru useri ne-Admin — regula Firestore respinge query-ul
+    // pe toate jokerele, nu doar pe al propriu. Nu e o eroare reală.
+  }
 
   const pointsByUid = {};
   const breakdownByUid = {};

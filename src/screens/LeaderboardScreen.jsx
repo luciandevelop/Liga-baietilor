@@ -4,7 +4,7 @@ import {
   listGameweekScores,
   listSeasonLeaderboard,
   listGeneralLeaderboard,
-  listenLiveGameweekScores,
+  getLiveGameweekPoints,
   getLastCompletedGameweek,
   getPlayerCardStats,
   listGameweeks,
@@ -132,18 +132,43 @@ export default function LeaderboardScreen({ onBack, user }) {
     })();
   }, [user?.uid]);
 
-  // Clasament LIVE — doar dacă etapa "curentă" (nu fallback) e chiar
-  // în desfășurare, nu deja finalizată.
+  // Clasament LIVE — sursă unică (getLiveGameweekPoints), STRICT meciuri,
+  // NICIODATĂ bonus de poziție. BUG P0 REPARAT: înainte citea din
+  // gameweekLiveScores, o colecție publicată MANUAL din Admin (bonus deja
+  // inclus acolo, plus rămânea învechită dacă Admin uita să republice după
+  // orice schimbare de scor) — asta producea EXACT genul de discrepanță
+  // semnalată (Clasament ≠ Player Card pentru același user, în același
+  // moment). Acum: calculat proaspăt de fiecare dată, nimic "publicat",
+  // nimic de uitat.
   useEffect(() => {
     if (!gameweek || gameweek.status === "completed") return;
     setGwLive(true);
-    const unsubscribe = listenLiveGameweekScores(gameweek.id, async (rawRows) => {
-      const rows = rawRows.map(normalizeRow);
-      setGwRows(rows);
-      const names = await getUserPublicProfiles(rows.map((r) => r.uid));
-      setProfiles((prev) => ({ ...prev, ...names }));
-    });
-    return unsubscribe;
+    let cancelled = false;
+
+    async function refresh() {
+      try {
+        const { pointsByUid } = await getLiveGameweekPoints(gameweek.id);
+        if (cancelled) return;
+        const rows = Object.entries(pointsByUid).map(([uid, pts]) => ({
+          uid, pointsFromMatches: pts, rankingBonus: undefined, totalPoints: pts, rank: null,
+        }));
+        rows.sort((a, b) => b.pointsFromMatches - a.pointsFromMatches);
+        let rank = 0, prevPts = null;
+        rows.forEach((r, i) => {
+          if (prevPts === null || r.pointsFromMatches !== prevPts) { rank = i + 1; prevPts = r.pointsFromMatches; }
+          r.rank = rank;
+        });
+        setGwRows(rows);
+        const names = await getUserPublicProfiles(rows.map((r) => r.uid));
+        if (!cancelled) setProfiles((prev) => ({ ...prev, ...names }));
+      } catch (err) {
+        console.error("Eroare la calculul live al etapei:", err);
+      }
+    }
+
+    refresh();
+    const interval = setInterval(refresh, 30000); // reîmprospătare periodică — nu onSnapshot (calcul multi-query, nu un singur query)
+    return () => { cancelled = true; clearInterval(interval); };
   }, [gameweek?.id, gameweek?.status]);
 
   // Un singur card, indiferent din ce tab a fost apăsat — aceleași

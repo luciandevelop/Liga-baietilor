@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { getCurrentSeason, getCurrentGameweek } from "../services/predictionsService";
-import { listenLiveGameweekScores } from "../services/adminService";
+import { getLiveGameweekPoints } from "../services/adminService";
 import { getUserPublicProfiles } from "../services/profilesService";
 import {
   getWeeklySurprise, getSecretMain, getSecretBonus, getSurpriseResult, getAllSurpriseResults,
@@ -31,7 +31,6 @@ export default function SurprisesScreen({ user, onBack }) {
   const [allResults, setAllResults] = useState(null); // null = nu s-a incarcat / nu-i inca vizibil
 
   useEffect(() => {
-    let unsubScores = null;
     (async () => {
       setLoading(true);
       const s = await getCurrentSeason();
@@ -58,11 +57,13 @@ export default function SurprisesScreen({ user, onBack }) {
           getUserPublicProfiles(uids).then(setProfiles);
         }
 
-        unsubScores = listenLiveGameweekScores(gw.id, (rows) => {
-          const map = {};
-          rows.forEach((r) => { map[r.userId] = r.totalPoints || 0; });
-          setLiveScores(map);
-        });
+        // Sursă unică (getLiveGameweekPoints) — BUG CRITIC REPARAT aici:
+        // înainte citea gameweekLiveScores (colecție publicată manual,
+        // deja contaminată cu bonus de poziție și valori negative de la
+        // ultimele locuri) — exact cauza "haosului" de punctaje raportat
+        // la Duel (1056p, -100p etc.). Acum: STRICT meciuri FINAL, aceeași
+        // cifră ca în Clasament → Etapă, niciodată negativă.
+        getLiveGameweekPoints(gw.id).then(({ pointsByUid }) => setLiveScores(pointsByUid));
 
         // Rezultatele TUTUROR — vizibile abia după primul Resolve (regula
         // Firestore respinge interogarea altfel, nu doar o ascunde în UI).
@@ -75,8 +76,6 @@ export default function SurprisesScreen({ user, onBack }) {
       setHistory(hist);
       setLoading(false);
     })();
-
-    return () => { if (unsubScores) unsubScores(); };
   }, [user.uid]);
 
   const status = getSurpriseStatus(pub);

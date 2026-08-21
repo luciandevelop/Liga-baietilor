@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { getCurrentSeason, getCurrentGameweek } from "../services/predictionsService";
+import { computeRankingBonuses } from "../services/scoringEngine";
 import {
   listGameweekScores,
   listSeasonLeaderboard,
@@ -59,6 +60,12 @@ export default function LeaderboardScreen({ onBack, user }) {
     return () => { cancelled = true; };
   }, [gameweek?.id]);
   const [gwLive, setGwLive] = useState(false);
+  // Stare SEPARATĂ pentru fetch-ul live de puncte — BUG REPARAT: "loading"
+  // principal devenea false ÎNAINTE ca acest efect (independent) să termine,
+  // deci gwRows era încă gol pentru o fracțiune de secundă -> mesajul
+  // "nu are rezultate" apărea în fugă, apoi se înlocuia cu datele reale.
+  // Acum, mesajul de gol se arată DOAR dacă și acest fetch s-a terminat.
+  const [liveRowsLoading, setLiveRowsLoading] = useState(false);
 
   const [seasonRows, setSeasonRows] = useState([]);
   const [generalRows, setGeneralRows] = useState([]);
@@ -143,9 +150,10 @@ export default function LeaderboardScreen({ onBack, user }) {
   useEffect(() => {
     if (!gameweek || gameweek.status === "completed") return;
     setGwLive(true);
+    setLiveRowsLoading(true);
     let cancelled = false;
 
-    async function refresh() {
+    async function refresh(isFirst) {
       try {
         const { pointsByUid } = await getLiveGameweekPoints(gameweek.id);
         if (cancelled) return;
@@ -163,11 +171,13 @@ export default function LeaderboardScreen({ onBack, user }) {
         if (!cancelled) setProfiles((prev) => ({ ...prev, ...names }));
       } catch (err) {
         console.error("Eroare la calculul live al etapei:", err);
+      } finally {
+        if (isFirst && !cancelled) setLiveRowsLoading(false);
       }
     }
 
-    refresh();
-    const interval = setInterval(refresh, 30000); // reîmprospătare periodică — nu onSnapshot (calcul multi-query, nu un singur query)
+    refresh(true);
+    const interval = setInterval(() => refresh(false), 30000); // reîmprospătare periodică — nu onSnapshot (calcul multi-query, nu un singur query)
     return () => { cancelled = true; clearInterval(interval); };
   }, [gameweek?.id, gameweek?.status]);
 
@@ -268,7 +278,8 @@ export default function LeaderboardScreen({ onBack, user }) {
         {!loading && !error && tab === "gameweek" && (
           <div style={s.list}>
             {!gameweek && <EmptyState icon="📅" title="Încă nu există nicio etapă." />}
-            {gameweek && gwRows.length === 0 && (
+            {gameweek && gwLive && liveRowsLoading && <div style={s.centerBox}>Se încarcă…</div>}
+            {gameweek && gwRows.length === 0 && !(gwLive && liveRowsLoading) && (
               <EmptyState icon="🏆" title={`Etapa "${gameweek.title}" nu are încă rezultate introduse.`} />
             )}
             {gameweek && gwRows.length > 0 && (
@@ -280,21 +291,30 @@ export default function LeaderboardScreen({ onBack, user }) {
                 )}
               </div>
             )}
-            {gwRows.map((r) => (
-              <PlayerRankRow
-                key={r.uid}
-                rank={r.rank}
-                nickname={profiles[r.uid]?.nickname || r.uid}
-                avatarId={profiles[r.uid]?.avatarId}
-                pointsFromMatches={r.pointsFromMatches}
-                rankingBonus={r.rankingBonus}
-                totalPoints={r.totalPoints}
-                surprisePoints={surprisePointsByUid[r.uid]}
-                top3={r.rank <= 3}
-                showBonus={!gwLive}
-                onClick={() => handleOpenPlayer(r.uid, r.rank)}
-              />
-            ))}
+            {/* Preview bonus poziție — DOAR informativ, calculat client-side,
+                pur (nu scrie nimic) — "dacă etapa s-ar încheia acum". */}
+            {(() => {
+              var previewBonusByUid = {};
+              if (gwLive && gwRows.length > 0) {
+                computeRankingBonuses(gwRows).forEach((r) => { previewBonusByUid[r.uid] = r.rankingBonus; });
+              }
+              return gwRows.map((r) => (
+                <PlayerRankRow
+                  key={r.uid}
+                  rank={r.rank}
+                  nickname={profiles[r.uid]?.nickname || r.uid}
+                  avatarId={profiles[r.uid]?.avatarId}
+                  pointsFromMatches={r.pointsFromMatches}
+                  rankingBonus={r.rankingBonus}
+                  totalPoints={r.totalPoints}
+                  surprisePoints={surprisePointsByUid[r.uid]}
+                  previewBonus={gwLive ? previewBonusByUid[r.uid] : undefined}
+                  top3={r.rank <= 3}
+                  showBonus={!gwLive}
+                  onClick={() => handleOpenPlayer(r.uid, r.rank)}
+                />
+              ));
+            })()}
 
             {pastGameweeks.length > 0 && (
               <div style={s.pastSection}>

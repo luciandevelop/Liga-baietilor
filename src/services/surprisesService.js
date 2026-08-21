@@ -267,6 +267,26 @@ export async function getRouletteSpin(gameweekId, uid, spinNumber) {
   }
 }
 
+// ── Starea LIVE a Ruletei, pentru TOȚI jucătorii activi — nu așteaptă
+// Resolve. Fiecare persoană: "nu a învârtit încă" / "a păstrat Xp" /
+// "a rerulat, final Yp" — exact regula reală (spin2 dacă există, altfel
+// spin1). Citește direct, cu regula Firestore relaxată (orice user
+// autentificat, DUPĂ ce Bonusul a fost dezvăluit) — cerută explicit
+// pentru transparență totală, "să nu existe discuții".
+export async function getAllRouletteSpinsStatus(gameweekId) {
+  const activeUids = [...(await listActiveUserIds())];
+  const rows = await Promise.all(activeUids.map(async (uid) => {
+    const [s1, s2] = await Promise.all([
+      getRouletteSpin(gameweekId, uid, 1),
+      getRouletteSpin(gameweekId, uid, 2),
+    ]);
+    if (s2) return { uid, status: "final-after-reroll", value: s2.value };
+    if (s1) return { uid, status: "kept-first", value: s1.value };
+    return { uid, status: "not-spun", value: null };
+  }));
+  return rows;
+}
+
 export async function submitRouletteSpin(gameweekId, uid, spinNumber) {
   const value = ROULETTE_SEGMENTS[Math.floor(Math.random() * ROULETTE_SEGMENTS.length)];
   const ref = doc(db, "weeklySurprises", gameweekId, "rouletteSpins", `${spinNumber}_${uid}`);

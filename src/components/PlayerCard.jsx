@@ -192,6 +192,41 @@ export default function PlayerCard({ uid, nickname, avatarId, rank, stats, onClo
                   <div style={s.liveNote}>Etapa curentă încă nu e finalizată — punctajul e provizoriu, se recalculează la fiecare meci încheiat.</div>
                 )}
 
+                {stats.etapaIsCompleted && (
+                  <div style={s.summaryBox}>
+                    <div style={s.summaryLabel}>REZUMAT ETAPĂ</div>
+                    <div style={s.summaryRow}>
+                      <span>⚽ Pronosticuri meciuri</span>
+                      <span style={s.summaryVal}>{stats.etapaMatchPoints ?? 0}p</span>
+                    </div>
+                    {stats.etapaRankingBonus != null && stats.etapaRankingBonus !== 0 && (
+                      <div style={s.summaryRow}>
+                        <span>🟢 Bonus etapă</span>
+                        <span style={s.summaryVal}>{stats.etapaRankingBonus > 0 ? "+" : ""}{stats.etapaRankingBonus}p</span>
+                      </div>
+                    )}
+                    {stats.etapaMainSurprisePoints != null && (
+                      <div style={s.summaryRow}>
+                        <span>🏆 Surpriza Principală</span>
+                        <span style={s.summaryVal}>{stats.etapaMainSurprisePoints > 0 ? "+" : ""}{stats.etapaMainSurprisePoints}p</span>
+                      </div>
+                    )}
+                    {stats.etapaBonusSurprisePoints != null && (
+                      <div style={s.summaryRow}>
+                        <span>🎰 Bonusul Săptămânii</span>
+                        <span style={s.summaryVal}>{stats.etapaBonusSurprisePoints > 0 ? "+" : ""}{stats.etapaBonusSurprisePoints}p</span>
+                      </div>
+                    )}
+                    <div style={s.summaryDivider} />
+                    <div style={s.summaryTotalRow}>
+                      <span>TOTAL ETAPĂ</span>
+                      <span style={s.summaryTotalVal}>
+                        {(stats.etapaMatchPoints || 0) + (stats.etapaRankingBonus || 0) + (stats.etapaMainSurprisePoints || 0) + (stats.etapaBonusSurprisePoints || 0)}p
+                      </span>
+                    </div>
+                  </div>
+                )}
+
                 <div style={s.realStatsList}>
                   <StatRow label="Scoruri exacte" value={stats.exactScores} accent={series.secondary} />
                   <StatRow label="Procent pronosticuri corecte" value={`${stats.correctPct}%`} accent={series.secondary} />
@@ -454,6 +489,24 @@ const s = {
   liveNote: {
     fontSize: 9, color: color.textFaint, textAlign: "center", padding: "0 16px", marginBottom: 8, lineHeight: 1.4,
   },
+  summaryBox: {
+    margin: "0 16px 12px", padding: "10px 12px", background: "rgba(255,255,255,0.04)",
+    border: "1px solid rgba(255,255,255,0.1)", borderRadius: 10,
+  },
+  summaryLabel: {
+    fontSize: 9, fontWeight: 800, letterSpacing: "0.05em", color: "rgba(255,255,255,0.5)", marginBottom: 6,
+  },
+  summaryRow: {
+    display: "flex", justifyContent: "space-between", fontSize: 11, color: "rgba(255,255,255,0.85)",
+    padding: "3px 0", fontFamily: font.body,
+  },
+  summaryVal: { fontWeight: 700, color: "#fff" },
+  summaryDivider: { height: 1, background: "rgba(255,255,255,0.15)", margin: "6px 0" },
+  summaryTotalRow: {
+    display: "flex", justifyContent: "space-between", fontSize: 12.5, fontWeight: 800, color: "#fff",
+    fontFamily: font.display,
+  },
+  summaryTotalVal: { fontWeight: 800 },
   realStatsList: { padding: "0 16px", display: "flex", flexDirection: "column", gap: 2 },
   statRow: {
     display: "flex", justifyContent: "space-between", alignItems: "center",

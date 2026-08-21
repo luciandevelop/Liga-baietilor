@@ -4,7 +4,7 @@ import { getLiveGameweekPoints } from "../services/adminService";
 import { getUserPublicProfiles } from "../services/profilesService";
 import {
   getWeeklySurprise, getSecretMain, getSecretBonus, getSurpriseResult, getAllSurpriseResults,
-  listSeasonSurprises, getSurpriseStatus, MAIN_CATALOG, BONUS_CATALOG,
+  listSeasonSurprises, getSurpriseStatus, MAIN_CATALOG, BONUS_CATALOG, getAllRouletteSpinsStatus,
 } from "../services/surprisesService";
 import PageHeader from "../components/PageHeader";
 import PlayerAvatar from "../components/PlayerAvatar";
@@ -29,6 +29,7 @@ export default function SurprisesScreen({ user, onBack }) {
   const [liveScores, setLiveScores] = useState({});
   const [history, setHistory] = useState([]);
   const [allResults, setAllResults] = useState(null); // null = nu s-a incarcat / nu-i inca vizibil
+  const [spinTick, setSpinTick] = useState(0); // forteaza reimprospatarea listei live de rotiri
 
   useEffect(() => {
     (async () => {
@@ -168,12 +169,18 @@ export default function SurprisesScreen({ user, onBack }) {
                 <>
                   <div style={s.revealedTypeLabel}>{catalogLabel(BONUS_CATALOG, secretBonus?.type)}</div>
                   {secretBonus?.type === "roulette" && (
-                    <RouletteExperience
-                      gameweekId={gameweek.id}
-                      uid={user.uid}
-                      deadlinePassed={deadlinePassed}
-                      onResolvedChange={() => getSurpriseResult(gameweek.id, user.uid).then(setMyResult)}
-                    />
+                    <>
+                      <RouletteExperience
+                        gameweekId={gameweek.id}
+                        uid={user.uid}
+                        deadlinePassed={deadlinePassed}
+                        onResolvedChange={() => {
+                          getSurpriseResult(gameweek.id, user.uid).then(setMyResult);
+                          setSpinTick((t) => t + 1);
+                        }}
+                      />
+                      <RouletteLiveList gameweekId={gameweek.id} profiles={profiles} myUid={user.uid} refreshKey={spinTick} />
+                    </>
                   )}
                 </>
               )}
@@ -222,6 +229,40 @@ export default function SurprisesScreen({ user, onBack }) {
   );
 }
 
+// ── Lista LIVE cu cine a învârtit și ce a păstrat — nu așteaptă Resolve.
+// Cerută explicit pentru transparență totală: "să nu existe discuții".
+// Reîmprospătare periodică (nu onSnapshot — sunt mai multe query-uri
+// combinate, nu unul singur ușor de urmărit live). ──
+function RouletteLiveList({ gameweekId, profiles, myUid, refreshKey }) {
+  const [rows, setRows] = useState([]);
+
+  useEffect(() => {
+    let cancelled = false;
+    function load() {
+      getAllRouletteSpinsStatus(gameweekId).then((r) => { if (!cancelled) setRows(r); }).catch(() => {});
+    }
+    load();
+    const interval = setInterval(load, 15000);
+    return () => { cancelled = true; clearInterval(interval); };
+  }, [gameweekId, refreshKey]);
+
+  if (rows.length === 0) return null;
+
+  return (
+    <div style={s.rouletteLiveList}>
+      <div style={s.rouletteLiveLabel}>Cine a învârtit</div>
+      {rows.map((r) => (
+        <div key={r.uid} style={{ ...s.rouletteLiveRow, ...(r.uid === myUid ? s.rouletteLiveRowMe : {}) }}>
+          <span style={s.rouletteLiveName}>{profiles[r.uid]?.nickname || r.uid}{r.uid === myUid ? " (tu)" : ""}</span>
+          {r.status === "not-spun" && <span style={s.rouletteLivePending}>încă n-a învârtit</span>}
+          {r.status === "kept-first" && <span style={s.rouletteLiveValue}>{r.value}p</span>}
+          {r.status === "final-after-reroll" && <span style={s.rouletteLiveValue}>{r.value}p <span style={s.rouletteLiveTag}>după reroll</span></span>}
+        </div>
+      ))}
+    </div>
+  );
+}
+
 const s = {
   page: { minHeight: "100vh", background: color.bg },
   wrap: { maxWidth: 480, margin: "0 auto", padding: "0 16px 32px" },
@@ -262,4 +303,16 @@ const s = {
   historyTitle: { fontSize: 12.5, fontWeight: 700, color: color.textPrimary, fontFamily: font.body, marginBottom: 4 },
   historyLine: { fontSize: 11, color: color.textSecondary, fontFamily: font.body, display: "flex", alignItems: "center", justifyContent: "space-between" },
   historyStatusTag: { fontSize: 10, fontWeight: 700, color: color.textFaint },
+
+  rouletteLiveList: { marginTop: 14, display: "flex", flexDirection: "column", gap: 6 },
+  rouletteLiveLabel: { fontSize: 10, fontWeight: 800, letterSpacing: "0.05em", color: color.textFaint, fontFamily: font.body, textTransform: "uppercase", marginBottom: 2 },
+  rouletteLiveRow: {
+    display: "flex", alignItems: "center", justifyContent: "space-between", padding: "7px 10px",
+    background: "rgba(255,255,255,0.03)", border: `1px solid ${color.border}`, borderRadius: radius.sm,
+  },
+  rouletteLiveRowMe: { border: "1px solid rgba(212,175,55,0.4)", background: "rgba(212,175,55,0.06)" },
+  rouletteLiveName: { fontSize: 11.5, fontWeight: 700, color: color.textPrimary, fontFamily: font.body },
+  rouletteLivePending: { fontSize: 10.5, color: color.textFaint, fontFamily: font.body, fontStyle: "italic" },
+  rouletteLiveValue: { fontSize: 12, fontWeight: 800, color: color.goldLight, fontFamily: font.body },
+  rouletteLiveTag: { fontSize: 9, fontWeight: 700, color: color.textFaint, marginLeft: 4 },
 };

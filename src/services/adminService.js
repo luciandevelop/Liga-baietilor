@@ -1372,7 +1372,20 @@ export async function getLiveGameweekPoints(gameweekId) {
 
   const matches = await listMatches(gameweekId);
   const completedMatches = matches.filter((m) => isMatchFinal(m));
-  if (completedMatches.length === 0) return { pointsByUid: {}, breakdownByUid: {} };
+  const activeUids = await listActiveUserIds();
+
+  if (completedMatches.length === 0) {
+    // BUG REPARAT: înainte întorcea obiect COMPLET GOL aici — Clasamentul
+    // interpreta asta ca "nu există nimeni", nu "toată lumea e la 0p",
+    // și arăta ecranul gol "nu are încă rezultate introduse" chiar și
+    // pentru o etapă activă, cu jucători, doar că încă niciun meci nu
+    // devenise "Final" (regulă strictă, corectă — dar trebuie tot să
+    // apară lista, la 0p, nu nimic). Acum: fiecare user activ apare
+    // explicit, la 0.
+    const emptyPoints = {}, emptyBreakdown = {};
+    activeUids.forEach((uid) => { emptyPoints[uid] = 0; emptyBreakdown[uid] = {}; });
+    return { pointsByUid: emptyPoints, breakdownByUid: emptyBreakdown };
+  }
 
   const allPredictions = [];
   for (const match of completedMatches) {
@@ -1391,7 +1404,6 @@ export async function getLiveGameweekPoints(gameweekId) {
     jokerMatchByUser[j.userId] = j.matchId;
   });
 
-  const activeUids = await listActiveUserIds();
   const pointsByUid = {};
   const breakdownByUid = {};
   activeUids.forEach((uid) => { pointsByUid[uid] = 0; breakdownByUid[uid] = {}; });

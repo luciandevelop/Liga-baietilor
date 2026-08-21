@@ -1,6 +1,6 @@
 import { collection, doc, getDoc, getDocs, setDoc, runTransaction, serverTimestamp } from "firebase/firestore";
 import { db } from "../firebase";
-import { listActiveUserIds, listGameweekScores, listGameweeks } from "./adminService";
+import { listActiveUserIds, listGameweeks, getLiveGameweekPoints, isGameweekReadyToResolve } from "./adminService";
 
 // ══════════════════════════════════════════════════════════════════
 // CATALOG — un singur loc, reutilizat de Admin (configurare) și de UI
@@ -155,7 +155,7 @@ export async function revealBonus(gameweekId) {
   });
 }
 
-// ── RESOLVE MAIN (Duel) — compară punctele DIN ETAPĂ (listGameweekScores,
+// ── RESOLVE MAIN (Duel) — compară punctele DIN ETAPĂ (getLiveGameweekPoints,
 // nu seasonPoints), scrie rezultatele + incrementează seasonPoints, totul
 // într-o singură tranzacție. Read-before-write respectat strict (toate
 // citirile înaintea oricărei scrieri, cerință reală a SDK-ului Firestore
@@ -164,9 +164,24 @@ export async function resolveMain(gameweekId) {
   const publicRef = doc(db, "weeklySurprises", gameweekId);
   const secretRef = doc(db, "weeklySurprises", gameweekId, "secret", "main");
 
-  const gwScores = await listGameweekScores(gameweekId);
-  const scoreByUid = {};
-  gwScores.forEach((r) => { scoreByUid[r.userId] = r.totalPoints || 0; });
+  // GARDĂ CRITICĂ — refuz explicit dacă mai există meciuri în desfășurare.
+  // BUG REAL, GĂSIT: înainte, Resolve putea fi apelat oricând, chiar cu
+  // etapa doar parțial jucată — WIN/LOSE se fixa pe scoruri PROVIZORII,
+  // care puteau deveni greșite pe măsură ce restul meciurilor se termină
+  // (exemplu concret semnalat: AdiReal 240 vs Sexu 180 la jumătatea
+  // etapei → Resolve prematur → AdiReal WIN — dar la final Sexu ajunge
+  // 350 vs 280, câștigătorul REAL era altul). Acum: Resolve refuză
+  // explicit, nu doar "sperăm că Admin apasă la momentul potrivit".
+  const ready = await isGameweekReadyToResolve(gameweekId);
+  if (!ready) throw new Error("Nu poți rezolva Duelul — mai există meciuri care nu s-au încheiat încă (Programat/Live/Pauză).");
+
+  // Sursă unică (getLiveGameweekPoints, adminService) — STRICT meciuri
+  // FINAL ale etapei curente, aceeași cifră ca în Clasament → Etapă.
+  // BUG REPARAT: înainte folosea listGameweekScores (gameweekScores),
+  // scrisă DOAR la finalizarea etapei — Duelul nu putea fi rezolvat
+  // deloc înainte de asta. Acum funcționează corect ORICÂND în timpul
+  // etapei, cu exact aceleași puncte pe care userul le vede în Clasament.
+  const { pointsByUid: scoreByUid } = await getLiveGameweekPoints(gameweekId);
 
   await runTransaction(db, async (tx) => {
     const pubSnap = await tx.get(publicRef);
@@ -184,20 +199,25 @@ export async function resolveMain(gameweekId) {
       if (sA > sB) { pA = 200; pB = 0; }
       else if (sB > sA) { pA = 0; pB = 200; }
       else { pA = 100; pB = 100; }
-      toWrite.push({ uid: playerA, points: pA });
-      toWrite.push({ uid: playerB, points: pB });
+      // Scorul CONFRUNTĂRII (performanța din meciuri FINAL) — persistat
+      // separat de premiu, ca istoricul să poată arăta "450p vs 310p",
+      // NU contaminat retroactiv cu bonusul de +200p câștigat.
+      toWrite.push({ uid: playerA, points: pA, matchScore: sA, opponentMatchScore: sB });
+      toWrite.push({ uid: playerB, points: pB, matchScore: sB, opponentMatchScore: sA });
     });
-    if (byePlayer) toWrite.push({ uid: byePlayer, points: 100 });
+    if (byePlayer) toWrite.push({ uid: byePlayer, points: 100, matchScore: null, opponentMatchScore: null });
 
     // FAZA DE CITIRE — toate înaintea oricărei scrieri.
-    const userSnaps = await Promise.all(toWrite.map((r) => tx.get(doc(db, "users", r.uid))));
-
+    // NOTĂ IMPORTANTĂ: NU se mai citește/scrie users.seasonPoints aici.
+    // Premiul (mainPoints) se PERSISTĂ, dar se ADUNĂ în totalurile
+    // cumulative STRICT o singură dată, la finalizeGameweek — altfel
+    // riscul de dublare (Resolve + Finalize, ambele incrementând
+    // seasonPoints separat) era exact sursa haosului raportat.
     // FAZA DE SCRIERE.
-    toWrite.forEach((r, i) => {
-      tx.set(doc(db, "weeklySurprises", gameweekId, "results", r.uid), { uid: r.uid, mainPoints: r.points }, { merge: true });
-      if (userSnaps[i].exists()) {
-        tx.update(doc(db, "users", r.uid), { seasonPoints: (userSnaps[i].data().seasonPoints || 0) + r.points });
-      }
+    toWrite.forEach((r) => {
+      tx.set(doc(db, "weeklySurprises", gameweekId, "results", r.uid), {
+        uid: r.uid, mainPoints: r.points, mainMatchScore: r.matchScore, mainOpponentMatchScore: r.opponentMatchScore,
+      }, { merge: true });
     });
     tx.set(publicRef, { mainResolved: true }, { merge: true });
   });
@@ -224,13 +244,11 @@ export async function resolveBonus(gameweekId) {
     if (!pubSnap.exists() || !pubSnap.data().bonusRevealed) throw new Error("BONUS nu a fost dezvăluit încă.");
     if (pubSnap.data().bonusResolved) return;
 
-    const userSnaps = await Promise.all(spinsPerUser.map((r) => tx.get(doc(db, "users", r.uid))));
-
-    spinsPerUser.forEach((r, i) => {
+    // Premiul se persistă, dar NU se mai adaugă la users.seasonPoints
+    // aici — se consolidează o singură dată, la finalizeGameweek, exact
+    // ca la Main (motivul e identic: evită dublarea la Resolve+Finalize).
+    spinsPerUser.forEach((r) => {
       tx.set(doc(db, "weeklySurprises", gameweekId, "results", r.uid), { uid: r.uid, bonusPoints: r.points }, { merge: true });
-      if (userSnaps[i].exists()) {
-        tx.update(doc(db, "users", r.uid), { seasonPoints: (userSnaps[i].data().seasonPoints || 0) + r.points });
-      }
     });
     tx.set(publicRef, { bonusResolved: true }, { merge: true });
   });

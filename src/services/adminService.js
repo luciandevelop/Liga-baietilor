@@ -585,6 +585,30 @@ function isMatchResultComplete(m) {
   );
 }
 
+// ── REGULĂ UNICĂ, IMPUSĂ EXPLICIT: un meci contribuie puncte STRICT dacă
+// status === "finished". Programat/Live/Pauză/Amânat/Anulat = 0p,
+// INDIFERENT dacă Admin a introdus deja scor/cornere/cartonașe complete.
+// Corectare directă a unei interpretări greșite anterioare (unde
+// "date complete" era tratat ca suficient, indiferent de status) —
+// exact cauza haosului de punctaje raportat la Dueluri. Folosită PESTE
+// TOT unde se decide dacă un meci "contează" pentru scoring — o singură
+// sursă, niciodată duplicată. ──
+function isMatchFinal(m) {
+  return m.status === "finished" && isMatchResultComplete(m);
+}
+
+// ── "Închis" = nu mai poate produce puncte noi, nu mai blochează
+// finalizarea/rezolvarea — fie pentru că S-A jucat (finished), fie
+// pentru că NU se va mai juca (cancelled/postponed). NU am găsit nicio
+// regulă existentă în proiect pentru cum se tratează meciuri
+// anulate/amânate la scoring — interpretare rezonabilă, semnalată
+// explicit: un meci anulat/amânat contribuie 0p, dar NU ține etapa
+// blocată la infinit. Dacă vrei altă regulă (ex. anulat = etapa
+// trebuie reconfigurată manual), spune-mi. ──
+function isMatchClosed(m) {
+  return m.status === "finished" || m.status === "cancelled" || m.status === "postponed";
+}
+
 // Calcul PUR (fără scriere) al rezultatelor unei etape — folosit atât de
 // preview, cât și de finalizare (aceeași sursă de adevăr pentru ambele,
 // ca preview-ul afișat adminului să fie mereu exact ce se va scrie).
@@ -602,7 +626,11 @@ async function computeGameweekResults(gameweekId) {
   const matchById = {};
   matches.forEach((m) => { matchById[m.id] = m; });
 
-  const incompleteMatchIds = matches.filter((m) => !isMatchResultComplete(m)).map((m) => m.id);
+  // Regulă unică: un meci "contează" DOAR dacă status === "finished" —
+  // finalizarea rămâne blocată dacă vreun meci are date complete dar e
+  // încă marcat Live/Pauză (Admin trebuie să-l treacă explicit la Final).
+  // Anulat/Amânat NU blochează — sunt "închise", contribuie 0p.
+  const incompleteMatchIds = matches.filter((m) => !isMatchClosed(m)).map((m) => m.id);
 
   // Toate predicțiile pentru meciurile etapei — un query per meci (fără
   // index compus, doar egalitate pe matchId). Admin are acces deja
@@ -647,7 +675,7 @@ async function computeGameweekResults(gameweekId) {
       const p = (predictionsByUser[uid] || []).find((pr) => pr.matchId === match.id) || null;
       const isFeatured = featuredMatchIds.includes(match.id);
       const isJoker = jokerMatchByUser[uid] === match.id;
-      const hasResult = isMatchResultComplete(match);
+      const hasResult = isMatchFinal(match);
 
       const matchSnapshot = {
         matchId: match.id,
@@ -835,6 +863,36 @@ export async function finalizeGameweek(gameweekId) {
     );
   }
 
+  // GARDĂ — refuz finalizarea dacă există o Surpriză dezvăluită dar
+  // NErezolvată încă. Fără asta, Admin ar putea finaliza etapa înainte
+  // de a apăsa Resolve pe Duel/Ruletă, iar premiul lor n-ar mai putea
+  // intra NICIODATĂ în total (finalizeGameweek rulează o singură dată,
+  // consolidarea e definitivă). Nu blochează dacă Surpriza nici măcar
+  // nu a fost configurată/dezvăluită pentru etapa asta — doar cazul
+  // "dezvăluit, dar uitat nerezolvat".
+  const surprisePubSnap = await getDoc(doc(db, "weeklySurprises", gameweekId));
+  if (surprisePubSnap.exists()) {
+    const sp = surprisePubSnap.data();
+    if (sp.mainRevealed && !sp.mainResolved) {
+      throw new Error("Nu poți finaliza etapa — Surpriza Principală (MAIN) e dezvăluită, dar nerezolvată încă.");
+    }
+    if (sp.bonusRevealed && !sp.bonusResolved) {
+      throw new Error("Nu poți finaliza etapa — Bonusul Săptămânii e dezvăluit, dar nerezolvat încă.");
+    }
+  }
+
+  // Surprizele Săptămânii — citite DIRECT (fără import din surprisesService,
+  // care oricum importă din acest fișier — ar crea dependință circulară).
+  // Rezultatele (mainPoints/bonusPoints) au fost DEJA stabilite la Resolve,
+  // dar NU au atins users.seasonPoints atunci — se consolidează STRICT
+  // aici, o singură dată, exact regula cerută: "Resolve stabilește
+  // premiul, Finalize îl adună definitiv". Dacă nu există deloc Surprize
+  // pentru etapa asta (colecție goală), totul rămâne 0 — comportament
+  // identic cu înainte.
+  const surpriseResultsSnap = await getDocs(collection(db, "weeklySurprises", gameweekId, "results"));
+  const surpriseByUid = {};
+  surpriseResultsSnap.docs.forEach((d) => { surpriseByUid[d.id] = d.data(); });
+
   const gwRef = doc(db, "gameweeks", gameweekId);
 
   const outcome = await runTransaction(db, async (tx) => {
@@ -851,6 +909,12 @@ export async function finalizeGameweek(gameweekId) {
     }
 
     results.rows.forEach((r, i) => {
+      const mainSurprisePoints = surpriseByUid[r.uid]?.mainPoints || 0;
+      const bonusSurprisePoints = surpriseByUid[r.uid]?.bonusPoints || 0;
+      // TOTALUL FINAL, consolidat O SINGURĂ DATĂ: meciuri + bonus poziție
+      // + MAIN Surprise + BONUS Surprise — exact formula cerută explicit.
+      const finalTotal = r.pointsFromMatches + r.rankingBonus + mainSurprisePoints + bonusSurprisePoints;
+
       const scoreRef = doc(db, "gameweekScores", `${gameweekId}_${r.uid}`);
       tx.set(scoreRef, {
         gameweekId,
@@ -858,7 +922,9 @@ export async function finalizeGameweek(gameweekId) {
         rank: r.rank,
         pointsFromMatches: r.pointsFromMatches,
         rankingBonus: r.rankingBonus,
-        totalPoints: r.totalPoints,
+        mainSurprisePoints,
+        bonusSurprisePoints,
+        totalPoints: finalTotal,
         breakdown: r.breakdown,
         computedAt: serverTimestamp(),
       });
@@ -866,7 +932,7 @@ export async function finalizeGameweek(gameweekId) {
       if (userSnaps[i].exists()) {
         const prev = userSnaps[i].data();
         tx.update(userRefs[i], {
-          seasonPoints: (prev.seasonPoints || 0) + r.totalPoints,
+          seasonPoints: (prev.seasonPoints || 0) + finalTotal,
           gameweeksPlayed: (prev.gameweeksPlayed || 0) + 1,
         });
       }
@@ -1055,10 +1121,15 @@ export async function getPlayerCardStats(uid, seasonId, etapaGameweekId) {
   let liveEtapaPoints = null;
 
   if (!matchesSource && requestedGw && requestedGw.status !== "completed") {
-    const liveMatches = await getLiveMatchResultsForUser(etapaGameweekId, uid);
-    if (liveMatches.length > 0) {
-      matchesSource = { breakdown: Object.fromEntries(liveMatches.map((m) => [m.matchId, m])) };
-      liveEtapaPoints = liveMatches.reduce((sum, m) => sum + (m.finalMatchPoints || 0), 0);
+    // Sursă unică (getLiveGameweekPoints) — NU getLiveMatchResultsForUser
+    // (funcție veche, separată, care producea o cifră diferită de
+    // Clasament pentru ACELAȘI user — bug real, reparat aici, nu doar
+    // în Clasament).
+    const { pointsByUid, breakdownByUid } = await getLiveGameweekPoints(etapaGameweekId);
+    const myBreakdown = breakdownByUid[uid] || {};
+    if (Object.keys(myBreakdown).length > 0) {
+      matchesSource = { breakdown: myBreakdown };
+      liveEtapaPoints = pointsByUid[uid] || 0;
     }
   }
 
@@ -1085,6 +1156,20 @@ export async function getPlayerCardStats(uid, seasonId, etapaGameweekId) {
     isTopGeneral, // determină seria "Icon" — NICIODATĂ contextual
     etapaPoints: etapaScore?.totalPoints ?? liveEtapaPoints,
     etapaPointsIsLive: !etapaScore && liveEtapaPoints !== null,
+    // Pentru REZUMAT ETAPĂ (doar la etapă finalizată) — componentele
+    // separate ale totalului, ca UI-ul să poată explica de unde vine
+    // cifra, nu doar s-o arate. gameweekId — ca PlayerCard să poată cere
+    // separat rezultatele Surprizelor (evită import circular cu
+    // surprisesService, care oricum importă din adminService).
+    etapaGameweekId: etapaGameweekId || null,
+    etapaIsCompleted: !!etapaScore,
+    etapaMatchPoints: etapaScore?.pointsFromMatches ?? liveEtapaPoints ?? null,
+    etapaRankingBonus: etapaScore?.rankingBonus ?? null,
+    // Scrise direct în gameweekScores de finalizeGameweek — o singură
+    // sursă, niciun fetch separat necesar (evită orice risc de valori
+    // diferite între "REZUMAT ETAPĂ" și restul cardului).
+    etapaMainSurprisePoints: etapaScore?.mainSurprisePoints ?? null,
+    etapaBonusSurprisePoints: etapaScore?.bonusSurprisePoints ?? null,
     previousEtapaPoints: previousScore?.totalPoints ?? null,
     seasonPoints,
     generalPoints,
@@ -1120,54 +1205,6 @@ export async function getMatchPredictions(matchId) {
   });
 
   return { rows, consensus };
-}
-
-// Rezultate LIVE, meci-cu-meci, ÎNAINTE ca etapa să fie finalizată —
-// exact ce a cerut Lu: "rezultatele să apară după fiecare meci
-// finalizat, nu după ce se termină o etapă". NU atinge deloc sistemul de
-// punctaj — refolosește computeMatchPoints() din scoringEngine.js
-// NESCHIMBAT, doar pentru afișare, nimic scris în Firestore. Diferă de
-// gameweekScores (scris o singură dată, la finalizare) — aici se
-// recalculează la fiecare deschidere, din matches (unde adminul salvează
-// scorul real, meci cu meci) + propriul pronostic al userului.
-export async function getLiveMatchResultsForUser(gameweekId, uid) {
-  const [matchesSnap, gwSnap, jokerSnap] = await Promise.all([
-    getDocs(query(collection(db, "matches"), where("gameweekId", "==", gameweekId))),
-    getDoc(doc(db, "gameweeks", gameweekId)),
-    getDoc(doc(db, "jokers", `${gameweekId}_${uid}`)),
-  ]);
-
-  const finished = matchesSnap.docs
-    .map((d) => ({ id: d.id, ...d.data() }))
-    .filter((m) => m.status === "finished" && m.realScoreA != null && m.realScoreB != null);
-  if (finished.length === 0) return [];
-
-  const featuredIds = gwSnap.exists() ? gwSnap.data().featuredMatchIds || [] : [];
-  const jokerMatchId = jokerSnap.exists() ? jokerSnap.data().matchId : null;
-
-  const predSnaps = await Promise.all(finished.map((m) => getDoc(doc(db, "predictions", `${m.id}_${uid}`))));
-
-  return finished.map((m, i) => {
-    const matchSnapshot = { matchId: m.id, homeTeam: m.homeTeam, awayTeam: m.awayTeam, kickoffAt: m.kickoffAt };
-    const predSnap = predSnaps[i];
-    if (!predSnap.exists()) return { ...matchSnapshot, status: "no-prediction" };
-
-    const prediction = predSnap.data();
-    const isFeatured = featuredIds.includes(m.id);
-    const isJoker = jokerMatchId === m.id;
-    const result = computeMatchPoints({ prediction, match: m, isFeatured, isJoker });
-    if (!result) return { ...matchSnapshot, status: "no-prediction" };
-
-    return {
-      ...matchSnapshot,
-      status: "scored",
-      isFeatured,
-      isJoker,
-      prediction: { scoreA: prediction.scoreA, scoreB: prediction.scoreB },
-      real: { scoreA: m.realScoreA, scoreB: m.realScoreB },
-      ...result,
-    };
-  });
 }
 
 // Punctajul general al UNUI singur user, citit PROASPĂT din Firestore —
@@ -1298,4 +1335,91 @@ export async function listActiveUserIds() {
   const active = new Set();
   snap.docs.forEach((d) => { if (getPlayerStatus(d.data()) === "active") active.add(d.id); });
   return active;
+}
+
+// ══════════════════════════════════════════════════════════════════
+// SURSĂ UNICĂ — punctele LIVE ale etapei, STRICT din meciuri, NICIODATĂ
+// bonus de poziție, NICIODATĂ Surprize. Înlocuiește DOUĂ funcții separate
+// care calculau lucruri diferite pentru "aceeași" cifră:
+//   - computeGameweekResults (→ gameweekLiveScores, publicat manual din
+//     Admin) — includea DEJA bonusul de poziție, chiar în timpul etapei;
+//   - getLiveMatchResultsForUser (→ Player Card) — corect fără bonus, dar
+//     număra doar meciuri cu status==="finished" STRICT, ratând meciuri
+//     cu scor deja introdus dar încă marcate "Live"/"Pauză".
+// Bug real, confirmat: cele două produceau cifre diferite pentru ACELAȘI
+// user, în ACELAȘI moment. Acum: O SINGURĂ funcție, un singur criteriu
+// de includere (isMatchFinal — status "finished" ȘI scor/cornere/cartonașe
+// complete; un meci Live cu date complete NU contribuie, regulă impusă
+// explicit — punctele intră STRICT la marcarea "Final"), consumată identic peste tot. Nu scrie nimic în
+// Firestore — calculează pe loc, mereu proaspăt, deci nu mai poate exista
+// "publish uitat" care să învechească Clasamentul.
+// ── Verificare — TOATE meciurile etapei sunt "închise" (finished/
+// cancelled/postponed), niciunul încă în desfășurare (scheduled/live/
+// paused). Folosită de resolveMain (Surprize) ÎNAINTE de a decide
+// WIN/LOSE/DRAW definitiv — un rezultat de Duel stabilit cu meciuri
+// încă în joc ar putea deveni greșit pe măsură ce scorurile evoluează.
+// Aceeași regulă ca la finalizeGameweek (isMatchClosed), altfel cele
+// două ar putea diverge silențios pe exact acest gen de edge case. ──
+export async function isGameweekReadyToResolve(gameweekId) {
+  const matches = await listMatches(gameweekId);
+  return matches.every((m) => isMatchClosed(m));
+}
+
+export async function getLiveGameweekPoints(gameweekId) {
+  const gwSnap = await getDoc(doc(db, "gameweeks", gameweekId));
+  const gameweek = gwSnap.exists() ? gwSnap.data() : {};
+  const featuredMatchIds = gameweek.featuredMatchIds || [];
+
+  const matches = await listMatches(gameweekId);
+  const completedMatches = matches.filter((m) => isMatchFinal(m));
+  if (completedMatches.length === 0) return { pointsByUid: {}, breakdownByUid: {} };
+
+  const allPredictions = [];
+  for (const match of completedMatches) {
+    const snap = await getDocs(query(collection(db, "predictions"), where("matchId", "==", match.id)));
+    snap.docs.forEach((d) => allPredictions.push(d.data()));
+  }
+  const predictionsByUserAndMatch = {};
+  allPredictions.forEach((p) => {
+    predictionsByUserAndMatch[`${p.matchId}_${p.userId}`] = p;
+  });
+
+  const jokerSnap = await getDocs(query(collection(db, "jokers"), where("gameweekId", "==", gameweekId)));
+  const jokerMatchByUser = {};
+  jokerSnap.docs.forEach((d) => {
+    const j = d.data();
+    jokerMatchByUser[j.userId] = j.matchId;
+  });
+
+  const activeUids = await listActiveUserIds();
+  const pointsByUid = {};
+  const breakdownByUid = {};
+  activeUids.forEach((uid) => { pointsByUid[uid] = 0; breakdownByUid[uid] = {}; });
+
+  completedMatches.forEach((match) => {
+    const isFeatured = featuredMatchIds.includes(match.id);
+    activeUids.forEach((uid) => {
+      const p = predictionsByUserAndMatch[`${match.id}_${uid}`];
+      const matchSnapshot = { matchId: match.id, homeTeam: match.homeTeam, awayTeam: match.awayTeam, kickoffAt: match.kickoffAt, isFeatured };
+      if (!p) {
+        breakdownByUid[uid][match.id] = { ...matchSnapshot, status: "no-prediction" };
+        return;
+      }
+      const isJoker = jokerMatchByUser[uid] === match.id;
+      const result = computeMatchPoints({ prediction: p, match, isFeatured, isJoker });
+      if (!result) {
+        breakdownByUid[uid][match.id] = { ...matchSnapshot, status: "no-prediction" };
+        return;
+      }
+      pointsByUid[uid] += result.total;
+      breakdownByUid[uid][match.id] = {
+        ...matchSnapshot, status: "scored", isJoker,
+        prediction: { scoreA: p.scoreA, scoreB: p.scoreB },
+        real: { scoreA: match.realScoreA, scoreB: match.realScoreB },
+        ...result,
+      };
+    });
+  });
+
+  return { pointsByUid, breakdownByUid };
 }

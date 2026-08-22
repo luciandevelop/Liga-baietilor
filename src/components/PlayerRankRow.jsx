@@ -3,7 +3,7 @@ import PlayerAvatar from "./PlayerAvatar";
 
 const MEDAL = { 1: "🥇", 2: "🥈", 3: "🥉" };
 
-export default function PlayerRankRow({ rank, nickname, avatarId, pointsFromMatches, rankingBonus, totalPoints, surprisePoints, onClick, top3, showBonus = true }) {
+export default function PlayerRankRow({ rank, nickname, avatarId, pointsFromMatches, rankingBonus, totalPoints, surprisePoints, previewBonus, onClick, top3, showBonus = true }) {
   // Când etapa e activă (showBonus=false), "punctele reale" sunt DOAR cele
   // din meciuri — bonusul de poziție nu există încă vizual, nu doar
   // ascuns ca cifră separată în timp ce totalul îl include pe ascuns.
@@ -19,19 +19,30 @@ export default function PlayerRankRow({ rank, nickname, avatarId, pointsFromMatc
         cursor: onClick ? "pointer" : "default",
       }}
     >
-      <span style={s.rank}>{MEDAL[rank] || `#${rank ?? "–"}`}</span>
-      <PlayerAvatar avatarId={avatarId} nickname={nickname} size={26} />
-      <span style={s.name}>{nickname}</span>
-      {showBonus && pointsFromMatches !== undefined && <span style={s.pts}>{pointsFromMatches}p</span>}
-      {showBonus && rankingBonus !== undefined && (
-        <span style={{ ...s.bonus, color: rankingBonus >= 0 ? color.green : color.red }}>
-          {rankingBonus >= 0 ? "+" : ""}{rankingBonus}p
-        </span>
+      <div style={s.mainLine}>
+        <span style={s.rank}>{MEDAL[rank] || `#${rank ?? "–"}`}</span>
+        <PlayerAvatar avatarId={avatarId} nickname={nickname} size={26} />
+        <span style={s.name}>{nickname}</span>
+        {showBonus && pointsFromMatches !== undefined && <span style={s.pts}>{pointsFromMatches}p</span>}
+        {showBonus && rankingBonus !== undefined && (
+          <span style={{ ...s.bonus, color: rankingBonus >= 0 ? color.green : color.red }}>
+            {rankingBonus >= 0 ? "+" : ""}{rankingBonus}p
+          </span>
+        )}
+        {surprisePoints !== undefined && surprisePoints > 0 && (
+          <span style={s.surpriseBadge}>🎭 +{surprisePoints}p</span>
+        )}
+        <span style={s.total}>{displayTotal}p</span>
+      </div>
+
+      {/* Preview bonus poziție — pe rând SEPARAT, sub scor, text complet.
+          STRICT informativ — NU e adunat în cifra de mai sus, cât timp
+          etapa e LIVE. Cerut explicit în acest format, nu badge compact. */}
+      {previewBonus != null && previewBonus !== 0 && (
+        <div style={{ ...s.previewLine, color: previewBonus > 0 ? "#8BD957" : "#F0555A" }}>
+          {previewBonus > 0 ? "+" : ""}{previewBonus}p dacă etapa s-ar termina acum
+        </div>
       )}
-      {surprisePoints !== undefined && surprisePoints > 0 && (
-        <span style={s.surpriseBadge}>🎭 +{surprisePoints}p</span>
-      )}
-      <span style={s.total}>{displayTotal}p</span>
     </button>
   );
 }
@@ -39,8 +50,8 @@ export default function PlayerRankRow({ rank, nickname, avatarId, pointsFromMatc
 const s = {
   row: {
     display: "flex",
-    alignItems: "center",
-    gap: 9,
+    flexDirection: "column",
+    gap: 3,
     background: color.surfaceInset,
     border: `1px solid ${color.borderSubtle}`,
     borderRadius: radius.md,
@@ -54,6 +65,7 @@ const s = {
     background: "linear-gradient(90deg, rgba(201,162,39,0.10), rgba(201,162,39,0.02))",
     border: "1px solid rgba(201,162,39,0.28)",
   },
+  mainLine: { display: "flex", alignItems: "center", gap: 9, width: "100%" },
   rank: { fontSize: 14, fontWeight: 800, color: color.gold, width: 30, flexShrink: 0, fontFamily: font.display },
   name: {
     fontSize: 13.5, fontWeight: 700, color: color.textPrimary, flex: 1, minWidth: 0,
@@ -64,6 +76,9 @@ const s = {
   surpriseBadge: {
     fontSize: 10, fontWeight: 800, color: "#D4AF37", flexShrink: 0,
     background: "rgba(212,175,55,0.12)", border: "1px solid rgba(212,175,55,0.35)", borderRadius: 999, padding: "2px 6px",
+  },
+  previewLine: {
+    fontSize: 11, fontWeight: 700, textAlign: "right", width: "100%", paddingRight: 2,
   },
   total: {
     fontSize: 14.5, fontWeight: 700, color: color.goldLight, flexShrink: 0, width: 54,

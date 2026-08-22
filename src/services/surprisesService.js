@@ -1,6 +1,6 @@
 import { collection, doc, getDoc, getDocs, setDoc, runTransaction, serverTimestamp } from "firebase/firestore";
 import { db } from "../firebase";
-import { listActiveUserIds, listGameweeks, getLiveGameweekPoints, isGameweekReadyToResolve } from "./adminService";
+import { listActiveUserIds, listGameweeks, getLiveGameweekPoints, isGameweekReadyToResolve, getLastCompletedGameweek, listGameweekScores } from "./adminService";
 
 // ══════════════════════════════════════════════════════════════════
 // CATALOG — un singur loc, reutilizat de Admin (configurare) și de UI
@@ -11,8 +11,8 @@ import { listActiveUserIds, listGameweeks, getLiveGameweekPoints, isGameweekRead
 // ══════════════════════════════════════════════════════════════════
 export const MAIN_CATALOG = [
   { id: "duel-random", label: "Duel 1v1 Random", active: true },
-  { id: "duel-extreme", label: "Duel 1v1 Extreme", active: false },
-  { id: "duel-rivali", label: "Duel 1v1 Rivali", active: false },
+  { id: "duel-extreme", label: "Duel 1v1 Extreme", active: true },
+  { id: "duel-rivali", label: "Duel 1v1 Rivali", active: true },
   { id: "team-duel-random", label: "Duel de Echipe", active: true },
   { id: "half-random", label: "Jumate-Jumate Random", active: false },
   { id: "half-topbottom", label: "Jumate-Jumate Top vs Bottom", active: false },
@@ -113,6 +113,28 @@ export async function configureSurprise(gameweekId, { mainType, bonusType } = {}
   }
 }
 
+// ── Clasamentul etapei anterioare — pentru Extreme/Rivali. Doar
+// etapele FINALIZATE contează (are sens un clasament DEFINITIV, nu unul
+// încă în mișcare). Dacă nu există nicio etapă finalizată (prima etapă
+// a sezonului), întoarce null — reveal-ul cade decent pe random. Userii
+// activi ACUM, dar care n-au avut rând în etapa anterioară (proaspăt
+// aprobați), se adaugă la finalul listei (tratați ca ultimii), ca
+// nimeni să nu lipsească din formarea perechilor. ──
+async function getPreviousGameweekRanking(gameweekId) {
+  const gwSnap = await getDoc(doc(db, "gameweeks", gameweekId));
+  if (!gwSnap.exists()) return null;
+  const seasonId = gwSnap.data().seasonId;
+  const lastGw = await getLastCompletedGameweek(seasonId);
+  if (!lastGw) return null;
+
+  const rows = await listGameweekScores(lastGw.id); // deja sortate după rank, deja filtrate pe activi ACUM
+  const ranked = rows.map((r) => r.userId);
+
+  const activeUids = [...(await listActiveUserIds())];
+  const missing = activeUids.filter((uid) => !ranked.includes(uid)).sort();
+  return [...ranked, ...missing];
+}
+
 // ── REVEAL MAIN — freeze participanți (STRICT activi, din sistemul real
 // existent) + generare pairing O SINGURĂ DATĂ, în aceeași tranzacție care
 // marchează mainRevealed=true. Idempotent — al doilea apel nu face nimic. ──
@@ -121,6 +143,10 @@ export async function revealMain(gameweekId) {
   const secretRef = doc(db, "weeklySurprises", gameweekId, "secret", "main");
 
   const activeUids = shuffleDeterministic([...(await listActiveUserIds())], gameweekId + "_main");
+  // Pentru Extreme/Rivali — calculat mereu (ieftin, un query în plus),
+  // folosit doar dacă tipul chiar e unul din cele 2. Dacă nu există etapă
+  // anterioară finalizată, rămâne null — tratat mai jos ca fallback random.
+  const previousRanking = await getPreviousGameweekRanking(gameweekId);
 
   await runTransaction(db, async (tx) => {
     const pubSnap = await tx.get(publicRef);
@@ -139,6 +165,31 @@ export async function revealMain(gameweekId) {
         else byePlayer = activeUids[i];
       }
       config = { pairings, byePlayer };
+    } else if (type === "duel-extreme" || type === "duel-rivali") {
+      // Ambele au nevoie de un clasament — dacă nu există etapă
+      // anterioară finalizată (prima etapă a sezonului), cade decent pe
+      // random, cu o notă explicită persistată, ca userii să înțeleagă
+      // de ce nu văd perechi "extreme"/"rivali" reale.
+      const ranking = previousRanking && previousRanking.length > 0 ? previousRanking : activeUids;
+      const usedRandomFallback = !previousRanking || previousRanking.length === 0;
+
+      const pairings = [];
+      let byePlayer = null;
+      const n = ranking.length;
+
+      if (type === "duel-extreme") {
+        // Locul 1 vs ultimul, locul 2 vs penultimul, ...
+        let lo = 0, hi = n - 1;
+        while (lo < hi) { pairings.push({ playerA: ranking[lo], playerB: ranking[hi] }); lo++; hi--; }
+        if (lo === hi) byePlayer = ranking[lo]; // mijlocul, la număr impar
+      } else {
+        // Rivali: locul 1 vs 2, locul 3 vs 4, ...
+        for (let i = 0; i < n; i += 2) {
+          if (i + 1 < n) pairings.push({ playerA: ranking[i], playerB: ranking[i + 1] });
+          else byePlayer = ranking[i];
+        }
+      }
+      config = { pairings, byePlayer, usedRandomFallback };
     } else if (type === "team-duel-random") {
       // Regulă de bază: cât mai multe confruntări 2v2 curate posibil.
       // Resturile (0-3 jucători rămași după grupele de 4) NU mai devin
@@ -248,7 +299,7 @@ export async function resolveMain(gameweekId) {
       toWrite.push({ uid: playerB, points: pB, matchScore: sB, opponentMatchScore: sA });
     }
 
-    if (mainType === "duel-random") {
+    if (mainType === "duel-random" || mainType === "duel-extreme" || mainType === "duel-rivali") {
       const { pairings = [], byePlayer = null } = config;
       pairings.forEach(({ playerA, playerB }) => resolveDuelPair(playerA, playerB));
       if (byePlayer) toWrite.push({ uid: byePlayer, points: 100, matchScore: null, opponentMatchScore: null });

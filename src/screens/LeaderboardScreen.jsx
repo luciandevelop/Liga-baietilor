@@ -6,6 +6,8 @@ import {
   listSeasonLeaderboard,
   listGeneralLeaderboard,
   getLiveGameweekPoints,
+  getLiveGameweekPointsDiagnostic,
+  republishAllMatchPointsForGameweek,
   getLastCompletedGameweek,
   getPlayerCardStats,
   listGameweeks,
@@ -32,7 +34,7 @@ function normalizeRow(r) {
   };
 }
 
-export default function LeaderboardScreen({ onBack, user }) {
+export default function LeaderboardScreen({ onBack, user, isAdmin }) {
   const [tab, setTab] = useState("gameweek"); // gameweek | season | general
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -66,6 +68,37 @@ export default function LeaderboardScreen({ onBack, user }) {
   // "nu are rezultate" apărea în fugă, apoi se înlocuia cu datele reale.
   // Acum, mesajul de gol se arată DOAR dacă și acest fetch s-a terminat.
   const [liveRowsLoading, setLiveRowsLoading] = useState(false);
+  const [scoringDiagnostic, setScoringDiagnostic] = useState(null);
+  const [republishLoading, setRepublishLoading] = useState(false);
+  const [republishMsg, setRepublishMsg] = useState("");
+
+  async function handleRepublish() {
+    if (!gameweek) return;
+    setRepublishLoading(true);
+    setRepublishMsg("");
+    try {
+      const count = await republishAllMatchPointsForGameweek(gameweek.id);
+      setRepublishMsg(`✓ Republicat pentru ${count} meciuri Final din "${gameweek.title}" (${gameweek.id}).`);
+      const { pointsByUid, diagnostic } = await getLiveGameweekPointsDiagnostic(gameweek.id);
+      setScoringDiagnostic(diagnostic);
+      const rows = Object.entries(pointsByUid).map(([uid, pts]) => ({
+        uid, pointsFromMatches: pts, rankingBonus: undefined, totalPoints: pts, rank: null,
+      }));
+      rows.sort((a, b) => b.pointsFromMatches - a.pointsFromMatches);
+      let rank = 0, prevPts = null;
+      rows.forEach((r, i) => {
+        if (prevPts === null || r.pointsFromMatches !== prevPts) { rank = i + 1; prevPts = r.pointsFromMatches; }
+        r.rank = rank;
+      });
+      setGwRows(rows);
+      const names = await getUserPublicProfiles(rows.map((r) => r.uid));
+      setProfiles((prev) => ({ ...prev, ...names }));
+    } catch (err) {
+      setRepublishMsg(`Eroare: ${err.message || err}`);
+    } finally {
+      setRepublishLoading(false);
+    }
+  }
 
   const [seasonRows, setSeasonRows] = useState([]);
   const [generalRows, setGeneralRows] = useState([]);
@@ -155,8 +188,9 @@ export default function LeaderboardScreen({ onBack, user }) {
 
     async function refresh(isFirst) {
       try {
-        const { pointsByUid } = await getLiveGameweekPoints(gameweek.id);
+        const { pointsByUid, diagnostic } = await getLiveGameweekPointsDiagnostic(gameweek.id);
         if (cancelled) return;
+        setScoringDiagnostic(diagnostic);
         const rows = Object.entries(pointsByUid).map(([uid, pts]) => ({
           uid, pointsFromMatches: pts, rankingBonus: undefined, totalPoints: pts, rank: null,
         }));
@@ -170,7 +204,10 @@ export default function LeaderboardScreen({ onBack, user }) {
         const names = await getUserPublicProfiles(rows.map((r) => r.uid));
         if (!cancelled) setProfiles((prev) => ({ ...prev, ...names }));
       } catch (err) {
+        // NU mai ascund eroarea într-un mesaj fals de "gol" — o păstrez
+        // explicit, vizibilă în diagnostic (doar pentru Admin).
         console.error("Eroare la calculul live al etapei:", err);
+        if (!cancelled) setScoringDiagnostic({ gameweekId: gameweek.id, status: "ERROR", errorMessage: err.message || String(err), state: "error" });
       } finally {
         if (isFirst && !cancelled) setLiveRowsLoading(false);
       }
@@ -277,10 +314,47 @@ export default function LeaderboardScreen({ onBack, user }) {
 
         {!loading && !error && tab === "gameweek" && (
           <div style={s.list}>
+            {isAdmin && gameweek && gwLive && (
+              <div style={s.diagBox}>
+                <div style={s.diagTitle}>🔧 DIAGNOSTIC SCORING (doar Admin)</div>
+                <div style={s.diagRow}>Gameweek: <b>{scoringDiagnostic?.gameweekId || gameweek.id}</b> ({gameweek.title})</div>
+                {scoringDiagnostic && (
+                  <>
+                    <div style={s.diagRow}>Meciuri totale: <b>{scoringDiagnostic.totalMatches}</b></div>
+                    <div style={s.diagRow}>Meciuri FINAL: <b>{scoringDiagnostic.finalMatches}</b></div>
+                    <div style={s.diagRow}>Documente matchPoints găsite: <b>{scoringDiagnostic.matchPointsFound}</b></div>
+                    <div style={s.diagRow}>Useri calculați: <b>{scoringDiagnostic.usersComputed}</b></div>
+                    <div style={s.diagRow}>Sursă: <b>{scoringDiagnostic.source || "matchPoints"}</b></div>
+                    <div style={s.diagRow}>
+                      Status: <b style={{ color: scoringDiagnostic.status === "ERROR" ? "#F0555A" : "#8BD957" }}>{scoringDiagnostic.status}</b>
+                    </div>
+                    {scoringDiagnostic.errorMessage && (
+                      <div style={{ ...s.diagRow, color: "#F0555A" }}>Eroare: {scoringDiagnostic.errorMessage}</div>
+                    )}
+                    {scoringDiagnostic.state === "final-matches-unpublished" && (
+                      <div style={{ ...s.diagRow, color: "#F0A94E" }}>⚠️ Există {scoringDiagnostic.finalMatches} meciuri Final, dar 0 documente matchPoints — apasă butonul de mai jos.</div>
+                    )}
+                  </>
+                )}
+                <button type="button" style={s.diagBtn} disabled={republishLoading} onClick={handleRepublish}>
+                  {republishLoading ? "Se republică…" : "🔄 Republică punctele pentru ACEASTĂ etapă"}
+                </button>
+                {republishMsg && <div style={s.diagMsg}>{republishMsg}</div>}
+              </div>
+            )}
             {!gameweek && <EmptyState icon="📅" title="Încă nu există nicio etapă." />}
             {gameweek && gwLive && liveRowsLoading && <div style={s.centerBox}>Se încarcă…</div>}
             {gameweek && gwRows.length === 0 && !(gwLive && liveRowsLoading) && (
-              <EmptyState icon="🏆" title={`Etapa "${gameweek.title}" nu are încă rezultate introduse.`} />
+              <EmptyState
+                icon="🏆"
+                title={
+                  scoringDiagnostic?.state === "final-matches-unpublished"
+                    ? `Etapa "${gameweek.title}" are meciuri Final, dar punctele nu au fost încă publicate.`
+                    : scoringDiagnostic?.state === "error"
+                    ? `Eroare temporară la calculul Clasamentului — încearcă să reîncarci pagina.`
+                    : `Etapa "${gameweek.title}" nu are încă rezultate introduse.`
+                }
+              />
             )}
             {gameweek && gwRows.length > 0 && (
               <div style={s.liveRow}>
@@ -413,6 +487,17 @@ const s = {
   },
   tabBtnActive: { background: color.goldGradient, color: color.goldOn, border: "none" },
   centerBox: { textAlign: "center", color: color.textMuted, fontSize: 13.5, padding: "30px 16px" },
+  diagBox: {
+    background: "rgba(255,255,255,0.04)", border: "1px dashed rgba(255,255,255,0.25)", borderRadius: radius.sm,
+    padding: 12, marginBottom: 14, fontFamily: "monospace",
+  },
+  diagTitle: { fontSize: 11, fontWeight: 800, color: "#D4AF37", marginBottom: 8, fontFamily: font.body },
+  diagRow: { fontSize: 11, color: color.textSecondary, marginBottom: 3, lineHeight: 1.5 },
+  diagBtn: {
+    width: "100%", marginTop: 10, background: "linear-gradient(180deg, #F0D875, #C9A227)", border: "none",
+    borderRadius: radius.sm, padding: "10px 0", fontSize: 12, fontWeight: 800, color: "#1A1200", cursor: "pointer", fontFamily: font.body,
+  },
+  diagMsg: { fontSize: 11, color: color.textPrimary, marginTop: 8, fontWeight: 700, fontFamily: font.body },
   liveRow: { display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4 },
   list: { display: "flex", flexDirection: "column", gap: 7 },
 

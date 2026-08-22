@@ -633,8 +633,21 @@ async function publishMatchPointsIfFinal(matchId) {
     const isJoker = jokerMatchByUser[p.userId] === matchId;
     const result = computeMatchPoints({ prediction: p, match, isFeatured, isJoker });
     const points = result ? result.total : 0;
+    // Structură COMPLETĂ — nu doar totalul. Player Card afișează
+    // predicție vs real + defalcarea pe componente (scor/cornere/
+    // cartonașe) pentru fiecare meci — dacă lipsesc aceste câmpuri,
+    // randarea încearcă să le acceseze oricum și crapă (regresie reală,
+    // găsită și reparată acum). isFeatured/isJoker incluse și ele,
+    // pentru eticheta ⭐/🃏 din card.
     batch.set(doc(db, "matchPoints", `${matchId}_${p.userId}`), {
-      matchId, gameweekId: match.gameweekId, uid: p.userId, points, computedAt: serverTimestamp(),
+      matchId, gameweekId: match.gameweekId, uid: p.userId, points,
+      prediction: { scoreA: p.scoreA, scoreB: p.scoreB },
+      real: { scoreA: match.realScoreA, scoreB: match.realScoreB },
+      scorePoints: result?.scorePoints ?? 0,
+      cornersPoints: result?.cornersPoints ?? 0,
+      cardsPoints: result?.cardsPoints ?? 0,
+      isFeatured, isJoker,
+      computedAt: serverTimestamp(),
     });
   });
   await batch.commit();
@@ -1497,7 +1510,18 @@ export async function getLiveGameweekPointsDiagnostic(gameweekId) {
     if (match) {
       breakdownByUid[mp.uid][mp.matchId] = {
         matchId: mp.matchId, homeTeam: match.homeTeam, awayTeam: match.awayTeam, kickoffAt: match.kickoffAt,
-        status: "scored", total: mp.points,
+        status: "scored", total: mp.points, finalMatchPoints: mp.points,
+        // Câmpuri complete — publishMatchPointsIfFinal le scrie acum;
+        // pentru documente PUBLICATE ÎNAINTE de acest fix (fără ele),
+        // fallback-uri sigure (null/0), nu undefined care ar crăpa la
+        // randare (regresia găsită și reparată acum, permanent).
+        prediction: mp.prediction || null,
+        real: mp.real || { scoreA: match.realScoreA, scoreB: match.realScoreB },
+        scorePoints: mp.scorePoints ?? 0,
+        cornersPoints: mp.cornersPoints ?? 0,
+        cardsPoints: mp.cardsPoints ?? 0,
+        isFeatured: mp.isFeatured ?? false,
+        isJoker: mp.isJoker ?? false,
       };
     }
   });

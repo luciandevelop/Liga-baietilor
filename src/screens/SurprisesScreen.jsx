@@ -10,6 +10,8 @@ import PageHeader from "../components/PageHeader";
 import PlayerAvatar from "../components/PlayerAvatar";
 import DuelExperience from "../components/DuelExperience";
 import DuelMiniCard from "../components/DuelMiniCard";
+import TeamDuelExperience from "../components/TeamDuelExperience";
+import TeamDuelMiniCard from "../components/TeamDuelMiniCard";
 import RouletteExperience from "../components/RouletteExperience";
 import { color, font, radius } from "../matchdayTheme";
 
@@ -50,12 +52,17 @@ export default function SurprisesScreen({ user, onBack }) {
         setSecretMain(sm);
         setSecretBonus(sb);
 
-        // TOATE profilele implicate în pairing — nu doar al meu — ca lista
-        // de "alte dueluri" să poată afișa nickname/avatar pentru oricine.
-        if (sm?.config?.pairings) {
-          const uids = sm.config.pairings.flatMap((pr) => [pr.playerA, pr.playerB]);
-          if (sm.config.byePlayer) uids.push(sm.config.byePlayer);
-          getUserPublicProfiles(uids).then(setProfiles);
+        // TOATE profilele implicate — nu doar al meu — ca listele de
+        // "alte dueluri"/"alte echipe" să poată afișa nickname/avatar
+        // pentru oricine. Acoperă atât Duel (pairings) cât și 2v2 (teams
+        // + extraDuel), oricare din ele fiind prezent în config.
+        if (sm?.config) {
+          const uids = new Set();
+          (sm.config.pairings || []).forEach((pr) => { uids.add(pr.playerA); uids.add(pr.playerB); });
+          (sm.config.groups || []).forEach((g) => { g.teamA.forEach((u) => uids.add(u)); g.teamB.forEach((u) => uids.add(u)); });
+          (sm.config.pairings || []).forEach((p) => { uids.add(p.playerA); uids.add(p.playerB); });
+          if (sm.config.byePlayer) uids.add(sm.config.byePlayer);
+          if (uids.size > 0) getUserPublicProfiles([...uids]).then(setProfiles);
         }
 
         // Sursă unică (getLiveGameweekPoints) — BUG CRITIC REPARAT aici:
@@ -85,6 +92,18 @@ export default function SurprisesScreen({ user, onBack }) {
   const myOpponent = myPairing ? (myPairing.playerA === user.uid ? myPairing.playerB : myPairing.playerA) : null;
   const otherPairings = (secretMain?.config?.pairings || []).filter((p) => p.playerA !== user.uid && p.playerB !== user.uid);
 
+  // ── Duel de Echipe — grupuri de mărime variabilă (2, 3 sau 4 pe
+  // parte), formate cu regula "mereu partea cea mai mică". Fallback la
+  // Duel 1v1/Bye DOAR dacă sunt sub 4 useri activi total (rar). ──
+  const myGroupEntry = secretMain?.config?.groups?.find((g) => g.teamA.includes(user.uid) || g.teamB.includes(user.uid));
+  const myTeamGroup = myGroupEntry ? (myGroupEntry.teamA.includes(user.uid) ? myGroupEntry.teamA : myGroupEntry.teamB) : null;
+  const opponentTeamGroup = myGroupEntry ? (myGroupEntry.teamA.includes(user.uid) ? myGroupEntry.teamB : myGroupEntry.teamA) : null;
+  const otherGroups = (secretMain?.config?.groups || []).filter((g) => g !== myGroupEntry);
+  const isFallbackToDuel = !!secretMain?.config?.fallbackToDuel;
+  const fallbackPairing = secretMain?.config?.pairings?.find((p) => p.playerA === user.uid || p.playerB === user.uid);
+  const isFallbackBye = secretMain?.config?.byePlayer === user.uid;
+  const fallbackOpponent = fallbackPairing ? (fallbackPairing.playerA === user.uid ? fallbackPairing.playerB : fallbackPairing.playerA) : null;
+
   const resultsByUid = {};
   (allResults || []).forEach((r) => { resultsByUid[r.uid] = r; });
 
@@ -94,6 +113,7 @@ export default function SurprisesScreen({ user, onBack }) {
   // descrescător. Cerut explicit: "cine și ce a luat, să nu existe îndoieli".
   const allInvolvedUids = new Set([
     ...(secretMain?.config?.pairings || []).flatMap((p) => [p.playerA, p.playerB]),
+    ...(secretMain?.config?.groups || []).flatMap((g) => [...g.teamA, ...g.teamB]),
     ...(secretMain?.config?.byePlayer ? [secretMain.config.byePlayer] : []),
     ...(allResults || []).map((r) => r.uid),
   ]);
@@ -145,6 +165,42 @@ export default function SurprisesScreen({ user, onBack }) {
                                 key={`${pr.playerA}_${pr.playerB}`}
                                 playerA={pr.playerA}
                                 playerB={pr.playerB}
+                                profiles={profiles}
+                                liveScores={liveScores}
+                                resolved={!!pub?.mainResolved}
+                                results={resultsByUid}
+                              />
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </>
+                  )}
+
+                  {secretMain?.type === "team-duel-random" && (
+                    <>
+                      <TeamDuelExperience
+                        myUid={user.uid}
+                        myTeam={myTeamGroup}
+                        opponentTeam={opponentTeamGroup}
+                        isFallbackDuel={isFallbackToDuel && !isFallbackBye && !!fallbackPairing}
+                        fallbackOpponent={fallbackOpponent}
+                        isFallbackBye={isFallbackToDuel && isFallbackBye}
+                        profiles={profiles}
+                        liveScores={liveScores}
+                        resolved={!!pub?.mainResolved}
+                        myPoints={myResult?.mainPoints}
+                      />
+
+                      {otherGroups.length > 0 && (
+                        <div style={s.otherDuelsSection}>
+                          <div style={s.otherDuelsLabel}>Celelalte echipe</div>
+                          <div style={s.otherDuelsList}>
+                            {otherGroups.map((g) => (
+                              <TeamDuelMiniCard
+                                key={`${g.teamA.join("_")}_${g.teamB.join("_")}`}
+                                teamA={g.teamA}
+                                teamB={g.teamB}
                                 profiles={profiles}
                                 liveScores={liveScores}
                                 resolved={!!pub?.mainResolved}

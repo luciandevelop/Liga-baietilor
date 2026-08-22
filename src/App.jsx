@@ -235,7 +235,7 @@ export default function App() {
   }
 
   if (view === "leaderboard") {
-    return <LeaderboardScreen user={user} onBack={goBack} />;
+    return <LeaderboardScreen user={user} isAdmin={isAdmin} onBack={goBack} />;
   }
 
   if (view === "specials") {

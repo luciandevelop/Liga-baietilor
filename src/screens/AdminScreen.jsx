@@ -24,6 +24,7 @@ import {
   updateMatch,
   listAllUsers,
   getPlayerCardStats,
+  republishAllMatchPointsForGameweek,
 } from "../services/adminService";
 import { getUserPublicProfiles, updateOwnAvatar } from "../services/profilesService";
 import { claimNickname } from "../services/authService";
@@ -329,6 +330,23 @@ export default function AdminScreen({ onBack }) {
   const [previewIncomplete, setPreviewIncomplete] = useState(0);
   const [previewProfiles, setPreviewProfiles] = useState({});
   const [previewLoading, setPreviewLoading] = useState(false);
+  const [republishLoading, setRepublishLoading] = useState(false);
+  const [republishMessage, setRepublishMessage] = useState("");
+
+  async function handleRepublishMatchPoints() {
+    if (!currentGameweek) return;
+    setRepublishLoading(true);
+    setRepublishMessage("");
+    try {
+      const count = await republishAllMatchPointsForGameweek(currentGameweek.id);
+      setRepublishMessage(`✓ Republicat pentru ${count} meciuri Final.`);
+    } catch (err) {
+      console.error("Eroare la republicarea punctelor:", err);
+      setRepublishMessage("Eroare — vezi consola.");
+    } finally {
+      setRepublishLoading(false);
+    }
+  }
   const [previewMessage, setPreviewMessage] = useState("");
   const [finalizing, setFinalizing] = useState(false);
   const [openPlayerUid, setOpenPlayerUid] = useState("");
@@ -891,6 +909,18 @@ export default function AdminScreen({ onBack }) {
                 </button>
               ))}
             </div>
+
+            {tab === "results" && (
+              <div style={s.republishBox}>
+                <button type="button" style={s.republishBtn} disabled={republishLoading || !currentGameweek} onClick={handleRepublishMatchPoints}>
+                  {republishLoading ? "Se republică…" : "🔄 Republică punctele pentru toate meciurile Final"}
+                </button>
+                <div style={s.republishHint}>
+                  Apasă O SINGURĂ DATĂ, dacă meciuri deja Final nu apar în Clasament pentru useri obișnuiți. Necesar doar pentru meciuri finalizate ÎNAINTE de acest sistem.
+                </div>
+                {republishMessage && <div style={s.republishMsg}>{republishMessage}</div>}
+              </div>
+            )}
 
             {(tab === "results" || tab === "featured") && matches.length > 0 && (
               <input
@@ -1605,6 +1635,16 @@ const s = {
     width: "100%", background: color.surfaceInset, border: `1px solid ${color.border}`, borderRadius: radius.sm,
     padding: "10px 14px", fontSize: 13.5, color: color.textPrimary, outline: "none", marginBottom: 12, fontFamily: font.body,
   },
+  republishBox: {
+    background: "rgba(212,175,55,0.06)", border: "1px solid rgba(212,175,55,0.3)", borderRadius: radius.sm,
+    padding: 12, marginBottom: 14,
+  },
+  republishBtn: {
+    width: "100%", background: "linear-gradient(180deg, #F0D875, #C9A227)", border: "none", borderRadius: radius.sm,
+    padding: "11px 0", fontSize: 12.5, fontWeight: 800, color: "#1A1200", cursor: "pointer", fontFamily: font.body,
+  },
+  republishHint: { fontSize: 10.5, color: color.textFaint, fontFamily: font.body, marginTop: 8, lineHeight: 1.4 },
+  republishMsg: { fontSize: 11.5, color: color.textPrimary, fontFamily: font.body, marginTop: 8, fontWeight: 700 },
   form: { display: "flex", flexDirection: "column", gap: 10 },
   row: { display: "flex", gap: 10 },
   input: {

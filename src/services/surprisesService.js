@@ -13,7 +13,7 @@ export const MAIN_CATALOG = [
   { id: "duel-random", label: "Duel 1v1 Random", active: true },
   { id: "duel-extreme", label: "Duel 1v1 Extreme", active: false },
   { id: "duel-rivali", label: "Duel 1v1 Rivali", active: false },
-  { id: "2v2-random", label: "2v2 Random", active: false },
+  { id: "team-duel-random", label: "Duel de Echipe", active: true },
   { id: "half-random", label: "Jumate-Jumate Random", active: false },
   { id: "half-topbottom", label: "Jumate-Jumate Top vs Bottom", active: false },
   { id: "trivia", label: "Trivia Etapei", active: false },
@@ -139,6 +139,47 @@ export async function revealMain(gameweekId) {
         else byePlayer = activeUids[i];
       }
       config = { pairings, byePlayer };
+    } else if (type === "team-duel-random") {
+      // Regulă de bază: cât mai multe confruntări 2v2 curate posibil.
+      // Resturile (0-3 jucători rămași după grupele de 4) NU mai devin
+      // NICIODATĂ Duel separat sau Bye — se adaugă, câte unul, în
+      // confruntarea cu cea mai MICĂ dimensiune totală în acel moment
+      // (dacă mai multe sunt la fel, cea cu indexul cel mai mic), ca
+      // dezechilibrul să se răspândească, nu să se adune într-un singur
+      // loc. Exemplu confirmat cu userul: 11 jucători → 3v3 și 3v2, nu
+      // 3v2+3v2+1 Bye. Alternarea între teamA/teamB în ACELAȘI grup (când
+      // primește 2 resturi) previne un 4v2 nedorit, produce 3v3.
+      // Excepție: sub 4 jucători activi, nicio confruntare de echipă nu
+      // se poate forma — cade decent pe Duel 1v1 simplu (pereche + bye).
+      if (activeUids.length < 4) {
+        const pairings = [];
+        let byePlayer = null;
+        for (let i = 0; i < activeUids.length; i += 2) {
+          if (i + 1 < activeUids.length) pairings.push({ playerA: activeUids[i], playerB: activeUids[i + 1] });
+          else byePlayer = activeUids[i];
+        }
+        config = { fallbackToDuel: true, pairings, byePlayer };
+      } else {
+        const numGroups = Math.floor(activeUids.length / 4);
+        const groups = [];
+        for (let i = 0; i < numGroups; i++) {
+          const base = activeUids.slice(i * 4, i * 4 + 4);
+          groups.push({ teamA: [base[0], base[1]], teamB: [base[2], base[3]] });
+        }
+        const extras = activeUids.slice(numGroups * 4);
+        extras.forEach((uid) => {
+          let smallestIdx = 0, smallestSize = Infinity;
+          groups.forEach((g, idx) => {
+            const size = g.teamA.length + g.teamB.length;
+            if (size < smallestSize) { smallestSize = size; smallestIdx = idx; }
+          });
+          const g = groups[smallestIdx];
+          const additionsSoFar = (g.teamA.length - 2) + (g.teamB.length - 2);
+          if (additionsSoFar % 2 === 0) g.teamA.push(uid);
+          else g.teamB.push(uid);
+        });
+        config = { groups };
+      }
     }
 
     tx.set(secretRef, { ...secretData, type, config }, { merge: true });
@@ -189,23 +230,65 @@ export async function resolveMain(gameweekId) {
     if (pubSnap.data().mainResolved) return;
 
     const secretSnap = await tx.get(secretRef);
-    const { pairings = [], byePlayer = null } = secretSnap.exists() ? (secretSnap.data().config || {}) : {};
+    const secretData = secretSnap.exists() ? secretSnap.data() : {};
+    const mainType = secretData.type || "duel-random";
+    const config = secretData.config || {};
 
     const toWrite = [];
-    pairings.forEach(({ playerA, playerB }) => {
+
+    // Duel 1v1 clasic — compară direct 2 useri.
+    function resolveDuelPair(playerA, playerB) {
       const sA = scoreByUid[playerA] || 0;
       const sB = scoreByUid[playerB] || 0;
       let pA, pB;
       if (sA > sB) { pA = 200; pB = 0; }
       else if (sB > sA) { pA = 0; pB = 200; }
       else { pA = 100; pB = 100; }
-      // Scorul CONFRUNTĂRII (performanța din meciuri FINAL) — persistat
-      // separat de premiu, ca istoricul să poată arăta "450p vs 310p",
-      // NU contaminat retroactiv cu bonusul de +200p câștigat.
       toWrite.push({ uid: playerA, points: pA, matchScore: sA, opponentMatchScore: sB });
       toWrite.push({ uid: playerB, points: pB, matchScore: sB, opponentMatchScore: sA });
-    });
-    if (byePlayer) toWrite.push({ uid: byePlayer, points: 100, matchScore: null, opponentMatchScore: null });
+    }
+
+    if (mainType === "duel-random") {
+      const { pairings = [], byePlayer = null } = config;
+      pairings.forEach(({ playerA, playerB }) => resolveDuelPair(playerA, playerB));
+      if (byePlayer) toWrite.push({ uid: byePlayer, points: 100, matchScore: null, opponentMatchScore: null });
+    } else if (mainType === "team-duel-random") {
+      if (config.fallbackToDuel) {
+        // Sub 4 jucători activi — a căzut pe Duel 1v1 simplu la Reveal.
+        const { pairings = [], byePlayer = null } = config;
+        pairings.forEach(({ playerA, playerB }) => resolveDuelPair(playerA, playerB));
+        if (byePlayer) toWrite.push({ uid: byePlayer, points: 100, matchScore: null, opponentMatchScore: null });
+      } else {
+        const { groups = [] } = config;
+        // Scorul unei părți = suma membrilor, din meciuri FINAL — DAR
+        // dacă partea are 3+ jucători, punctele celui clasat la mijloc
+        // (floor(n/2)+1, aceeași regulă ca la Jumate-Jumate) NU intră în
+        // sumă — el rămâne în echipă, primește premiul dacă echipa
+        // câștigă, doar nu-i "contează" scorul la comparație. Cu 2
+        // jucători, nicio excludere (suma amândurora, ca la 2v2 clasic).
+        function teamSum(members) {
+          if (members.length <= 2) {
+            return members.reduce((sum, uid) => sum + (scoreByUid[uid] || 0), 0);
+          }
+          const sorted = [...members].sort((a, b) => (scoreByUid[b] || 0) - (scoreByUid[a] || 0));
+          const excludeIdx = Math.floor(members.length / 2) + 1 - 1; // index 0-based
+          return sorted.reduce((sum, uid, i) => (i === excludeIdx ? sum : sum + (scoreByUid[uid] || 0)), 0);
+        }
+
+        groups.forEach(({ teamA, teamB }) => {
+          const sA = teamSum(teamA);
+          const sB = teamSum(teamB);
+          let pA, pB;
+          if (sA > sB) { pA = 200; pB = 0; }
+          else if (sB > sA) { pA = 0; pB = 200; }
+          else { pA = 100; pB = 100; }
+          // Premiul e IDENTIC pentru FIECARE membru — inclusiv cel exclus
+          // din sumă. El nu e scos din echipă, doar din comparație.
+          teamA.forEach((uid) => toWrite.push({ uid, points: pA, matchScore: sA, opponentMatchScore: sB }));
+          teamB.forEach((uid) => toWrite.push({ uid, points: pB, matchScore: sB, opponentMatchScore: sA }));
+        });
+      }
+    }
 
     // FAZA DE CITIRE — toate înaintea oricărei scrieri.
     // NOTĂ IMPORTANTĂ: NU se mai citește/scrie users.seasonPoints aici.

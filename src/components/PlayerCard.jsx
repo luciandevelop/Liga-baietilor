@@ -329,7 +329,7 @@ function MatchBreakdownRow({ m }) {
           <span style={s.matchTeamsText}>{m.homeTeam} vs {m.awayTeam}</span>
           <ClubCrest teamName={m.awayTeam} size={26} />
         </div>
-        <span style={s.matchTotal}>{m.finalMatchPoints}p</span>
+        <span style={s.matchTotal}>{m.finalMatchPoints ?? m.total ?? 0}p</span>
       </div>
 
       {(m.isFeatured || m.isJoker) && (
@@ -347,7 +347,9 @@ function MatchBreakdownRow({ m }) {
         <span style={s.predVsRealArrow}>vs</span>
         <div style={s.predVsRealCol}>
           <span style={s.predVsRealLabel}>REAL</span>
-          <span style={{ ...s.predVsRealScore, color: color.goldLight }}>{m.real.scoreA}-{m.real.scoreB}</span>
+          <span style={{ ...s.predVsRealScore, color: color.goldLight }}>
+            {m.real ? `${m.real.scoreA}-${m.real.scoreB}` : "–"}
+          </span>
         </div>
       </div>
 

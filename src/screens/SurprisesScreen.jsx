@@ -144,7 +144,10 @@ export default function SurprisesScreen({ user, onBack }) {
               ) : (
                 <>
                   <div style={s.revealedTypeLabel}>{catalogLabel(MAIN_CATALOG, secretMain?.type)}</div>
-                  {secretMain?.type === "duel-random" && (
+                  {secretMain?.config?.usedRandomFallback && (
+                    <div style={s.fallbackNote}>Fără etapă anterioară finalizată încă — perechile sunt aleatorii de data asta.</div>
+                  )}
+                  {(secretMain?.type === "duel-random" || secretMain?.type === "duel-extreme" || secretMain?.type === "duel-rivali") && (
                     <>
                       <DuelExperience
                         myUid={user.uid}
@@ -334,6 +337,7 @@ const s = {
     color: color.textFaint, fontSize: 13, fontFamily: font.body,
   },
   revealedTypeLabel: { fontSize: 11.5, color: color.goldLight, fontWeight: 700, fontFamily: font.body, marginBottom: 8, textAlign: "center" },
+  fallbackNote: { fontSize: 10, color: color.textFaint, fontFamily: font.body, textAlign: "center", marginBottom: 10, fontStyle: "italic" },
 
   otherDuelsSection: { marginTop: 14 },
   otherDuelsLabel: { fontSize: 10, fontWeight: 800, letterSpacing: "0.05em", color: color.textFaint, fontFamily: font.body, marginBottom: 8, textTransform: "uppercase" },

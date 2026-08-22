@@ -249,6 +249,7 @@ export async function updateMatchStatus(matchId, status) {
     throw new Error(`Status invalid: "${status}". Valorile permise: ${VALID_MATCH_STATUSES.join(", ")}.`);
   }
   await updateDoc(doc(db, "matches", matchId), { status });
+  await publishMatchPointsIfFinal(matchId);
 }
 
 export async function listMatches(gameweekId) {
@@ -573,6 +574,7 @@ export async function saveMatchResult(matchId, { realScoreA, realScoreB, realCor
   }
 
   await updateDoc(doc(db, "matches", matchId), { realScoreA, realScoreB, realCorners, realCards });
+  await publishMatchPointsIfFinal(matchId);
 }
 
 // Un meci are rezultat COMPLET dacă toate cele 4 valori sunt întregi >= 0.
@@ -595,6 +597,58 @@ function isMatchResultComplete(m) {
 // sursă, niciodată duplicată. ──
 function isMatchFinal(m) {
   return m.status === "finished" && isMatchResultComplete(m);
+}
+
+// ══════════════════════════════════════════════════════════════════
+// matchPoints — COLECȚIE NOUĂ, publicată STRICT de Admin, imediat ce un
+// meci devine cu adevărat Final. Rezolvă definitiv incertitudinea legată
+// de citirea predicțiilor brute de către useri obișnuiți: în loc ca
+// FIECARE user să interogheze predicțiile TUTUROR (dependent de o regulă
+// Firestore complexă, greu de verificat 100% fără emulator), Admin
+// (care are oricum acces total) calculează O SINGURĂ DATĂ punctele per
+// user per meci și le scrie într-o colecție simplă, deschisă la citire
+// pentru orice user autentificat — regulă trivială, fără nicio condiție
+// ambiguă, imposibil de interpretat greșit. ──
+async function publishMatchPointsIfFinal(matchId) {
+  const matchSnap = await getDoc(doc(db, "matches", matchId));
+  if (!matchSnap.exists()) return;
+  const match = { id: matchId, ...matchSnap.data() };
+  if (!isMatchFinal(match)) return;
+
+  const gwSnap = await getDoc(doc(db, "gameweeks", match.gameweekId));
+  const featuredMatchIds = gwSnap.exists() ? (gwSnap.data().featuredMatchIds || []) : [];
+  const isFeatured = featuredMatchIds.includes(matchId);
+
+  const predSnap = await getDocs(query(collection(db, "predictions"), where("matchId", "==", matchId)));
+  const jokerSnap = await getDocs(query(collection(db, "jokers"), where("gameweekId", "==", match.gameweekId)));
+  const jokerMatchByUser = {};
+  jokerSnap.docs.forEach((d) => {
+    const j = d.data();
+    jokerMatchByUser[j.userId] = j.matchId;
+  });
+
+  const batch = writeBatch(db);
+  predSnap.docs.forEach((d) => {
+    const p = d.data();
+    const isJoker = jokerMatchByUser[p.userId] === matchId;
+    const result = computeMatchPoints({ prediction: p, match, isFeatured, isJoker });
+    const points = result ? result.total : 0;
+    batch.set(doc(db, "matchPoints", `${matchId}_${p.userId}`), {
+      matchId, gameweekId: match.gameweekId, uid: p.userId, points, computedAt: serverTimestamp(),
+    });
+  });
+  await batch.commit();
+}
+
+// Callable din Admin — republică punctele pentru TOATE meciurile deja
+// Final ale unei etape. Necesar o singură dată, ca "backfill", pentru
+// meciuri care erau deja Final ÎNAINTE de acest sistem (nu aveau de unde
+// să fie publicate automat, mecanismul nu exista încă).
+export async function republishAllMatchPointsForGameweek(gameweekId) {
+  const matches = await listMatches(gameweekId);
+  const finalMatches = matches.filter((m) => isMatchFinal(m));
+  await Promise.all(finalMatches.map((m) => publishMatchPointsIfFinal(m.id)));
+  return finalMatches.length;
 }
 
 // ── "Închis" = nu mai poate produce puncte noi, nu mai blochează
@@ -1366,72 +1420,96 @@ export async function isGameweekReadyToResolve(gameweekId) {
 }
 
 export async function getLiveGameweekPoints(gameweekId) {
-  const gwSnap = await getDoc(doc(db, "gameweeks", gameweekId));
-  const gameweek = gwSnap.exists() ? gwSnap.data() : {};
-  const featuredMatchIds = gameweek.featuredMatchIds || [];
+  const { pointsByUid, breakdownByUid } = await getLiveGameweekPointsDiagnostic(gameweekId);
+  return { pointsByUid, breakdownByUid };
+}
 
-  const matches = await listMatches(gameweekId);
-  const completedMatches = matches.filter((m) => isMatchFinal(m));
+// ── Versiune cu DIAGNOSTIC COMPLET — distinge explicit cele 3 stări
+// posibile, cerute exact: (1) chiar nu există meciuri Final încă —
+// normal, nu e bug; (2) există meciuri Final dar matchPoints lipsește —
+// BUG/NEPUBLICAT, Admin trebuie să apese Republică; (3) query-ul
+// Firestore chiar a eșuat — eroare reală, afișată ca atare, NICIODATĂ
+// confundată cu "nu există rezultate". Verifică și nepotriviri de
+// gameweekId între matches și matchPoints — dacă matchId există în
+// matches dar niciun document matchPoints nu are exact acel matchId,
+// asta iese explicit în diagnostic, nu doar "0 rezultate". ──
+export async function getLiveGameweekPointsDiagnostic(gameweekId) {
+  const diag = {
+    gameweekId, totalMatches: 0, finalMatches: 0, matchPointsFound: 0,
+    usersComputed: 0, source: "matchPoints", status: "OK", errorMessage: null,
+    state: null, // "no-final-matches" | "final-matches-unpublished" | "error" | "ok"
+  };
+
   const activeUids = await listActiveUserIds();
-
-  if (completedMatches.length === 0) {
-    // BUG REPARAT: înainte întorcea obiect COMPLET GOL aici — Clasamentul
-    // interpreta asta ca "nu există nimeni", nu "toată lumea e la 0p",
-    // și arăta ecranul gol "nu are încă rezultate introduse" chiar și
-    // pentru o etapă activă, cu jucători, doar că încă niciun meci nu
-    // devenise "Final" (regulă strictă, corectă — dar trebuie tot să
-    // apară lista, la 0p, nu nimic). Acum: fiecare user activ apare
-    // explicit, la 0.
-    const emptyPoints = {}, emptyBreakdown = {};
-    activeUids.forEach((uid) => { emptyPoints[uid] = 0; emptyBreakdown[uid] = {}; });
-    return { pointsByUid: emptyPoints, breakdownByUid: emptyBreakdown };
-  }
-
-  const allPredictions = [];
-  for (const match of completedMatches) {
-    const snap = await getDocs(query(collection(db, "predictions"), where("matchId", "==", match.id)));
-    snap.docs.forEach((d) => allPredictions.push(d.data()));
-  }
-  const predictionsByUserAndMatch = {};
-  allPredictions.forEach((p) => {
-    predictionsByUserAndMatch[`${p.matchId}_${p.userId}`] = p;
-  });
-
-  const jokerSnap = await getDocs(query(collection(db, "jokers"), where("gameweekId", "==", gameweekId)));
-  const jokerMatchByUser = {};
-  jokerSnap.docs.forEach((d) => {
-    const j = d.data();
-    jokerMatchByUser[j.userId] = j.matchId;
-  });
-
   const pointsByUid = {};
   const breakdownByUid = {};
   activeUids.forEach((uid) => { pointsByUid[uid] = 0; breakdownByUid[uid] = {}; });
 
-  completedMatches.forEach((match) => {
-    const isFeatured = featuredMatchIds.includes(match.id);
-    activeUids.forEach((uid) => {
-      const p = predictionsByUserAndMatch[`${match.id}_${uid}`];
-      const matchSnapshot = { matchId: match.id, homeTeam: match.homeTeam, awayTeam: match.awayTeam, kickoffAt: match.kickoffAt, isFeatured };
-      if (!p) {
-        breakdownByUid[uid][match.id] = { ...matchSnapshot, status: "no-prediction" };
-        return;
-      }
-      const isJoker = jokerMatchByUser[uid] === match.id;
-      const result = computeMatchPoints({ prediction: p, match, isFeatured, isJoker });
-      if (!result) {
-        breakdownByUid[uid][match.id] = { ...matchSnapshot, status: "no-prediction" };
-        return;
-      }
-      pointsByUid[uid] += result.total;
-      breakdownByUid[uid][match.id] = {
-        ...matchSnapshot, status: "scored", isJoker,
-        prediction: { scoreA: p.scoreA, scoreB: p.scoreB },
-        real: { scoreA: match.realScoreA, scoreB: match.realScoreB },
-        ...result,
-      };
-    });
-  });
+  let matches;
+  try {
+    matches = await listMatches(gameweekId);
+  } catch (err) {
+    diag.status = "ERROR";
+    diag.errorMessage = `listMatches: ${err.message || err}`;
+    diag.state = "error";
+    return { pointsByUid, breakdownByUid, diagnostic: diag };
+  }
+  diag.totalMatches = matches.length;
 
-  return { pointsByUid, breakdownByUid };
+  const completedMatches = matches.filter((m) => isMatchFinal(m));
+  diag.finalMatches = completedMatches.length;
+
+  if (completedMatches.length === 0) {
+    diag.state = "no-final-matches";
+    return { pointsByUid, breakdownByUid, diagnostic: diag };
+  }
+
+  let mpSnap;
+  try {
+    mpSnap = await getDocs(query(collection(db, "matchPoints"), where("gameweekId", "==", gameweekId)));
+  } catch (err) {
+    diag.status = "ERROR";
+    diag.errorMessage = `matchPoints query: ${err.message || err}`;
+    diag.state = "error";
+    return { pointsByUid, breakdownByUid, diagnostic: diag };
+  }
+  diag.matchPointsFound = mpSnap.docs.length;
+
+  if (mpSnap.docs.length === 0) {
+    diag.state = "final-matches-unpublished";
+    return { pointsByUid, breakdownByUid, diagnostic: diag };
+  }
+
+  // Verificare explicită de nepotrivire — dacă avem documente matchPoints,
+  // dar NICIUNUL nu corespunde vreunui meci Final din LISTA curentă de
+  // meciuri a acestei etape, e semn de gameweekId nepotrivit undeva.
+  const finalMatchIds = new Set(completedMatches.map((m) => m.id));
+  let matchedAny = false;
+
+  const usersWithPoints = new Set();
+  mpSnap.docs.forEach((d) => {
+    const mp = d.data();
+    usersWithPoints.add(mp.uid);
+    if (finalMatchIds.has(mp.matchId)) matchedAny = true;
+    if (!(mp.uid in pointsByUid)) return;
+    pointsByUid[mp.uid] += mp.points || 0;
+    const match = completedMatches.find((m) => m.id === mp.matchId);
+    if (match) {
+      breakdownByUid[mp.uid][mp.matchId] = {
+        matchId: mp.matchId, homeTeam: match.homeTeam, awayTeam: match.awayTeam, kickoffAt: match.kickoffAt,
+        status: "scored", total: mp.points,
+      };
+    }
+  });
+  diag.usersComputed = usersWithPoints.size;
+
+  if (!matchedAny) {
+    diag.status = "ERROR";
+    diag.errorMessage = "matchPoints găsite, dar NICIUNUL nu corespunde unui meci Final din lista curentă — posibilă nepotrivire de gameweekId (documente publicate pentru altă etapă).";
+    diag.state = "error";
+    return { pointsByUid, breakdownByUid, diagnostic: diag };
+  }
+
+  diag.state = "ok";
+  return { pointsByUid, breakdownByUid, diagnostic: diag };
 }

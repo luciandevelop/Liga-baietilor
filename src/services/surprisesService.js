@@ -14,8 +14,8 @@ export const MAIN_CATALOG = [
   { id: "duel-extreme", label: "Duel 1v1 Extreme", active: true },
   { id: "duel-rivali", label: "Duel 1v1 Rivali", active: true },
   { id: "team-duel-random", label: "Duel de Echipe", active: true },
-  { id: "half-random", label: "Jumate-Jumate Random", active: false },
-  { id: "half-topbottom", label: "Jumate-Jumate Top vs Bottom", active: false },
+  { id: "half-random", label: "Jumate-Jumate Random", active: true },
+  { id: "half-topbottom", label: "Jumate-Jumate Top vs Bottom", active: true },
   { id: "trivia", label: "Trivia Etapei", active: false },
   { id: "zaruri", label: "Zarurile", active: false },
   { id: "sabotaj", label: "Sabotaj", active: false },
@@ -135,6 +135,45 @@ async function getPreviousGameweekRanking(gameweekId) {
   return [...ranked, ...missing];
 }
 
+// ── Variantă ÎMBOGĂȚITĂ, pentru Jumate-Jumate Top/Bottom — clasamentul
+// etapei anterioare, dar cu departajare pe seasonPoints (cumulat) la
+// rank-uri EGALE, cerut explicit (listGameweekScores păstrează doar
+// ordinea brută din Firestore la egalitate de rank, nu e determinist
+// din perspectiva "cine merită mai sus"). Userii fără rând în etapa
+// anterioară intră tot la coadă, ordonați după seasonPoints. ──
+async function getPreviousGameweekRankingWithTieBreak(gameweekId) {
+  const gwSnap = await getDoc(doc(db, "gameweeks", gameweekId));
+  if (!gwSnap.exists()) return null;
+  const seasonId = gwSnap.data().seasonId;
+  const lastGw = await getLastCompletedGameweek(seasonId);
+  if (!lastGw) return null;
+
+  const rows = await listGameweekScores(lastGw.id);
+  const activeUids = [...(await listActiveUserIds())];
+  const rankedUidsSet = new Set(rows.map((r) => r.userId));
+  const missingUids = activeUids.filter((uid) => !rankedUidsSet.has(uid));
+
+  // seasonPoints pentru TOȚI cei implicați (clasați + lipsă) — o singură
+  // trecere prin colecția users, deja disponibilă via listActiveUserIds
+  // dar fără câmpurile complete; le citim direct.
+  const allInvolvedUids = [...rows.map((r) => r.userId), ...missingUids];
+  const userSnaps = await Promise.all(allInvolvedUids.map((uid) => getDoc(doc(db, "users", uid))));
+  const seasonPointsByUid = {};
+  allInvolvedUids.forEach((uid, i) => {
+    seasonPointsByUid[uid] = userSnaps[i].exists() ? (userSnaps[i].data().seasonPoints || 0) : 0;
+  });
+
+  const combined = [
+    ...rows.map((r) => ({ uid: r.userId, rank: r.rank, seasonPoints: seasonPointsByUid[r.userId] || 0 })),
+    ...missingUids.map((uid) => ({ uid, rank: Infinity, seasonPoints: seasonPointsByUid[uid] || 0 })),
+  ];
+  combined.sort((a, b) => {
+    if (a.rank !== b.rank) return a.rank - b.rank;
+    return b.seasonPoints - a.seasonPoints; // departajare cerută explicit
+  });
+  return combined.map((c) => c.uid);
+}
+
 // ── REVEAL MAIN — freeze participanți (STRICT activi, din sistemul real
 // existent) + generare pairing O SINGURĂ DATĂ, în aceeași tranzacție care
 // marchează mainRevealed=true. Idempotent — al doilea apel nu face nimic. ──
@@ -147,6 +186,7 @@ export async function revealMain(gameweekId) {
   // folosit doar dacă tipul chiar e unul din cele 2. Dacă nu există etapă
   // anterioară finalizată, rămâne null — tratat mai jos ca fallback random.
   const previousRanking = await getPreviousGameweekRanking(gameweekId);
+  const previousRankingTieBreak = await getPreviousGameweekRankingWithTieBreak(gameweekId);
 
   await runTransaction(db, async (tx) => {
     const pubSnap = await tx.get(publicRef);
@@ -231,6 +271,27 @@ export async function revealMain(gameweekId) {
         });
         config = { groups };
       }
+    } else if (type === "half-random" || type === "half-topbottom") {
+      // Random: ordine amestecată (activeUids, deja shuffle-uit mai sus).
+      // Top vs Bottom: ordine după clasamentul etapei anterioare, cu
+      // departajare pe seasonPoints — fallback random dacă nu există
+      // etapă anterioară finalizată.
+      let ordered;
+      let usedRandomFallback = false;
+      if (type === "half-topbottom") {
+        ordered = previousRankingTieBreak && previousRankingTieBreak.length > 0 ? previousRankingTieBreak : activeUids;
+        usedRandomFallback = !previousRankingTieBreak || previousRankingTieBreak.length === 0;
+      } else {
+        ordered = activeUids;
+      }
+
+      // Diferență MAXIMĂ de 1 jucător între tabere, impusă explicit —
+      // jumătatea de sus (sau prima, la Random) primește jucătorul în
+      // plus dacă numărul e impar.
+      const topSize = Math.ceil(ordered.length / 2);
+      const top = ordered.slice(0, topSize);
+      const bottom = ordered.slice(topSize);
+      config = { top, bottom, usedRandomFallback };
     }
 
     tx.set(secretRef, { ...secretData, type, config }, { merge: true });
@@ -339,6 +400,29 @@ export async function resolveMain(gameweekId) {
           teamB.forEach((uid) => toWrite.push({ uid, points: pB, matchScore: sB, opponentMatchScore: sA }));
         });
       }
+    } else if (mainType === "half-random" || mainType === "half-topbottom") {
+      const { top = [], bottom = [] } = config;
+      // Excludere DOAR din partea MAI NUMEROASĂ (nu ambele, spre
+      // deosebire de Duel de Echipe) — cerut explicit. Cu dimensiuni
+      // egale, nicio excludere, sumă simplă pentru amândouă.
+      function halfSum(members, isLargerSide) {
+        if (!isLargerSide) return members.reduce((sum, uid) => sum + (scoreByUid[uid] || 0), 0);
+        const sorted = [...members].sort((a, b) => (scoreByUid[b] || 0) - (scoreByUid[a] || 0));
+        const excludeIdx = Math.floor(members.length / 2) + 1 - 1;
+        return sorted.reduce((sum, uid, i) => (i === excludeIdx ? sum : sum + (scoreByUid[uid] || 0)), 0);
+      }
+
+      const topIsLarger = top.length > bottom.length;
+      const bottomIsLarger = bottom.length > top.length;
+      const sTop = halfSum(top, topIsLarger);
+      const sBottom = halfSum(bottom, bottomIsLarger);
+      let pTop, pBottom;
+      if (sTop > sBottom) { pTop = 200; pBottom = 0; }
+      else if (sBottom > sTop) { pTop = 0; pBottom = 200; }
+      else { pTop = 100; pBottom = 100; }
+
+      top.forEach((uid) => toWrite.push({ uid, points: pTop, matchScore: sTop, opponentMatchScore: sBottom }));
+      bottom.forEach((uid) => toWrite.push({ uid, points: pBottom, matchScore: sBottom, opponentMatchScore: sTop }));
     }
 
     // FAZA DE CITIRE — toate înaintea oricărei scrieri.

@@ -50,6 +50,7 @@ import {
 import {
   MAIN_CATALOG, BONUS_CATALOG, getWeeklySurprise, getSecretMain, getSecretBonus,
   configureSurprise, revealMain, revealBonus, resolveMain, resolveBonus, getSurpriseStatus,
+  configureTriviaQuestions, markTriviaCorrectAnswer, getTriviaSubmissionStatus,
 } from "../services/surprisesService";
 import { color, font, layout, radius } from "../theme";
 
@@ -162,6 +163,74 @@ export default function AdminScreen({ onBack }) {
   const [surprisesData, setSurprisesData] = useState({}); // gameweekId -> { public, secretMain, secretBonus }
   const [surprisesLoading, setSurprisesLoading] = useState(false);
   const [surpriseActionKey, setSurpriseActionKey] = useState(""); // "{gwId}_{action}" cu acțiune în curs
+
+  // ── Trivia — editor întrebări, validare răspunsuri, status completare ──
+  const [triviaEditorOpen, setTriviaEditorOpen] = useState(null); // gwId cu editorul deschis, sau null
+  const [triviaDraft, setTriviaDraft] = useState([]); // 10 randuri, in curs de editare
+  const [triviaSaveMsg, setTriviaSaveMsg] = useState("");
+  const [triviaSaving, setTriviaSaving] = useState(false);
+  const [triviaMarking, setTriviaMarking] = useState(""); // questionId in curs de marcat
+  const [triviaSubmissionPanel, setTriviaSubmissionPanel] = useState(null); // gwId cu panoul deschis
+  const [triviaSubmissionRows, setTriviaSubmissionRows] = useState([]);
+  const [triviaSubmissionLoading, setTriviaSubmissionLoading] = useState(false);
+
+  function openTriviaEditor(gwId, existingQuestions) {
+    if (triviaEditorOpen === gwId) { setTriviaEditorOpen(null); return; }
+    const base = existingQuestions && existingQuestions.length > 0
+      ? existingQuestions
+      : Array.from({ length: 10 }, (_, i) => ({ id: `q${i + 1}`, text: "", optionALabel: "DA", optionBLabel: "NU", correctAnswer: null }));
+    setTriviaDraft(base);
+    setTriviaEditorOpen(gwId);
+    setTriviaSaveMsg("");
+  }
+
+  function updateTriviaDraftField(idx, field, value) {
+    setTriviaDraft((prev) => prev.map((q, i) => (i === idx ? { ...q, [field]: value } : q)));
+  }
+
+  async function handleSaveTriviaQuestions(gwId) {
+    setTriviaSaving(true);
+    setTriviaSaveMsg("");
+    try {
+      const cleaned = triviaDraft.map((q) => ({ ...q, text: q.text.trim(), optionALabel: q.optionALabel.trim() || "A", optionBLabel: q.optionBLabel.trim() || "B" }));
+      await configureTriviaQuestions(gwId, cleaned);
+      setTriviaSaveMsg("✓ Întrebări salvate.");
+      const sm = await getSecretMain(gwId);
+      setSurprisesData((prev) => ({ ...prev, [gwId]: { ...prev[gwId], secretMain: sm } }));
+    } catch (err) {
+      setTriviaSaveMsg(`Eroare: ${err.message || err}`);
+    } finally {
+      setTriviaSaving(false);
+    }
+  }
+
+  async function handleMarkCorrect(gwId, questionId, answer) {
+    setTriviaMarking(questionId);
+    try {
+      await markTriviaCorrectAnswer(gwId, questionId, answer);
+      const sm = await getSecretMain(gwId);
+      setSurprisesData((prev) => ({ ...prev, [gwId]: { ...prev[gwId], secretMain: sm } }));
+    } catch (err) {
+      console.error("Eroare la marcarea răspunsului corect:", err);
+    } finally {
+      setTriviaMarking("");
+    }
+  }
+
+  async function openTriviaSubmissionPanel(gwId, questions) {
+    if (triviaSubmissionPanel === gwId) { setTriviaSubmissionPanel(null); return; }
+    setTriviaSubmissionPanel(gwId);
+    setTriviaSubmissionLoading(true);
+    try {
+      const rows = await getTriviaSubmissionStatus(gwId, questions.map((q) => q.id));
+      const names = await getUserPublicProfiles(rows.map((r) => r.uid));
+      setTriviaSubmissionRows(rows.map((r) => ({ ...r, nickname: names[r.uid]?.nickname || r.uid })));
+    } catch (err) {
+      console.error("Eroare la statusul de completare:", err);
+    } finally {
+      setTriviaSubmissionLoading(false);
+    }
+  }
 
   useEffect(() => {
     if (tab !== "surprises" || gameweeks.length === 0) return;
@@ -1285,6 +1354,85 @@ export default function AdminScreen({ onBack }) {
                         )}
                       </div>
 
+                      {mainType === "trivia" && (
+                        <div style={s.triviaBox}>
+                          <button type="button" style={s.smallBtn} onClick={() => openTriviaEditor(gw.id, data.secretMain?.config?.questions)}>
+                            {triviaEditorOpen === gw.id ? "▲ Închide editorul" : "📝 Configurează întrebările"}
+                          </button>
+
+                          {triviaEditorOpen === gw.id && (
+                            <div style={s.triviaEditor}>
+                              {triviaDraft.map((q, i) => (
+                                <div key={q.id} style={s.triviaQRow}>
+                                  <div style={s.triviaQNum}>#{i + 1}</div>
+                                  <input
+                                    style={s.triviaTextInput}
+                                    placeholder="Textul întrebării…"
+                                    value={q.text}
+                                    onChange={(e) => updateTriviaDraftField(i, "text", e.target.value)}
+                                  />
+                                  <div style={s.triviaOptRow}>
+                                    <input style={s.triviaOptInput} placeholder="Opțiunea A (ex: DA)" value={q.optionALabel}
+                                      onChange={(e) => updateTriviaDraftField(i, "optionALabel", e.target.value)} />
+                                    <input style={s.triviaOptInput} placeholder="Opțiunea B (ex: NU)" value={q.optionBLabel}
+                                      onChange={(e) => updateTriviaDraftField(i, "optionBLabel", e.target.value)} />
+                                  </div>
+                                </div>
+                              ))}
+                              <button type="button" style={s.approveBtn} disabled={triviaSaving} onClick={() => handleSaveTriviaQuestions(gw.id)}>
+                                {triviaSaving ? "Se salvează…" : "💾 Salvează întrebările"}
+                              </button>
+                              {triviaSaveMsg && <div style={s.triviaSaveMsg}>{triviaSaveMsg}</div>}
+                            </div>
+                          )}
+
+                          {mainRevealed && (data.secretMain?.config?.questions?.length > 0) && (
+                            <div style={s.triviaValidate}>
+                              <div style={s.triviaValidateLabel}>✅ Validează răspunsul corect</div>
+                              {data.secretMain.config.questions.map((q) => (
+                                <div key={q.id} style={s.triviaValidateRow}>
+                                  <span style={s.triviaValidateText}>{q.text || "(fără text)"}</span>
+                                  <div style={s.triviaValidateBtns}>
+                                    <button type="button" disabled={triviaMarking === q.id}
+                                      style={{ ...s.triviaValidateBtn, ...(q.correctAnswer === "A" ? s.triviaValidateBtnActive : {}) }}
+                                      onClick={() => handleMarkCorrect(gw.id, q.id, "A")}>
+                                      {q.optionALabel}
+                                    </button>
+                                    <button type="button" disabled={triviaMarking === q.id}
+                                      style={{ ...s.triviaValidateBtn, ...(q.correctAnswer === "B" ? s.triviaValidateBtnActive : {}) }}
+                                      onClick={() => handleMarkCorrect(gw.id, q.id, "B")}>
+                                      {q.optionBLabel}
+                                    </button>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+
+                          {mainRevealed && (
+                            <div style={s.triviaSubmissionSection}>
+                              <button type="button" style={s.smallBtn} onClick={() => openTriviaSubmissionPanel(gw.id, data.secretMain?.config?.questions || [])}>
+                                {triviaSubmissionPanel === gw.id ? "▲ Ascunde status" : "👥 Cine a răspuns"}
+                              </button>
+                              {triviaSubmissionPanel === gw.id && (
+                                <div style={s.triviaSubmissionList}>
+                                  {triviaSubmissionLoading ? <div style={s.hint}>Se încarcă…</div> : (
+                                    triviaSubmissionRows.map((r) => (
+                                      <div key={r.uid} style={s.triviaSubmissionRow}>
+                                        <span>{r.nickname}</span>
+                                        <span style={{ color: r.answeredCount === r.total ? "#8BD957" : "#F0A94E" }}>
+                                          {r.answeredCount}/{r.total}
+                                        </span>
+                                      </div>
+                                    ))
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      )}
+
                       <div style={s.surpriseRow}>
                         <label style={s.surpriseLabel}>🎁 BONUS</label>
                         <select
@@ -1609,6 +1757,36 @@ const s = {
     padding: "8px 6px", fontSize: 11, color: "#fff",
   },
   doneTag: { fontSize: 10.5, fontWeight: 700, color: "#8BD957", flexShrink: 0 },
+
+  triviaBox: { marginTop: 4, marginBottom: 8, paddingTop: 8, borderTop: "1px dashed rgba(255,255,255,0.1)" },
+  triviaEditor: { marginTop: 8, display: "flex", flexDirection: "column", gap: 8 },
+  triviaQRow: { background: "rgba(255,255,255,0.03)", borderRadius: 8, padding: 8, display: "flex", flexDirection: "column", gap: 6 },
+  triviaQNum: { fontSize: 10, fontWeight: 800, color: "#D4AF37" },
+  triviaTextInput: {
+    width: "100%", background: "#12141C", border: "1px solid rgba(255,255,255,0.15)", borderRadius: 6,
+    padding: "7px 8px", fontSize: 11.5, color: "#fff", fontFamily: "inherit",
+  },
+  triviaOptRow: { display: "flex", gap: 6 },
+  triviaOptInput: {
+    flex: 1, background: "#12141C", border: "1px solid rgba(255,255,255,0.15)", borderRadius: 6,
+    padding: "6px 8px", fontSize: 10.5, color: "#fff", fontFamily: "inherit",
+  },
+  triviaSaveMsg: { fontSize: 10.5, color: "#8BD957", fontWeight: 700, marginTop: 4 },
+
+  triviaValidate: { marginTop: 10, paddingTop: 8, borderTop: "1px dashed rgba(255,255,255,0.1)" },
+  triviaValidateLabel: { fontSize: 10.5, fontWeight: 800, color: "#B4BBC7", marginBottom: 6 },
+  triviaValidateRow: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 6, padding: "5px 0" },
+  triviaValidateText: { fontSize: 10.5, color: "#fff", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
+  triviaValidateBtns: { display: "flex", gap: 4, flexShrink: 0 },
+  triviaValidateBtn: {
+    background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.15)", borderRadius: 6,
+    padding: "4px 8px", fontSize: 9.5, fontWeight: 700, color: "#B4BBC7", cursor: "pointer",
+  },
+  triviaValidateBtnActive: { background: "rgba(139,217,87,0.15)", border: "1px solid rgba(139,217,87,0.4)", color: "#8BD957" },
+
+  triviaSubmissionSection: { marginTop: 10, paddingTop: 8, borderTop: "1px dashed rgba(255,255,255,0.1)" },
+  triviaSubmissionList: { marginTop: 8, display: "flex", flexDirection: "column", gap: 4 },
+  triviaSubmissionRow: { display: "flex", justifyContent: "space-between", fontSize: 10.5, color: "#fff", padding: "3px 0" },
   playerInfo: { minWidth: 0, flex: 1 },
   playerActions: { display: "flex", gap: 6, flexShrink: 0 },
   approveBtn: {

@@ -12,6 +12,8 @@ import DuelExperience from "../components/DuelExperience";
 import DuelMiniCard from "../components/DuelMiniCard";
 import TeamDuelExperience from "../components/TeamDuelExperience";
 import TeamDuelMiniCard from "../components/TeamDuelMiniCard";
+import HalfHalfExperience from "../components/HalfHalfExperience";
+import TriviaExperience from "../components/TriviaExperience";
 import RouletteExperience from "../components/RouletteExperience";
 import { color, font, radius } from "../matchdayTheme";
 
@@ -60,7 +62,8 @@ export default function SurprisesScreen({ user, onBack }) {
           const uids = new Set();
           (sm.config.pairings || []).forEach((pr) => { uids.add(pr.playerA); uids.add(pr.playerB); });
           (sm.config.groups || []).forEach((g) => { g.teamA.forEach((u) => uids.add(u)); g.teamB.forEach((u) => uids.add(u)); });
-          (sm.config.pairings || []).forEach((p) => { uids.add(p.playerA); uids.add(p.playerB); });
+          (sm.config.top || []).forEach((u) => uids.add(u));
+          (sm.config.bottom || []).forEach((u) => uids.add(u));
           if (sm.config.byePlayer) uids.add(sm.config.byePlayer);
           if (uids.size > 0) getUserPublicProfiles([...uids]).then(setProfiles);
         }
@@ -114,6 +117,8 @@ export default function SurprisesScreen({ user, onBack }) {
   const allInvolvedUids = new Set([
     ...(secretMain?.config?.pairings || []).flatMap((p) => [p.playerA, p.playerB]),
     ...(secretMain?.config?.groups || []).flatMap((g) => [...g.teamA, ...g.teamB]),
+    ...(secretMain?.config?.top || []),
+    ...(secretMain?.config?.bottom || []),
     ...(secretMain?.config?.byePlayer ? [secretMain.config.byePlayer] : []),
     ...(allResults || []).map((r) => r.uid),
   ]);
@@ -214,6 +219,35 @@ export default function SurprisesScreen({ user, onBack }) {
                         </div>
                       )}
                     </>
+                  )}
+
+                  {(secretMain?.type === "half-random" || secretMain?.type === "half-topbottom") && (
+                    <HalfHalfExperience
+                      myUid={user.uid}
+                      top={secretMain?.config?.top || []}
+                      bottom={secretMain?.config?.bottom || []}
+                      isTopVariant={secretMain?.type === "half-topbottom"}
+                      profiles={profiles}
+                      liveScores={liveScores}
+                      resolved={!!pub?.mainResolved}
+                      myPoints={myResult?.mainPoints}
+                    />
+                  )}
+
+                  {secretMain?.type === "trivia" && (
+                    <TriviaExperience
+                      gameweekId={gameweek.id}
+                      myUid={user.uid}
+                      opponentUid={myOpponent}
+                      isBye={isMyBye}
+                      questions={secretMain?.config?.questions || []}
+                      profiles={profiles}
+                      resolved={!!pub?.mainResolved}
+                      myPoints={myResult?.mainPoints}
+                      myMatchScore={myResult?.mainMatchScore}
+                      opponentMatchScore={myResult?.mainOpponentMatchScore}
+                      deadlinePassed={deadlinePassed}
+                    />
                   )}
                 </>
               )}

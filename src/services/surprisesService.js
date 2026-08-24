@@ -16,7 +16,7 @@ export const MAIN_CATALOG = [
   { id: "team-duel-random", label: "Duel de Echipe", active: true },
   { id: "half-random", label: "Jumate-Jumate Random", active: true },
   { id: "half-topbottom", label: "Jumate-Jumate Top vs Bottom", active: true },
-  { id: "trivia", label: "Trivia Etapei", active: false },
+  { id: "trivia", label: "Trivia Etapei", active: true },
   { id: "zaruri", label: "Zarurile", active: false },
   { id: "sabotaj", label: "Sabotaj", active: false },
 ];
@@ -205,6 +205,18 @@ export async function revealMain(gameweekId) {
         else byePlayer = activeUids[i];
       }
       config = { pairings, byePlayer };
+    } else if (type === "trivia") {
+      // Reutilizează EXACT pairing-ul aleatoriu de la Duel Random —
+      // aceeași funcție, aceeași regulă de Bye. Întrebările au fost DEJA
+      // configurate de Admin (configureTriviaQuestions, oricând înainte)
+      // — le păstrăm neatinse, doar adăugăm perechile.
+      const pairings = [];
+      let byePlayer = null;
+      for (let i = 0; i < activeUids.length; i += 2) {
+        if (i + 1 < activeUids.length) pairings.push({ playerA: activeUids[i], playerB: activeUids[i + 1] });
+        else byePlayer = activeUids[i];
+      }
+      config = { ...(secretData.config || {}), pairings, byePlayer };
     } else if (type === "duel-extreme" || type === "duel-rivali") {
       // Ambele au nevoie de un clasament — dacă nu există etapă
       // anterioară finalizată (prima etapă a sezonului), cade decent pe
@@ -336,6 +348,28 @@ export async function resolveMain(gameweekId) {
   // etapei, cu exact aceleași puncte pe care userul le vede în Clasament.
   const { pointsByUid: scoreByUid } = await getLiveGameweekPoints(gameweekId);
 
+  // Pentru Trivia — scorul de BAZĂ nu vine din meciuri, ci din răspunsuri
+  // vs răspunsul corect marcat de Admin. Calculat DINAINTE de tranzacție
+  // (multe citiri, nu se pretează la read-then-write strict). Verificăm
+  // tipul printr-o citire simplă, în afara tranzacției — tranzacția însăși
+  // tot recitește totul, idempotența nu are de suferit.
+  const preSecretSnap = await getDoc(secretRef);
+  const preType = preSecretSnap.exists() ? preSecretSnap.data().type : null;
+  let triviaBaseByUid = {};
+  if (preType === "trivia") {
+    const questions = preSecretSnap.data().config?.questions || [];
+    const activeUids = [...(await listActiveUserIds())];
+    triviaBaseByUid = Object.fromEntries(activeUids.map((uid) => [uid, 0]));
+    for (const uid of activeUids) {
+      const answers = await getMyTriviaAnswers(gameweekId, uid, questions.map((q) => q.id));
+      let base = 0;
+      questions.forEach((q) => {
+        if (q.correctAnswer && answers[q.id] === q.correctAnswer) base += 15;
+      });
+      triviaBaseByUid[uid] = base;
+    }
+  }
+
   await runTransaction(db, async (tx) => {
     const pubSnap = await tx.get(publicRef);
     if (!pubSnap.exists() || !pubSnap.data().mainRevealed) throw new Error("MAIN nu a fost dezvăluit încă.");
@@ -423,6 +457,26 @@ export async function resolveMain(gameweekId) {
 
       top.forEach((uid) => toWrite.push({ uid, points: pTop, matchScore: sTop, opponentMatchScore: sBottom }));
       bottom.forEach((uid) => toWrite.push({ uid, points: pBottom, matchScore: sBottom, opponentMatchScore: sTop }));
+    } else if (mainType === "trivia") {
+      // Scorul de bază (din triviaBaseByUid, precalculat mai sus) +
+      // bonusul de duel: câștigător +50p, egalitate +25p fiecare,
+      // pierdere +0p. Bye = bază + 25p (jumătate din maximul de duel,
+      // aceeași convenție folosită și la celelalte tipuri).
+      const { pairings = [], byePlayer = null } = config;
+      pairings.forEach(({ playerA, playerB }) => {
+        const baseA = triviaBaseByUid[playerA] || 0;
+        const baseB = triviaBaseByUid[playerB] || 0;
+        let bonusA, bonusB;
+        if (baseA > baseB) { bonusA = 50; bonusB = 0; }
+        else if (baseB > baseA) { bonusA = 0; bonusB = 50; }
+        else { bonusA = 25; bonusB = 25; }
+        toWrite.push({ uid: playerA, points: baseA + bonusA, matchScore: baseA, opponentMatchScore: baseB });
+        toWrite.push({ uid: playerB, points: baseB + bonusB, matchScore: baseB, opponentMatchScore: baseA });
+      });
+      if (byePlayer) {
+        const base = triviaBaseByUid[byePlayer] || 0;
+        toWrite.push({ uid: byePlayer, points: base + 25, matchScore: base, opponentMatchScore: null });
+      }
     }
 
     // FAZA DE CITIRE — toate înaintea oricărei scrieri.
@@ -513,6 +567,70 @@ export async function submitRouletteSpin(gameweekId, uid, spinNumber) {
 }
 
 // ── Istoricul sezonului — o intrare per etapă, cu starea calculată. ──
+// ══════════════════════════════════════════════════════════════════
+// TRIVIA ETAPEI — 10 întrebări × 2 variante (A/B, etichete libere:
+// "DA"/"NU", "Peste"/"Sub", "Barcelona"/"Real" etc.), 15p fiecare
+// (max 150p bază) + Duel 1v1 (comparând scorul de bază): câștigător
+// +50p, egalitate +25p fiecare, pierdere +0p. Bye (impar) = bază+25p.
+// Total maxim posibil: 150+50 = 200p, exact regula generală.
+// ══════════════════════════════════════════════════════════════════
+
+// ── Admin — configurează cele 10 întrebări, ÎNAINTE de Dezvăluire (sau
+// oricând, chiar și după — se pot ajusta din mers, cât nu s-a Rezolvat
+// încă). Fiecare întrebare: { id, text, optionALabel, optionBLabel,
+// correctAnswer: null|'A'|'B' }. correctAnswer pornește null — Admin îl
+// marchează separat, după ce evenimentele din etapă s-au produs. ──
+export async function configureTriviaQuestions(gameweekId, questions) {
+  await setDoc(doc(db, "weeklySurprises", gameweekId, "secret", "main"), {
+    config: { questions },
+  }, { merge: true });
+}
+
+// ── Admin — marchează răspunsul corect pentru O întrebare (progresiv,
+// pe măsură ce evenimentele se clarifică, nu neapărat toate deodată).
+// Citește-modifică-scrie array-ul complet (Firestore nu suportă update
+// pe un singur element din array direct). ──
+export async function markTriviaCorrectAnswer(gameweekId, questionId, correctAnswer) {
+  const secretRef = doc(db, "weeklySurprises", gameweekId, "secret", "main");
+  const snap = await getDoc(secretRef);
+  if (!snap.exists()) throw new Error("Trivia nu e configurată încă pentru etapa asta.");
+  const questions = (snap.data().config?.questions || []).map((q) =>
+    q.id === questionId ? { ...q, correctAnswer } : q
+  );
+  await setDoc(secretRef, { config: { ...snap.data().config, questions } }, { merge: true });
+}
+
+// ── User — răspunde la o întrebare. Editabil liber până la Resolve
+// (fără lock intermediar, Trivia n-are "kickoff" per întrebare). ──
+export async function submitTriviaAnswer(gameweekId, uid, questionId, answer) {
+  await setDoc(doc(db, "weeklySurprises", gameweekId, "triviaAnswers", `${questionId}_${uid}`), {
+    uid, questionId, answer, updatedAt: serverTimestamp(),
+  }, { merge: true });
+}
+
+// ── Răspunsurile PROPRII ale userului curent — pentru pre-completarea
+// formularului. Owner-only, per regula Firestore. ──
+export async function getMyTriviaAnswers(gameweekId, uid, questionIds) {
+  const snaps = await Promise.all(questionIds.map((qid) =>
+    getDoc(doc(db, "weeklySurprises", gameweekId, "triviaAnswers", `${qid}_${uid}`))
+  ));
+  const answers = {};
+  snaps.forEach((snap, i) => { if (snap.exists()) answers[questionIds[i]] = snap.data().answer; });
+  return answers;
+}
+
+// ── Admin — status de completare per user (câte din 10 a răspuns),
+// FĂRĂ să expună valorile răspunsurilor (nu e nevoie, Admin oricum are
+// acces total, dar păstrăm funcția minimală — doar ce cere UI-ul). ──
+export async function getTriviaSubmissionStatus(gameweekId, questionIds) {
+  const activeUids = [...(await listActiveUserIds())];
+  const results = await Promise.all(activeUids.map(async (uid) => {
+    const answers = await getMyTriviaAnswers(gameweekId, uid, questionIds);
+    return { uid, answeredCount: Object.keys(answers).length, total: questionIds.length };
+  }));
+  return results;
+}
+
 export async function listSeasonSurprises(seasonId) {
   const gameweeks = await listGameweeks(seasonId);
   const rows = await Promise.all(gameweeks.map(async (gw) => {

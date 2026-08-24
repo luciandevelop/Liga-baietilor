@@ -51,6 +51,7 @@ import {
   MAIN_CATALOG, BONUS_CATALOG, getWeeklySurprise, getSecretMain, getSecretBonus,
   configureSurprise, revealMain, revealBonus, resolveMain, resolveBonus, getSurpriseStatus,
   configureTriviaQuestions, markTriviaCorrectAnswer, getTriviaSubmissionStatus,
+  configureZaruriQuestions, markZaruriTarget, getZaruriSubmissionStatus,
 } from "../services/surprisesService";
 import { color, font, layout, radius } from "../theme";
 
@@ -216,6 +217,79 @@ export default function AdminScreen({ onBack }) {
       setTriviaMarking("");
     }
   }
+
+  // ── Zaruri — editor întrebări, introducere țintă reală, status ──
+  const [zaruriEditorOpen, setZaruriEditorOpen] = useState(null);
+  const [zaruriDraft, setZaruriDraft] = useState([]);
+  const [zaruriSaveMsg, setZaruriSaveMsg] = useState("");
+  const [zaruriSaving, setZaruriSaving] = useState(false);
+  const [zaruriMarking, setZaruriMarking] = useState("");
+  const [zaruriTargetDrafts, setZaruriTargetDrafts] = useState({}); // questionId -> valoare text in curs de editare
+  const [zaruriSubmissionPanel, setZaruriSubmissionPanel] = useState(null);
+  const [zaruriSubmissionRows, setZaruriSubmissionRows] = useState([]);
+  const [zaruriSubmissionLoading, setZaruriSubmissionLoading] = useState(false);
+
+  function openZaruriEditor(gwId, existingQuestions) {
+    if (zaruriEditorOpen === gwId) { setZaruriEditorOpen(null); return; }
+    const base = existingQuestions && existingQuestions.length > 0
+      ? existingQuestions
+      : Array.from({ length: 5 }, (_, i) => ({ id: `zq${i + 1}`, text: "", correctTarget: null }));
+    setZaruriDraft(base);
+    setZaruriEditorOpen(gwId);
+    setZaruriSaveMsg("");
+  }
+
+  function updateZaruriDraftField(idx, field, value) {
+    setZaruriDraft((prev) => prev.map((q, i) => (i === idx ? { ...q, [field]: value } : q)));
+  }
+
+  async function handleSaveZaruriQuestions(gwId) {
+    setZaruriSaving(true);
+    setZaruriSaveMsg("");
+    try {
+      const cleaned = zaruriDraft.map((q) => ({ ...q, text: q.text.trim() }));
+      await configureZaruriQuestions(gwId, cleaned);
+      setZaruriSaveMsg("✓ Întrebări salvate.");
+      const sm = await getSecretMain(gwId);
+      setSurprisesData((prev) => ({ ...prev, [gwId]: { ...prev[gwId], secretMain: sm } }));
+    } catch (err) {
+      setZaruriSaveMsg(`Eroare: ${err.message || err}`);
+    } finally {
+      setZaruriSaving(false);
+    }
+  }
+
+  async function handleMarkTarget(gwId, questionId) {
+    const raw = zaruriTargetDrafts[questionId];
+    const value = Number(raw);
+    if (raw === undefined || raw === "" || Number.isNaN(value) || value < 0) return;
+    setZaruriMarking(questionId);
+    try {
+      await markZaruriTarget(gwId, questionId, value);
+      const sm = await getSecretMain(gwId);
+      setSurprisesData((prev) => ({ ...prev, [gwId]: { ...prev[gwId], secretMain: sm } }));
+    } catch (err) {
+      console.error("Eroare la marcarea țintei:", err);
+    } finally {
+      setZaruriMarking("");
+    }
+  }
+
+  async function openZaruriSubmissionPanel(gwId, questions) {
+    if (zaruriSubmissionPanel === gwId) { setZaruriSubmissionPanel(null); return; }
+    setZaruriSubmissionPanel(gwId);
+    setZaruriSubmissionLoading(true);
+    try {
+      const rows = await getZaruriSubmissionStatus(gwId, questions.map((q) => q.id));
+      const names = await getUserPublicProfiles(rows.map((r) => r.uid));
+      setZaruriSubmissionRows(rows.map((r) => ({ ...r, nickname: names[r.uid]?.nickname || r.uid })));
+    } catch (err) {
+      console.error("Eroare la statusul de completare:", err);
+    } finally {
+      setZaruriSubmissionLoading(false);
+    }
+  }
+
 
   async function openTriviaSubmissionPanel(gwId, questions) {
     if (triviaSubmissionPanel === gwId) { setTriviaSubmissionPanel(null); return; }
@@ -1433,6 +1507,86 @@ export default function AdminScreen({ onBack }) {
                         </div>
                       )}
 
+                      {mainType === "zaruri" && (
+                        <div style={s.triviaBox}>
+                          <button type="button" style={s.smallBtn} onClick={() => openZaruriEditor(gw.id, data.secretMain?.config?.questions)}>
+                            {zaruriEditorOpen === gw.id ? "▲ Închide editorul" : "🎲 Configurează întrebările"}
+                          </button>
+
+                          {zaruriEditorOpen === gw.id && (
+                            <div style={s.triviaEditor}>
+                              {zaruriDraft.map((q, i) => (
+                                <div key={q.id} style={s.triviaQRow}>
+                                  <div style={s.triviaQNum}>#{i + 1}</div>
+                                  <input
+                                    style={s.triviaTextInput}
+                                    placeholder="Textul întrebării… (ex: Câte cornere în Real-Barca?)"
+                                    value={q.text}
+                                    onChange={(e) => updateZaruriDraftField(i, "text", e.target.value)}
+                                  />
+                                </div>
+                              ))}
+                              <button type="button" style={s.approveBtn} disabled={zaruriSaving} onClick={() => handleSaveZaruriQuestions(gw.id)}>
+                                {zaruriSaving ? "Se salvează…" : "💾 Salvează întrebările"}
+                              </button>
+                              {zaruriSaveMsg && <div style={s.triviaSaveMsg}>{zaruriSaveMsg}</div>}
+                            </div>
+                          )}
+
+                          {mainRevealed && (data.secretMain?.config?.questions?.length > 0) && (
+                            <div style={s.triviaValidate}>
+                              <div style={s.triviaValidateLabel}>✅ Introdu rezultatul real (după etapă)</div>
+                              {data.secretMain.config.questions.map((q) => (
+                                <div key={q.id} style={s.triviaValidateRow}>
+                                  <span style={s.triviaValidateText}>{q.text || "(fără text)"}</span>
+                                  <div style={s.triviaValidateBtns}>
+                                    {q.correctTarget != null ? (
+                                      <span style={s.doneTag}>{q.correctTarget}</span>
+                                    ) : (
+                                      <>
+                                        <input
+                                          style={s.zaruriTargetInput}
+                                          type="number"
+                                          placeholder="valoare"
+                                          value={zaruriTargetDrafts[q.id] ?? ""}
+                                          onChange={(e) => setZaruriTargetDrafts((prev) => ({ ...prev, [q.id]: e.target.value }))}
+                                        />
+                                        <button type="button" style={s.triviaValidateBtn} disabled={zaruriMarking === q.id}
+                                          onClick={() => handleMarkTarget(gw.id, q.id)}>
+                                          ✓
+                                        </button>
+                                      </>
+                                    )}
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+
+                          {mainRevealed && (
+                            <div style={s.triviaSubmissionSection}>
+                              <button type="button" style={s.smallBtn} onClick={() => openZaruriSubmissionPanel(gw.id, data.secretMain?.config?.questions || [])}>
+                                {zaruriSubmissionPanel === gw.id ? "▲ Ascunde status" : "👥 Cine s-a oprit"}
+                              </button>
+                              {zaruriSubmissionPanel === gw.id && (
+                                <div style={s.triviaSubmissionList}>
+                                  {zaruriSubmissionLoading ? <div style={s.hint}>Se încarcă…</div> : (
+                                    zaruriSubmissionRows.map((r) => (
+                                      <div key={r.uid} style={s.triviaSubmissionRow}>
+                                        <span>{r.nickname}</span>
+                                        <span style={{ color: r.answeredCount === r.total ? "#8BD957" : "#F0A94E" }}>
+                                          {r.answeredCount}/{r.total}
+                                        </span>
+                                      </div>
+                                    ))
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      )}
+
                       <div style={s.surpriseRow}>
                         <label style={s.surpriseLabel}>🎁 BONUS</label>
                         <select
@@ -1783,6 +1937,10 @@ const s = {
     padding: "4px 8px", fontSize: 9.5, fontWeight: 700, color: "#B4BBC7", cursor: "pointer",
   },
   triviaValidateBtnActive: { background: "rgba(139,217,87,0.15)", border: "1px solid rgba(139,217,87,0.4)", color: "#8BD957" },
+  zaruriTargetInput: {
+    width: 56, background: "#12141C", border: "1px solid rgba(255,255,255,0.15)", borderRadius: 6,
+    padding: "4px 6px", fontSize: 10.5, color: "#fff",
+  },
 
   triviaSubmissionSection: { marginTop: 10, paddingTop: 8, borderTop: "1px dashed rgba(255,255,255,0.1)" },
   triviaSubmissionList: { marginTop: 8, display: "flex", flexDirection: "column", gap: 4 },

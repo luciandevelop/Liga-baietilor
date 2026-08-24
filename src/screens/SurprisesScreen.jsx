@@ -14,6 +14,7 @@ import TeamDuelExperience from "../components/TeamDuelExperience";
 import TeamDuelMiniCard from "../components/TeamDuelMiniCard";
 import HalfHalfExperience from "../components/HalfHalfExperience";
 import TriviaExperience from "../components/TriviaExperience";
+import DiceExperience from "../components/DiceExperience";
 import RouletteExperience from "../components/RouletteExperience";
 import { color, font, radius } from "../matchdayTheme";
 
@@ -236,6 +237,22 @@ export default function SurprisesScreen({ user, onBack }) {
 
                   {secretMain?.type === "trivia" && (
                     <TriviaExperience
+                      gameweekId={gameweek.id}
+                      myUid={user.uid}
+                      opponentUid={myOpponent}
+                      isBye={isMyBye}
+                      questions={secretMain?.config?.questions || []}
+                      profiles={profiles}
+                      resolved={!!pub?.mainResolved}
+                      myPoints={myResult?.mainPoints}
+                      myMatchScore={myResult?.mainMatchScore}
+                      opponentMatchScore={myResult?.mainOpponentMatchScore}
+                      deadlinePassed={deadlinePassed}
+                    />
+                  )}
+
+                  {secretMain?.type === "zaruri" && (
+                    <DiceExperience
                       gameweekId={gameweek.id}
                       myUid={user.uid}
                       opponentUid={myOpponent}

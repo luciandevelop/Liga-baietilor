@@ -1,4 +1,4 @@
-import { collection, doc, getDoc, getDocs, setDoc, runTransaction, serverTimestamp } from "firebase/firestore";
+import { collection, doc, getDoc, getDocs, setDoc, query, where, runTransaction, serverTimestamp } from "firebase/firestore";
 import { db } from "../firebase";
 import { listActiveUserIds, listGameweeks, getLiveGameweekPoints, isGameweekReadyToResolve, getLastCompletedGameweek, listGameweekScores } from "./adminService";
 
@@ -17,7 +17,7 @@ export const MAIN_CATALOG = [
   { id: "half-random", label: "Jumate-Jumate Random", active: true },
   { id: "half-topbottom", label: "Jumate-Jumate Top vs Bottom", active: true },
   { id: "trivia", label: "Trivia Etapei", active: true },
-  { id: "zaruri", label: "Zarurile", active: false },
+  { id: "zaruri", label: "Zarurile", active: true },
   { id: "sabotaj", label: "Sabotaj", active: false },
 ];
 
@@ -205,11 +205,11 @@ export async function revealMain(gameweekId) {
         else byePlayer = activeUids[i];
       }
       config = { pairings, byePlayer };
-    } else if (type === "trivia") {
+    } else if (type === "trivia" || type === "zaruri") {
       // Reutilizează EXACT pairing-ul aleatoriu de la Duel Random —
       // aceeași funcție, aceeași regulă de Bye. Întrebările au fost DEJA
-      // configurate de Admin (configureTriviaQuestions, oricând înainte)
-      // — le păstrăm neatinse, doar adăugăm perechile.
+      // configurate de Admin (configureTriviaQuestions/configureZaruriQuestions,
+      // oricând înainte) — le păstrăm neatinse, doar adăugăm perechile.
       const pairings = [];
       let byePlayer = null;
       for (let i = 0; i < activeUids.length; i += 2) {
@@ -370,6 +370,29 @@ export async function resolveMain(gameweekId) {
     }
   }
 
+  // Pentru Zaruri — scorul de bază din suma aruncărilor vs ținta reală,
+  // 30−5×distanță per întrebare, BUST (a depășit ținta) = 0, clamped la
+  // 0 în jos. Totalul (indiferent dacă userul a apăsat explicit STOP —
+  // aceeași filozofie ca la Ruletă: la Resolve se ia suma existentă,
+  // "orice avea în acel moment").
+  let zaruriBaseByUid = {};
+  if (preType === "zaruri") {
+    const questions = preSecretSnap.data().config?.questions || [];
+    const activeUids = [...(await listActiveUserIds())];
+    zaruriBaseByUid = Object.fromEntries(activeUids.map((uid) => [uid, 0]));
+    for (const uid of activeUids) {
+      let base = 0;
+      for (const q of questions) {
+        if (q.correctTarget == null) continue;
+        const state = await getMyDiceState(gameweekId, uid, q.id);
+        if (state.total > q.correctTarget) continue; // BUST = 0p pentru întrebarea asta
+        const distance = q.correctTarget - state.total;
+        base += Math.max(0, 30 - 5 * distance);
+      }
+      zaruriBaseByUid[uid] = base;
+    }
+  }
+
   await runTransaction(db, async (tx) => {
     const pubSnap = await tx.get(publicRef);
     if (!pubSnap.exists() || !pubSnap.data().mainRevealed) throw new Error("MAIN nu a fost dezvăluit încă.");
@@ -475,6 +498,24 @@ export async function resolveMain(gameweekId) {
       });
       if (byePlayer) {
         const base = triviaBaseByUid[byePlayer] || 0;
+        toWrite.push({ uid: byePlayer, points: base + 25, matchScore: base, opponentMatchScore: null });
+      }
+    } else if (mainType === "zaruri") {
+      // Identic structural cu Trivia — doar sursa scorului de bază diferă
+      // (zaruriBaseByUid, din aruncări vs țintă, nu din răspunsuri).
+      const { pairings = [], byePlayer = null } = config;
+      pairings.forEach(({ playerA, playerB }) => {
+        const baseA = zaruriBaseByUid[playerA] || 0;
+        const baseB = zaruriBaseByUid[playerB] || 0;
+        let bonusA, bonusB;
+        if (baseA > baseB) { bonusA = 50; bonusB = 0; }
+        else if (baseB > baseA) { bonusA = 0; bonusB = 50; }
+        else { bonusA = 25; bonusB = 25; }
+        toWrite.push({ uid: playerA, points: baseA + bonusA, matchScore: baseA, opponentMatchScore: baseB });
+        toWrite.push({ uid: playerB, points: baseB + bonusB, matchScore: baseB, opponentMatchScore: baseA });
+      });
+      if (byePlayer) {
+        const base = zaruriBaseByUid[byePlayer] || 0;
         toWrite.push({ uid: byePlayer, points: base + 25, matchScore: base, opponentMatchScore: null });
       }
     }
@@ -627,6 +668,86 @@ export async function getTriviaSubmissionStatus(gameweekId, questionIds) {
   const results = await Promise.all(activeUids.map(async (uid) => {
     const answers = await getMyTriviaAnswers(gameweekId, uid, questionIds);
     return { uid, answeredCount: Object.keys(answers).length, total: questionIds.length };
+  }));
+  return results;
+}
+
+// ══════════════════════════════════════════════════════════════════
+// ZARURILE — 5 întrebări numerice, fiecare cu propria secvență de zar
+// (aruncă, alege mai dau/mă opresc, oricând). Scor per întrebare:
+// 30 − 5×distanță față de ținta reală (introdusă de Admin după etapă),
+// clamped la 0, BUST (a depășit ținta) = 0. Max 150p bază (5×30) +
+// Duel (compară suma celor 5): câștigător +50p, egalitate +25p fiecare,
+// pierdere +0p. Bye = bază+25p. Total maxim 200p.
+// ══════════════════════════════════════════════════════════════════
+
+// ── Admin — configurează cele 5 întrebări. { id, text, correctTarget:
+// null|number }. correctTarget pornește null, Admin îl introduce separat,
+// după ce evenimentele s-au produs. ──
+export async function configureZaruriQuestions(gameweekId, questions) {
+  await setDoc(doc(db, "weeklySurprises", gameweekId, "secret", "main"), {
+    config: { questions },
+  }, { merge: true });
+}
+
+export async function markZaruriTarget(gameweekId, questionId, correctTarget) {
+  const secretRef = doc(db, "weeklySurprises", gameweekId, "secret", "main");
+  const snap = await getDoc(secretRef);
+  if (!snap.exists()) throw new Error("Zarurile nu sunt configurate încă pentru etapa asta.");
+  const questions = (snap.data().config?.questions || []).map((q) =>
+    q.id === questionId ? { ...q, correctTarget } : q
+  );
+  await setDoc(secretRef, { config: { ...snap.data().config, questions } }, { merge: true });
+}
+
+// ── User — starea curentă la o întrebare: toate aruncările + dacă s-a
+// oprit. Owner-only, per regula Firestore. ──
+export async function getMyDiceState(gameweekId, uid, questionId) {
+  const rollsSnap = await getDocs(query(
+    collection(db, "weeklySurprises", gameweekId, "diceRolls"),
+    where("uid", "==", uid),
+  ));
+  const rolls = rollsSnap.docs
+    .map((d) => d.data())
+    .filter((r) => r.questionId === questionId)
+    .sort((a, b) => a.rollNumber - b.rollNumber);
+  const stopSnap = await getDoc(doc(db, "weeklySurprises", gameweekId, "diceStops", `${questionId}_${uid}`));
+  return {
+    rolls,
+    total: rolls.reduce((sum, r) => sum + r.value, 0),
+    stopped: stopSnap.exists(),
+  };
+}
+
+// ── User — aruncă zarul o dată în plus, pentru o întrebare. Determină
+// automat numărul următoarei aruncări (nu se poate arunca după STOP —
+// verificat client-side, nu la nivel de regulă, aceeași limitare onestă
+// ca la Ruletă). ──
+export async function rollDice(gameweekId, uid, questionId) {
+  const state = await getMyDiceState(gameweekId, uid, questionId);
+  const nextRollNumber = state.rolls.length + 1;
+  const value = Math.floor(Math.random() * 6) + 1;
+  await setDoc(doc(db, "weeklySurprises", gameweekId, "diceRolls", `${questionId}_${uid}_${nextRollNumber}`), {
+    uid, questionId, rollNumber: nextRollNumber, value, createdAt: serverTimestamp(),
+  });
+  return { value, total: state.total + value, rollNumber: nextRollNumber };
+}
+
+export async function stopRolling(gameweekId, uid, questionId) {
+  await setDoc(doc(db, "weeklySurprises", gameweekId, "diceStops", `${questionId}_${uid}`), {
+    uid, questionId, stoppedAt: serverTimestamp(),
+  });
+}
+
+// ── Admin — status de completare per user (câte din 5 întrebări au un
+// STOP înregistrat), ca la Trivia. ──
+export async function getZaruriSubmissionStatus(gameweekId, questionIds) {
+  const activeUids = [...(await listActiveUserIds())];
+  const results = await Promise.all(activeUids.map(async (uid) => {
+    const stops = await Promise.all(questionIds.map((qid) =>
+      getDoc(doc(db, "weeklySurprises", gameweekId, "diceStops", `${qid}_${uid}`))
+    ));
+    return { uid, answeredCount: stops.filter((s) => s.exists()).length, total: questionIds.length };
   }));
   return results;
 }

@@ -10,7 +10,7 @@ import PlayerAvatar from "../components/PlayerAvatar";
 // avataruri, denumite după nickname-ul de la momentul alocării). O
 // corectare reală (cineva a pus din greșeală numele lui real etc.) se
 // face DOAR din Admin, cu control, nu liber de către jucător.
-export default function ProfileScreen({ user, profile, isAdmin, onOpenAdmin, onOpenSurprises, onBack }) {
+export default function ProfileScreen({ user, profile, isAdmin, onOpenAdmin, onOpenSurprises, onOpenRules, onBack }) {
   const [avatarId, setAvatarId] = useState(profile?.avatarId || null);
   const [saving, setSaving] = useState(null); // avatarId în curs de salvare, sau null
   const [error, setError] = useState("");
@@ -77,6 +77,7 @@ export default function ProfileScreen({ user, profile, isAdmin, onOpenAdmin, onO
 
         <div style={s.sectionLabel}>Cont</div>
         <div style={s.accountCard}>
+          <button type="button" onClick={onOpenRules} style={s.accountItem}>📖 Reguli · Cum se joacă</button>
           <button type="button" onClick={onOpenSurprises} style={s.accountItem}>🎭 Surprizele Săptămânii</button>
           {isAdmin && (
             <button type="button" onClick={onOpenAdmin} style={s.accountItem}>⚙️ Panou Admin</button>

@@ -24,13 +24,14 @@ export default function RulesScreen({ onBack }) {
         <SectionLabel text="Pronosticuri" />
         <Section icon="⚽" title="Cum faci un pronostic" defaultOpen>
           <P>
-            Pentru fiecare meci, până la ora de start, alegi: <B>scorul exact</B>, plus
-            (dacă vrei) <B>numărul de cartonașe</B> și <B>numărul de cornere</B> din meci.
-            După ce a început meciul, pronosticul se blochează — nu se mai poate schimba.
+            Pentru fiecare meci alegi <B>scorul exact</B>, plus numărul de <B>cartonașe</B> și de
+            <B> cornere</B>. Pronosticul se blochează cu <B>30 de minute înainte</B> de ora de
+            start a meciului, nu la fluierul de start — după acel moment nu se mai poate schimba.
           </P>
           <P>
-            Nu ești obligat să prezici cartonașe/cornere — dacă le lași necompletate,
-            pur și simplu nu iei puncte de acolo, restul pronosticului rămâne valabil.
+            Cartonașele și cornerele vin deja completate implicit cu <B>8 cornere</B> și
+            <B> 3 cartonașe</B> — dacă nu le atingi deloc, astea rămân predicția ta la componentele
+            respective. Dacă vrei alte valori, le schimbi înainte de blocare.
           </P>
         </Section>
 
@@ -57,7 +58,8 @@ export default function RulesScreen({ onBack }) {
         <Section icon="🟨" title="Cartonașe și cornere — punctate separat">
           <P>
             Astea sunt <B>bonusuri separate</B> de scor — se calculează după diferența dintre
-            ce ai prezis și numărul real, indiferent dacă ai ghicit scorul sau nu.
+            ce ai prezis (sau valoarea implicită 8/3, dacă n-ai schimbat-o) și numărul real,
+            indiferent dacă ai ghicit scorul sau nu.
           </P>
           <MiniHeading>Cartonașe</MiniHeading>
           <Table rows={[["Exact", "15p"], ["Diferență de 1", "10p"], ["Diferență de 2", "5p"], ["Diferență mai mare", "0p"]]} />
@@ -70,17 +72,18 @@ export default function RulesScreen({ onBack }) {
           <P small>Punctele de scor + cartonașe + cornere se adună — ăsta e totalul de bază al meciului.</P>
         </Section>
 
-        <Section icon="⭐" title="Meciul Săptămânii și Jokerul (x2)">
+        <Section icon="⭐" title="Meciurile Săptămânii și Jokerul (x2)">
           <P>
-            În fiecare etapă există un <B>Meci al Săptămânii</B>, ales de Admin — toți jucătorii
-            care au pronostic pe acel meci primesc <B>dublu</B> la punctele lui.
+            În fiecare etapă există <B>3 Meciuri ale Săptămânii</B>, alese de Admin — toți
+            jucătorii care au pronostic pe oricare din ele primesc <B>dublu</B> la punctele lui.
           </P>
           <P>
             Fiecare jucător are și un <B>Joker</B> personal — îl poți pune pe orice alt meci din
-            etapă (unul singur) ca să-i dublezi punctele ție, doar ție.
+            etapă (unul singur, care nu e deja Meci al Săptămânii) ca să-i dublezi punctele ție,
+            doar ție.
           </P>
           <P small>
-            Nu poți pune Jokerul pe meciul care e deja Meciul Săptămânii — și oricum nu ar avea
+            Nu poți pune Jokerul pe un meci care e deja Meci al Săptămânii — și oricum nu ar avea
             sens, căci multiplicatorul nu se adună (rămâne x2, nu x4).
           </P>
           <ExampleBox title="Exemplu">
@@ -111,9 +114,17 @@ export default function RulesScreen({ onBack }) {
 
         <Section icon="📊" title="Clasamentele — Etapă / Sezon / General">
           <P>
-            <B>Etapă</B> = doar punctele din etapa curentă (inclusiv bonusul de poziție, după
-            finalizare). <B>Sezon</B> = suma tuturor etapelor finalizate. <B>General</B> include
-            și punctele din Surprize și Speciale, tot ce s-a jucat.
+            <B>Etapă</B> = punctele obținute doar în etapa (săptămâna) respectivă: pronosticuri +
+            bonusul de poziție + Surprizele Săptămânii, toate adunate.
+          </P>
+          <P>
+            <B>Sezon</B> = clasamentul sezonului curent (un sezon ține de obicei 4 etape, cam o
+            lună) — suma etapelor din sezonul respectiv, tot cu bonus de poziție și Surprize
+            incluse.
+          </P>
+          <P>
+            <B>General</B> = punctajul total, acumulat pe tot parcursul competiției, din toate
+            sezoanele de până acum (inclusiv Speciale).
           </P>
         </Section>
 

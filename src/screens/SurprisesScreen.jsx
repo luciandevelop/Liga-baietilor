@@ -15,6 +15,7 @@ import TeamDuelMiniCard from "../components/TeamDuelMiniCard";
 import HalfHalfExperience from "../components/HalfHalfExperience";
 import TriviaExperience from "../components/TriviaExperience";
 import DiceExperience from "../components/DiceExperience";
+import SabotajExperience from "../components/SabotajExperience";
 import RouletteExperience from "../components/RouletteExperience";
 import { color, font, radius } from "../matchdayTheme";
 
@@ -66,6 +67,7 @@ export default function SurprisesScreen({ user, onBack }) {
           (sm.config.top || []).forEach((u) => uids.add(u));
           (sm.config.bottom || []).forEach((u) => uids.add(u));
           if (sm.config.byePlayer) uids.add(sm.config.byePlayer);
+          (sm.config.order || []).forEach((u) => uids.add(u));
           if (uids.size > 0) getUserPublicProfiles([...uids]).then(setProfiles);
         }
 
@@ -121,6 +123,7 @@ export default function SurprisesScreen({ user, onBack }) {
     ...(secretMain?.config?.top || []),
     ...(secretMain?.config?.bottom || []),
     ...(secretMain?.config?.byePlayer ? [secretMain.config.byePlayer] : []),
+    ...(secretMain?.config?.order || []),
     ...(allResults || []).map((r) => r.uid),
   ]);
   const resultsTable = [...allInvolvedUids].map((uid) => ({
@@ -264,6 +267,19 @@ export default function SurprisesScreen({ user, onBack }) {
                       myMatchScore={myResult?.mainMatchScore}
                       opponentMatchScore={myResult?.mainOpponentMatchScore}
                       deadlinePassed={deadlinePassed}
+                    />
+                  )}
+
+                  {secretMain?.type === "sabotaj" && (
+                    <SabotajExperience
+                      gameweekId={gameweek.id}
+                      myUid={user.uid}
+                      order={secretMain?.config?.order || []}
+                      profiles={profiles}
+                      liveScores={liveScores}
+                      sabotajRevealed={!!pub?.sabotajRevealed}
+                      resolved={!!pub?.mainResolved}
+                      myResult={myResult}
                     />
                   )}
                 </>

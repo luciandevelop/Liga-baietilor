@@ -52,6 +52,7 @@ import {
   configureSurprise, revealMain, revealBonus, resolveMain, resolveBonus, getSurpriseStatus,
   configureTriviaQuestions, markTriviaCorrectAnswer, getTriviaSubmissionStatus,
   configureZaruriQuestions, markZaruriTarget, getZaruriSubmissionStatus,
+  getSabotajPublicProgress, revealSabotajNetwork, undoLastSabotajChoice,
 } from "../services/surprisesService";
 import { color, font, layout, radius } from "../theme";
 
@@ -164,6 +165,7 @@ export default function AdminScreen({ onBack }) {
   const [surprisesData, setSurprisesData] = useState({}); // gameweekId -> { public, secretMain, secretBonus }
   const [surprisesLoading, setSurprisesLoading] = useState(false);
   const [surpriseActionKey, setSurpriseActionKey] = useState(""); // "{gwId}_{action}" cu acțiune în curs
+  const [sabotajProgress, setSabotajProgress] = useState({}); // gameweekId -> { chosenPickers, takenTargets }
 
   // ── Trivia — editor întrebări, validare răspunsuri, status completare ──
   const [triviaEditorOpen, setTriviaEditorOpen] = useState(null); // gwId cu editorul deschis, sau null
@@ -312,8 +314,17 @@ export default function AdminScreen({ onBack }) {
     Promise.all(gameweeks.map(async (gw) => {
       const [pub, sm, sb] = await Promise.all([getWeeklySurprise(gw.id), getSecretMain(gw.id), getSecretBonus(gw.id)]);
       return [gw.id, { public: pub, secretMain: sm, secretBonus: sb }];
-    })).then((entries) => {
+    })).then(async (entries) => {
       setSurprisesData(Object.fromEntries(entries));
+      // Progresul Sabotajului — doar pentru etapele unde tipul chiar e
+      // Sabotaj și a fost deja dezvăluit (altfel `order` nici nu există).
+      const sabotajEntries = entries.filter(([, d]) => d.secretMain?.type === "sabotaj" && d.public?.mainRevealed);
+      const progressPairs = await Promise.all(sabotajEntries.map(async ([gwId, d]) => {
+        const order = d.secretMain?.config?.order || [];
+        const prog = await getSabotajPublicProgress(gwId, order);
+        return [gwId, prog];
+      }));
+      setSabotajProgress(Object.fromEntries(progressPairs));
     }).finally(() => setSurprisesLoading(false));
   }, [tab, gameweeks]);
 
@@ -345,8 +356,15 @@ export default function AdminScreen({ onBack }) {
       else if (action === "revealBonus") await revealBonus(gameweekId);
       else if (action === "resolveMain") await resolveMain(gameweekId);
       else if (action === "resolveBonus") await resolveBonus(gameweekId);
+      else if (action === "revealSabotaj") await revealSabotajNetwork(gameweekId);
+      else if (action === "undoSabotaj") await undoLastSabotajChoice(gameweekId);
       const [pub, sm, sb] = await Promise.all([getWeeklySurprise(gameweekId), getSecretMain(gameweekId), getSecretBonus(gameweekId)]);
       setSurprisesData((prev) => ({ ...prev, [gameweekId]: { public: pub, secretMain: sm, secretBonus: sb } }));
+      if (sm?.type === "sabotaj") {
+        const order = sm.config?.order || [];
+        const prog = await getSabotajPublicProgress(gameweekId, order);
+        setSabotajProgress((prev) => ({ ...prev, [gameweekId]: prog }));
+      }
     } catch (err) {
       console.error(`Eroare la ${action}:`, err);
       alert(err.message || "Eroare — vezi consola.");
@@ -1418,6 +1436,8 @@ export default function AdminScreen({ onBack }) {
                             onClick={() => handleSurpriseAction(gw.id, "revealMain")}>
                             🏆 Dezvăluie
                           </button>
+                        ) : mainType === "sabotaj" && !data.public?.sabotajRevealed ? (
+                          <span style={s.doneTag}>🕵️ alegeri în curs</span>
                         ) : !mainResolved ? (
                           <button type="button" style={s.approveBtn} disabled={surpriseActionKey === `${gw.id}_resolveMain`}
                             onClick={() => handleSurpriseAction(gw.id, "resolveMain")}>
@@ -1427,6 +1447,51 @@ export default function AdminScreen({ onBack }) {
                           <span style={s.doneTag}>✓ gata</span>
                         )}
                       </div>
+
+                      {mainType === "sabotaj" && mainRevealed && (
+                        <div style={s.triviaBox}>
+                          {(() => {
+                            const order = data.secretMain?.config?.order || [];
+                            const prog = sabotajProgress[gw.id] || { chosenPickers: [], takenTargets: [] };
+                            const done = prog.chosenPickers.length;
+                            const total = order.length;
+                            const allDone = total > 0 && done >= total;
+                            return (
+                              <>
+                                <p style={s.hint}>
+                                  Ordinea e înghețată din clasamentul etapei precedente. {done}/{total} agenți și-au ales deja ținta.
+                                </p>
+                                {!data.public?.sabotajRevealed ? (
+                                  <>
+                                    <button
+                                      type="button" style={s.approveBtn}
+                                      disabled={!allDone || surpriseActionKey === `${gw.id}_revealSabotaj`}
+                                      onClick={() => handleSurpriseAction(gw.id, "revealSabotaj")}
+                                    >
+                                      🔥 Dezvăluie Sabotajele
+                                    </button>
+                                    {done > 0 && (
+                                      <button
+                                        type="button" style={s.ghostBtnSmall}
+                                        disabled={surpriseActionKey === `${gw.id}_undoSabotaj`}
+                                        onClick={() => {
+                                          if (window.confirm("Anulezi ultima alegere din secvență? Tura revine la acel jucător.")) {
+                                            handleSurpriseAction(gw.id, "undoSabotaj");
+                                          }
+                                        }}
+                                      >
+                                        ↩️ Anulează ultima alegere
+                                      </button>
+                                    )}
+                                  </>
+                                ) : (
+                                  <span style={s.doneTag}>✓ rețea dezvăluită</span>
+                                )}
+                              </>
+                            );
+                          })()}
+                        </div>
+                      )}
 
                       {mainType === "trivia" && (
                         <div style={s.triviaBox}>
@@ -1893,6 +1958,10 @@ const s = {
   smallBtn: {
     flexShrink: 0, background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.15)", borderRadius: 6,
     padding: "6px 10px", fontSize: 10.5, fontWeight: 700, color: "#fff", cursor: "pointer",
+  },
+  ghostBtnSmall: {
+    display: "block", marginTop: 8, background: "transparent", border: "1px solid rgba(255,255,255,0.12)", borderRadius: 6,
+    padding: "6px 10px", fontSize: 10, fontWeight: 600, color: "#8A93A6", cursor: "pointer",
   },
   playerRow: {
     display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10,

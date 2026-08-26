@@ -18,7 +18,7 @@ export const MAIN_CATALOG = [
   { id: "half-topbottom", label: "Jumate-Jumate Top vs Bottom", active: true },
   { id: "trivia", label: "Trivia Etapei", active: true },
   { id: "zaruri", label: "Zarurile", active: true },
-  { id: "sabotaj", label: "Sabotaj", active: false },
+  { id: "sabotaj", label: "Sabotaj", active: true },
 ];
 
 export const BONUS_CATALOG = [
@@ -304,6 +304,18 @@ export async function revealMain(gameweekId) {
       const top = ordered.slice(0, topSize);
       const bottom = ordered.slice(topSize);
       config = { top, bottom, usedRandomFallback };
+    } else if (type === "sabotaj") {
+      // Spre deosebire de toate celelalte tipuri, Sabotajul NU generează
+      // perechile la Reveal — doar ÎNGHEAȚĂ ordinea de alegere (identică
+      // ca sursă cu Jumate-Jumate Top/Bottom: clasamentul etapei
+      // precedente, tie-break pe seasonPoints, fallback random dacă nu
+      // există etapă anterioară finalizată). Alegerile reale se fac
+      // secvențial, DUPĂ Reveal, prin submitSabotajChoice — vezi mai jos.
+      const order = previousRankingTieBreak && previousRankingTieBreak.length > 0
+        ? previousRankingTieBreak
+        : activeUids;
+      const usedRandomFallback = !previousRankingTieBreak || previousRankingTieBreak.length === 0;
+      config = { order, usedRandomFallback };
     }
 
     tx.set(secretRef, { ...secretData, type, config }, { merge: true });
@@ -317,6 +329,240 @@ export async function revealBonus(gameweekId) {
     const pubSnap = await tx.get(publicRef);
     if (pubSnap.exists() && pubSnap.data().bonusRevealed) return;
     tx.set(publicRef, { gameweekId, bonusRevealed: true, bonusRevealedAt: serverTimestamp() }, { merge: true });
+  });
+}
+
+// ══════════════════════════════════════════════════════════════════
+// SABOTAJ — funcții PURE (fără Firestore), testabile independent.
+//
+// PROBLEMA "ULTIMULUI JUCĂTOR": alegerea secvențială (fiecare din `order`
+// alege exact o țintă, diferită de el însuși, dintre cele încă libere)
+// poate ajunge într-o stare fără ieșire dacă nu e restricționată corect.
+// Exemplu concret: order=[A,B,C]. A îl alege pe B. Dacă B îl alege apoi
+// pe A (opțiune altfel perfect validă — A≠B), rămâne C, cu SINGURA
+// țintă liberă fiind el însuși — blocaj.
+//
+// Demonstrație corectă (teorema lui Hall, pe graful bipartit "cine mai
+// are de ales" ↔ "ce ținte mai sunt libere", muchie = oricine, mai puțin
+// propria identitate — verificată REAL, cu testare exhaustivă, nu doar
+// pe hârtie: o primă versiune a acestei demonstrații a fost GREȘITĂ,
+// vezi mai jos):
+//   Pentru orice submulțime S de jucători-care-mai-au-de-ales, mulțimea
+//   țintelor accesibile din S e ÎNTREAGA mulțime de ținte libere T',
+//   CU O SINGURĂ EXCEPȚIE: dacă S conține un SINGUR jucător și acela e
+//   și el însuși o țintă încă liberă, atunci acel jucător exclude
+//   exact o țintă (pe sine) din opțiunile lui — dar dacă S are 2+
+//   jucători, excluderile lor (fiecare diferită — propria identitate)
+//   se ANULEAZĂ reciproc prin reuniune, deci T' rămâne întreg accesibil.
+//   Condiția lui Hall (|vecini(S)| ≥ |S|) eșuează STRICT o singură dată:
+//   când rămâne EXACT un jucător de ales și EXACT o țintă liberă, și
+//   sunt ACEEAȘI persoană — blocajul terminal descris mai sus.
+//   În orice altă stare (0 rămași, sau 2+ rămași, indiferent de
+//   suprapunere), o completare există întotdeauna.
+//
+// Soluția: la fiecare alegere, se respinge DOAR acea țintă care ar lăsa
+// exact un jucător față-n-față cu propria identitate ca ultimă opțiune.
+// Nu există reroll, nu există blocaj, nu există intervenție manuală.
+// ══════════════════════════════════════════════════════════════════
+
+// Verifică dacă alegerea (picker → target) e SIGURĂ — adică nu lasă,
+// pentru restul lanțului, o stare fără completare validă posibilă.
+export function isSabotajChoiceSafe(order, chosenPickers, takenTargets, picker, target) {
+  const nextChosen = new Set([...chosenPickers, picker]);
+  const nextTaken = new Set([...takenTargets, target]);
+  const remainingPickers = order.filter((uid) => !nextChosen.has(uid));
+  const remainingTargets = order.filter((uid) => !nextTaken.has(uid));
+  // Unicul caz nesigur: mai rămâne EXACT un jucător de ales și EXACT o
+  // țintă liberă, și sunt ACEEAȘI persoană — obligat să se auto-aleagă.
+  if (remainingPickers.length === 1 && remainingTargets.length === 1) {
+    return remainingPickers[0] !== remainingTargets[0];
+  }
+  return true;
+}
+
+// Lista de ținte SELECTABILE pentru `picker`, ACUM — exclude auto-țintirea,
+// țintele deja luate, ȘI orice țintă care ar produce blocajul de mai sus.
+export function getSabotajSelectableTargets(order, chosenPickers, takenTargets, picker) {
+  const takenSet = new Set(takenTargets);
+  return order.filter((uid) => {
+    if (uid === picker) return false;
+    if (takenSet.has(uid)) return false;
+    return isSabotajChoiceSafe(order, chosenPickers, takenTargets, picker, uid);
+  });
+}
+
+// E rândul lui `picker` ACUM? — doar dacă nu a ales deja și TOȚI cei
+// dinaintea lui, în ordinea înghețată, au ales deja (verificăm doar
+// predecesorul direct — prin inducție, dacă regula se aplică mereu,
+// asta garantează automat prefixul complet, fără decalaje posibile).
+export function isSabotajPickersTurn(order, chosenPickers, picker) {
+  const idx = order.indexOf(picker);
+  if (idx < 0) return false;
+  if (chosenPickers.includes(picker)) return false;
+  if (idx === 0) return true;
+  return chosenPickers.includes(order[idx - 1]);
+}
+
+// ── Starea PUBLICĂ, anonimă, a fazei de alegere — cine a ales deja
+// (`chosenPickers`, pentru gating-ul rândului) și ce ținte sunt deja
+// luate (`takenTargets`, pentru grilă). NICIUNA din ele nu spune CINE
+// a ales CE — doar existența celor 2 marcaje separate, scrise atomic
+// de submitSabotajChoice. Sigur de citit de oricine, oricând. ──
+export async function getSabotajPublicProgress(gameweekId, order) {
+  const [pickedSnaps, takenSnaps] = await Promise.all([
+    Promise.all(order.map((uid) => getDoc(doc(db, "weeklySurprises", gameweekId, "sabotajPicked", uid)))),
+    Promise.all(order.map((uid) => getDoc(doc(db, "weeklySurprises", gameweekId, "sabotajTaken", uid)))),
+  ]);
+  const chosenPickers = order.filter((uid, i) => pickedSnaps[i].exists());
+  const takenTargets = order.filter((uid, i) => takenSnaps[i].exists());
+  return { chosenPickers, takenTargets };
+}
+
+// ── Alegerea PROPRIE a userului curent — owner-only per regula
+// Firestore (sau oricine, DUPĂ sabotajRevealed). ──
+export async function getMySabotajChoice(gameweekId, uid) {
+  try {
+    const snap = await getDoc(doc(db, "weeklySurprises", gameweekId, "sabotajChoices", uid));
+    return snap.exists() ? snap.data() : null;
+  } catch (err) {
+    return null; // permission-denied = normal, încă nedezvăluit și nu ești tu owner-ul
+  }
+}
+
+// ── Toate alegerile — Admin ORICÂND, oricine DUPĂ sabotajRevealed.
+// Întoarce { pickerUid: targetUid }. ──
+export async function getAllSabotajChoices(gameweekId, order) {
+  const snaps = await Promise.all(order.map((uid) => getDoc(doc(db, "weeklySurprises", gameweekId, "sabotajChoices", uid))));
+  const map = {};
+  order.forEach((uid, i) => { if (snaps[i].exists()) map[uid] = snaps[i].data().target; });
+  return map;
+}
+
+// ── ALEGEREA ATOMICĂ — inima securității Sabotajului. Citește starea
+// FRESH (predecesor + toate țintele) chiar în tranzacție, revalidează
+// TOTUL (rândul e al lui, ținta nu-i el însuși, ținta e liberă, alegerea
+// nu creează blocajul demonstrat mai sus), apoi scrie 3 documente atomic:
+//   - sabotajChoices/{picker}  → SECRET (uid+target+pickerIndex)
+//   - sabotajPicked/{picker}   → PUBLIC, anonim (doar "a ales")
+//   - sabotajTaken/{target}    → PUBLIC, anonim (doar "e luată")
+// Toate create-only — regula Firestore interzice update/delete, deci
+// odată confirmată, alegerea e ireversibilă la nivel de bază de date,
+// nu doar de UI. Dacă 2 dispozitive încearcă simultan, Firestore
+// serializează tranzacțiile — a doua repetă cu starea proaspătă și
+// respinge dacă rândul/ținta nu mai sunt valide.
+// `pickerIndex` (poziția lui uid în `order`) e inclus explicit în
+// document ca REGULA FIRESTORE însăși să poată verifica independent că
+// rândul e cu adevărat al lui — nu doar tranzacția JS. Regula verifică
+// atât `order[pickerIndex] == uid` (dovedește indexul corect), cât și
+// că predecesorul (`order[pickerIndex-1]`) are deja `sabotajPicked` —
+// deci un client care ar ocoli complet submitSabotajChoice și ar scrie
+// direct în Firestore tot nu poate alege în afara rândului lui. ──
+export async function submitSabotajChoice(gameweekId, uid, target) {
+  const secretRef = doc(db, "weeklySurprises", gameweekId, "secret", "main");
+  const secretSnap = await getDoc(secretRef);
+  if (!secretSnap.exists() || secretSnap.data().type !== "sabotaj") {
+    throw new Error("Sabotajul nu e activ pentru etapa asta.");
+  }
+  const order = secretSnap.data().config?.order || [];
+  if (target === uid) throw new Error("Nu te poți sabota pe tine însuți.");
+  if (!order.includes(uid) || !order.includes(target)) throw new Error("Participant invalid.");
+
+  await runTransaction(db, async (tx) => {
+    const myChoiceRef = doc(db, "weeklySurprises", gameweekId, "sabotajChoices", uid);
+    const myPickedRef = doc(db, "weeklySurprises", gameweekId, "sabotajPicked", uid);
+    const targetTakenRef = doc(db, "weeklySurprises", gameweekId, "sabotajTaken", target);
+
+    const [myChoiceSnap, targetTakenSnap] = await Promise.all([tx.get(myChoiceRef), tx.get(targetTakenRef)]);
+    if (myChoiceSnap.exists()) throw new Error("Ai ales deja — alegerea e definitivă.");
+    if (targetTakenSnap.exists()) throw new Error("Ținta tocmai a fost luată de altcineva — alege alta.");
+
+    // Re-citim TOATĂ starea proaspătă, ca verificarea de siguranță să
+    // ruleze pe date curente, nu pe cele din momentul randării UI.
+    const [pickedSnaps, takenSnaps] = await Promise.all([
+      Promise.all(order.map((u) => tx.get(doc(db, "weeklySurprises", gameweekId, "sabotajPicked", u)))),
+      Promise.all(order.map((u) => tx.get(doc(db, "weeklySurprises", gameweekId, "sabotajTaken", u)))),
+    ]);
+    const chosenPickers = order.filter((u, i) => pickedSnaps[i].exists());
+    const takenTargets = order.filter((u, i) => takenSnaps[i].exists());
+
+    if (!isSabotajPickersTurn(order, chosenPickers, uid)) {
+      throw new Error("Nu e rândul tău încă.");
+    }
+    if (!isSabotajChoiceSafe(order, chosenPickers, takenTargets, uid, target)) {
+      throw new Error("Alegerea asta ar bloca un jucător de mai târziu — alege altă țintă.");
+    }
+
+    tx.set(myChoiceRef, { uid, target, pickerIndex: order.indexOf(uid), createdAt: serverTimestamp() });
+    tx.set(myPickedRef, { picked: true });
+    tx.set(targetTakenRef, { taken: true });
+  });
+}
+
+// ── Admin — RECOVERY: anulează DOAR ultima alegere din secvență (cea a
+// ultimului picker din `chosenPickers`), atomic, folosind exact regula
+// `allow delete: if isAdmin()` introdusă pentru exact acest scop. Șterge
+// toate 3 documentele lui (choice+picked+taken) într-o SINGURĂ tranzacție
+// — ori toate 3, ori niciunul, niciun orphan posibil. NU atinge targetul
+// direct (Adminul nu poate alege în locul jucătorului) — doar întoarce
+// tura la pickerul respectiv, ca s-o refacă el însuși. Refuzată explicit
+// după sabotajRevealed sau mainResolved — recovery e valabilă STRICT în
+// faza de alegere. ──
+export async function undoLastSabotajChoice(gameweekId) {
+  const publicRef = doc(db, "weeklySurprises", gameweekId);
+  const secretRef = doc(db, "weeklySurprises", gameweekId, "secret", "main");
+
+  const [pubSnap, secretSnap] = await Promise.all([getDoc(publicRef), getDoc(secretRef)]);
+  if (pubSnap.exists() && pubSnap.data().sabotajRevealed) {
+    throw new Error("Nu mai poți anula alegeri — rețeaua Sabotajului a fost deja dezvăluită.");
+  }
+  if (pubSnap.exists() && pubSnap.data().mainResolved) {
+    throw new Error("Nu mai poți anula alegeri — Sabotajul a fost deja rezolvat.");
+  }
+  if (!secretSnap.exists() || secretSnap.data().type !== "sabotaj") {
+    throw new Error("Sabotajul nu e configurat pentru etapa asta.");
+  }
+  const order = secretSnap.data().config?.order || [];
+  const { chosenPickers } = await getSabotajPublicProgress(gameweekId, order);
+  if (chosenPickers.length === 0) {
+    throw new Error("Nu există nicio alegere de anulat.");
+  }
+  const lastPicker = chosenPickers[chosenPickers.length - 1];
+
+  const choiceRef = doc(db, "weeklySurprises", gameweekId, "sabotajChoices", lastPicker);
+  const pickedRef = doc(db, "weeklySurprises", gameweekId, "sabotajPicked", lastPicker);
+
+  await runTransaction(db, async (tx) => {
+    const choiceSnap = await tx.get(choiceRef);
+    if (!choiceSnap.exists()) throw new Error("Alegerea nu mai există — poate a fost deja anulată.");
+    const target = choiceSnap.data().target;
+    const takenRef = doc(db, "weeklySurprises", gameweekId, "sabotajTaken", target);
+    const takenSnap = await tx.get(takenRef);
+
+    tx.delete(choiceRef);
+    tx.delete(pickedRef);
+    if (takenSnap.exists()) tx.delete(takenRef);
+  });
+
+  return { undonePicker: lastPicker };
+}
+
+// ── Admin — dezvăluie TOATĂ rețeaua Sabotajului simultan. Refuză dacă
+// mai lipsește vreo alegere (nu poți dezvălui un lanț incomplet).
+// Idempotent — al doilea apel nu face nimic. NU modifică nicio alegere,
+// doar comută vizibilitatea lui sabotajChoices/*. ──
+export async function revealSabotajNetwork(gameweekId) {
+  const publicRef = doc(db, "weeklySurprises", gameweekId);
+  const secretRef = doc(db, "weeklySurprises", gameweekId, "secret", "main");
+  const secretSnap = await getDoc(secretRef);
+  const order = secretSnap.exists() ? (secretSnap.data().config?.order || []) : [];
+  const { chosenPickers } = await getSabotajPublicProgress(gameweekId, order);
+  if (chosenPickers.length < order.length) {
+    throw new Error(`Nu toți jucătorii și-au ales ținta încă (${chosenPickers.length}/${order.length}).`);
+  }
+  await runTransaction(db, async (tx) => {
+    const pubSnap = await tx.get(publicRef);
+    if (pubSnap.exists() && pubSnap.data().sabotajRevealed) return;
+    tx.set(publicRef, { gameweekId, sabotajRevealed: true, sabotajRevealedAt: serverTimestamp() }, { merge: true });
   });
 }
 
@@ -391,6 +637,54 @@ export async function resolveMain(gameweekId) {
       }
       zaruriBaseByUid[uid] = base;
     }
+  }
+
+  // GARDĂ SABOTAJ — nu poți rezolva un lanț a cărui rețea nu a fost
+  // încă dezvăluită (Admin trebuie să apese explicit "Dezvăluie
+  // Sabotajele" înainte — altfel userii ar vedea direct rezultatul
+  // final, fără să fi văzut vreodată cine pe cine a ales).
+  if (preType === "sabotaj" && !preSecretSnap.exists()) {
+    throw new Error("Sabotajul nu e configurat pentru etapa asta.");
+  }
+  let sabotajResultByUid = {};
+  if (preType === "sabotaj") {
+    const pubSnapPre = await getDoc(publicRef);
+    if (!pubSnapPre.exists() || !pubSnapPre.data().sabotajRevealed) {
+      throw new Error("Nu poți rezolva Sabotajul — rețeaua nu a fost dezvăluită încă (apasă mai întâi „🔥 Dezvăluie Sabotajele”).");
+    }
+    // TOATE confruntările se evaluează din ACELAȘI snapshot (scoreByUid,
+    // luat mai sus) — NICIODATĂ în cascadă. Dacă A îl bate pe B și C îl
+    // bate pe A, transferul lui C NU ține cont de cele +200p pe care A
+    // tocmai le-a primit de la B — exact cerința explicită.
+    const order = preSecretSnap.data().config?.order || [];
+    const choicesMap = await getAllSabotajChoices(gameweekId, order); // picker → target
+    const inverseMap = {}; // target → picker
+    Object.entries(choicesMap).forEach(([picker, target]) => { inverseMap[target] = picker; });
+
+    const net = Object.fromEntries(order.map((uid) => [uid, 0]));
+    const detail = Object.fromEntries(order.map((uid) => [uid, {
+      target: choicesMap[uid] || null, targetOutcome: null, targetTransfer: 0, targetScores: null,
+      attacker: inverseMap[uid] || null, attackerOutcome: null, attackerTransfer: 0, attackerScores: null,
+    }]));
+
+    order.forEach((picker) => {
+      const target = choicesMap[picker];
+      if (!target) return; // defensiv — nu ar trebui să se-ntâmple dacă sabotajRevealed==true
+      const rawAttacker = scoreByUid[picker] || 0;
+      const rawVictim = scoreByUid[target] || 0;
+      // transfer = min(200, punctele DISPONIBILE ale victimei) — victima
+      // nu poate ajunge sub 0 DIN CAUZA Sabotajului; DRAW = transfer 0.
+      const transfer = rawAttacker > rawVictim ? Math.min(200, rawVictim) : 0;
+      net[picker] += transfer;
+      net[target] -= transfer;
+      detail[picker].targetOutcome = transfer > 0 ? "success" : "fail";
+      detail[picker].targetTransfer = transfer;
+      detail[picker].targetScores = { mine: rawAttacker, theirs: rawVictim };
+      detail[target].attackerOutcome = transfer > 0 ? "success" : "fail";
+      detail[target].attackerTransfer = transfer;
+      detail[target].attackerScores = { mine: rawVictim, theirs: rawAttacker };
+    });
+    sabotajResultByUid = { net, detail };
   }
 
   await runTransaction(db, async (tx) => {
@@ -518,6 +812,15 @@ export async function resolveMain(gameweekId) {
         const base = zaruriBaseByUid[byePlayer] || 0;
         toWrite.push({ uid: byePlayer, points: base + 25, matchScore: base, opponentMatchScore: null });
       }
+    } else if (mainType === "sabotaj") {
+      // Transferurile au fost DEJA calculate mai sus (sabotajResultByUid),
+      // dintr-un SINGUR snapshot comun — aici doar le transformăm în
+      // scrieri. mainPoints poate fi NEGATIV (o victimă netă) — intenționat,
+      // e un transfer real, nu un bonus, suma tuturor rămâne 0.
+      const { net = {}, detail = {} } = sabotajResultByUid;
+      Object.keys(net).forEach((uid) => {
+        toWrite.push({ uid, points: net[uid], matchScore: null, opponentMatchScore: null, sabotaj: detail[uid] });
+      });
     }
 
     // FAZA DE CITIRE — toate înaintea oricărei scrieri.
@@ -528,9 +831,11 @@ export async function resolveMain(gameweekId) {
     // seasonPoints separat) era exact sursa haosului raportat.
     // FAZA DE SCRIERE.
     toWrite.forEach((r) => {
-      tx.set(doc(db, "weeklySurprises", gameweekId, "results", r.uid), {
+      const payload = {
         uid: r.uid, mainPoints: r.points, mainMatchScore: r.matchScore, mainOpponentMatchScore: r.opponentMatchScore,
-      }, { merge: true });
+      };
+      if (r.sabotaj) payload.sabotaj = r.sabotaj; // doar la tipul sabotaj — celelalte tipuri neatinse
+      tx.set(doc(db, "weeklySurprises", gameweekId, "results", r.uid), payload, { merge: true });
     });
     tx.set(publicRef, { mainResolved: true }, { merge: true });
   });

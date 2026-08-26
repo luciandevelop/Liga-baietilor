@@ -33,6 +33,12 @@ export default function RulesScreen({ onBack }) {
             <B> 3 cartonașe</B> — dacă nu le atingi deloc, astea rămân predicția ta la componentele
             respective. Dacă vrei alte valori, le schimbi înainte de blocare.
           </P>
+          <P small>
+            Contează STRICT primele <B>90 de minute</B> (plus prelungirile regulamentare de
+            arbitru, adică minutele adăugate în fiecare repriză) — dacă meciul merge la
+            prelungiri de 30 de minute (eliminatorii), orice se întâmplă acolo NU se ia în calcul:
+            nici rezultatul, nici cartonașele, nici cornerele.
+          </P>
         </Section>
 
         <Section icon="🎯" title="Punctele pe scor — cu exemple">
@@ -63,6 +69,11 @@ export default function RulesScreen({ onBack }) {
           </P>
           <MiniHeading>Cartonașe</MiniHeading>
           <Table rows={[["Exact", "15p"], ["Diferență de 1", "10p"], ["Diferență de 2", "5p"], ["Diferență mai mare", "0p"]]} />
+          <P small>
+            Un <B>cartonaș roșu direct</B> (fără galben înainte) se numără ca <B>2 cartonașe</B>,
+            nu ca 1. Cartonașele primite <B>în afara terenului</B> (bancă tehnică, staff, rezerve)
+            NU se numără — doar cele arătate jucătorilor de pe teren.
+          </P>
           <MiniHeading>Cornere</MiniHeading>
           <Table rows={[["Exact", "15p"], ["Diferență de 1", "10p"], ["Diferență de 2", "5p"], ["Diferență de 3", "2p"], ["Diferență mai mare", "0p"]]} />
           <ExampleBox title="Exemplu">

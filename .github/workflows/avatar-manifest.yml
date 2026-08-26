@@ -1,1 +1,50 @@
+name: Actualizează manifestul de avataruri
 
+# Rulează AUTOMAT de fiecare dată când urci imagini noi în
+# public/avatars/** — Lu nu trebuie să apese nimic, nu trebuie să
+# folosească terminal, nu trebuie să facă nimic în plus față de upload
+# normal pe GitHub de pe telefon.
+#
+# DE CE EXISTĂ ACEST FIȘIER (nu doar scriptul care rulează la build):
+# Vercel clonează repo-ul din git la FIECARE build, pornind de la zero —
+# nu are memoria build-urilor anterioare. Dacă manifestul generat n-ar fi
+# COMIS ÎN GIT, fiecare build Vercel ar regenera indexurile "orb", fără
+# să știe ce a fost deja atribuit — risc real ca un avatar deja ales de
+# cineva să ajungă, peste 2-3 adăugiri viitoare, să indice altă poză.
+# Acest workflow rulează scriptul ȘI comite rezultatul înapoi în GitHub,
+# ÎNAINTE ca Vercel să construiască site-ul — astfel manifestul e mereu
+# sursa de adevăr persistentă, nu un artefact efemer de build.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "public/avatars/**"
+
+permissions:
+  contents: write
+
+jobs:
+  update-manifest:
+    runs-on: ubuntu-latest
+    # Evită bucla infinită: dacă acest job a comis ultima dată (mesajul
+    # de commit e al lui), nu se re-declanșează pe propriul lui commit.
+    # (Măsură de siguranță suplimentară — GITHUB_TOKEN implicit oricum
+    # NU declanșează alte workflow-uri, dar rămâne aici ca plasă extra.)
+    if: "!contains(github.event.head_commit.message, '[auto avatar manifest]')"
+    steps:
+      - name: Clonează repo-ul
+        uses: actions/checkout@v4
+
+      - name: Pregătește Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Regenerează manifestul de avataruri
+        run: node scripts/generate-avatar-manifest.js
+
+      - name: Comite manifestul dacă s-a schimbat
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: "chore: actualizează manifestul de avataruri [auto avatar manifest]"
+          file_pattern: src/assets/avatarManifest.generated.js

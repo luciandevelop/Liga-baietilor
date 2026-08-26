@@ -121,20 +121,31 @@ export function detectRankChangeEvents(prevState, currentRows) {
   return events.sort((a, b) => b.priority - a.priority);
 }
 
-// ── Un meci ajuns la final — singurul eveniment de scor construibil
-// onest (aplicația nu ține scor live, gol-cu-gol — verificat în audit). ──
-export function buildMatchFinalEvent(match) {
+// ── Un meci ajuns la final — scorul, PLUS cine a nimerit scorul exact
+// (dacă cineva a nimerit) — sursa e matchPoints (scorePoints===120),
+// aceeași colecție folosită peste tot în aplicație pentru scoring, nu
+// predicțiile brute recitite separat. `exactScorers` = listă de
+// nickname-uri, calculată de apelant (feedService.js — are nevoie de
+// Firestore, funcția asta rămâne pură). ──
+export function buildMatchFinalEvent(match, exactScorers = []) {
   if (match.realScoreA == null || match.realScoreB == null) return null;
+  const scorersText = exactScorers.length === 0
+    ? "Final de meci"
+    : exactScorers.length === 1
+      ? `🎯 ${exactScorers[0]} a nimerit scorul exact!`
+      : exactScorers.length <= 3
+        ? `🎯 ${exactScorers.join(", ")} au nimerit scorul exact!`
+        : `🎯 ${exactScorers.slice(0, 2).join(", ")} și încă ${exactScorers.length - 2} au nimerit scorul exact!`;
   return {
     id: `match-final_${match.id}`,
     category: FEED_CATEGORIES.MECIURI, priority: PRIORITY.MATCH_RESULT, ts: Date.now(),
-    icon: "whistle", important: false,
+    icon: "whistle", important: exactScorers.length > 0,
     title: `${match.homeTeam} ${match.realScoreA}–${match.realScoreB} ${match.awayTeam}`,
-    subtitle: "Final de meci",
+    subtitle: scorersText,
     detail: {
       competitionName: match.competitionName, status: match.status,
       kickoffAt: match.kickoffAt?.toMillis ? match.kickoffAt.toMillis() : null,
-      matchId: match.id,
+      matchId: match.id, exactScorers,
     },
   };
 }

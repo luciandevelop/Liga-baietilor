@@ -8,6 +8,7 @@ import {
   mergeFeedEvents, FEED_CATEGORIES,
 } from "./feedEngine";
 import { listGeneralLeaderboard, listAllUsers } from "./adminService";
+import { getUserPublicProfiles } from "./profilesService";
 import { EDITORIAL_ARTICLES } from "../feedContent/editorialContent";
 import { FUN_ITEMS } from "../feedContent/funContent";
 import { CLUB_ALIASES } from "../assets/clubs/index.js";
@@ -65,11 +66,25 @@ export async function processRankChanges() {
   return { events };
 }
 
+// ── Cine a nimerit scorul EXACT la un meci — citit din matchPoints
+// (scorePoints === 120, aceeași sursă de adevăr folosită peste tot
+// pentru scoring, nu predicțiile brute recitite separat). Query simplu
+// pe un singur câmp (matchId) — nu cere index compus. ──
+async function getExactScorersForMatch(matchId) {
+  const snap = await getDocs(query(collection(db, "matchPoints"), where("matchId", "==", matchId)));
+  const exactUids = snap.docs.map((d) => d.data()).filter((p) => p.scorePoints === 120).map((p) => p.uid);
+  if (exactUids.length === 0) return [];
+  const profiles = await getUserPublicProfiles(exactUids);
+  return exactUids.map((uid) => profiles[uid]?.nickname || uid);
+}
+
 // ── Meciuri terminate — eveniment de scor final, ȘI ștergerea oricărui
 // eveniment "urmează" pentru același meci (nu mai are sens să apară ca
 // "următor" un meci deja terminat — REGULA ZERO se aplică și aici). ──
 export async function processFinishedMatches(matches) {
-  const events = matches.map((m) => buildMatchFinalEvent(m)).filter(Boolean);
+  const events = (await Promise.all(
+    matches.map(async (m) => buildMatchFinalEvent(m, await getExactScorersForMatch(m.id).catch(() => [])))
+  )).filter(Boolean);
   if (events.length > 0) {
     await saveFeedEvents(events);
     await Promise.all(matches.map((m) => deleteDoc(doc(db, "feedEvents", `upcoming_${m.id}`)).catch(() => {})));

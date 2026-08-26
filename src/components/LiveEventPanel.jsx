@@ -32,9 +32,21 @@ export default function LiveEventPanel({ match }) {
     setSaving(true);
     try {
       const event = await addMatchEvent(match.id, { type: form.type, team, minute: n, player: player.trim() || null });
-      setEvents((prev) => [...prev, event]);
+      const updatedEvents = [...events, event];
+      setEvents(updatedEvents);
       // Scrie și în Feed — dată reală, introdusă acum de admin, nu inventată.
-      await processLiveMatchEvent({ ...match, liveMinute: n }, event).catch((err) => console.error("Eroare Feed eveniment live:", err));
+      // AL DOILEA BUG GĂSIT (primul fix nu era suficient): `match`
+      // (prop-ul din AdminScreen) e citit O SINGURĂ DATĂ (listMatches, nu
+      // un listener live) — rămâne ÎNGHEȚAT tot restul sesiunii, chiar
+      // dacă mai adaugi goluri. Folosirea lui `match.matchEvents` (ca în
+      // reparația anterioară) mergea DOAR pentru primul gol din sesiune;
+      // la al doilea gol, tot pornea de la aceeași bază veche (goală),
+      // repetând exact bug-ul ("readuce la egalitate" pe fiecare gol,
+      // scor mereu 0-0). Fix REAL: folosim `events` — starea LOCALĂ a
+      // componentei, care chiar acumulează corect fiecare gol adăugat în
+      // sesiunea curentă, indiferent dacă părintele se reîmprospătează.
+      await processLiveMatchEvent({ ...match, liveMinute: n, matchEvents: updatedEvents }, event)
+        .catch((err) => console.error("Eroare Feed eveniment live:", err));
       setForm(null);
       setMinute("");
       setPlayer("");

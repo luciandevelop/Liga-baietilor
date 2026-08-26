@@ -16,8 +16,16 @@ export default {
     }
   },
   "bogdanb": {
-    "nextIndex": 1,
-    "files": {}
+    "nextIndex": 8,
+    "files": {
+      "1": "file_000000002118821180437609b963203f.png",
+      "2": "file_0000000026e4821192e2d674df41113e.png",
+      "3": "file_00000000842c81fb9782e5aa06e8a28d.png",
+      "4": "file_00000000b10c81f4a00838ddb781fa9a.png",
+      "5": "file_00000000c0c8820a888460d569df2daa.png",
+      "6": "file_00000000c70082118c20a1ffb7c74cc8.png",
+      "7": "file_00000000ca688211859d7bc6416a1f12.png"
+    }
   },
   "doctoru": {
     "nextIndex": 6,

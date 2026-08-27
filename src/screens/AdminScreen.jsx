@@ -703,6 +703,16 @@ export default function AdminScreen({ onBack }) {
   async function handleChangeStatus(matchId, newStatus) {
     await updateMatchStatus(matchId, newStatus);
     await refreshMatches(selectedGameweekId);
+    // ROOT CAUSE 2 din auditul Feed — reparat aici: schimbarea de status
+    // (spre deosebire de salvarea scorului) NU republica niciodată
+    // gameweekLiveScores. Un meci devine cu adevărat "final" (matchPoints
+    // se publică) abia AICI, la schimbarea de status — dar clasamentul
+    // live rămânea înghețat la starea de dinainte, deci Feed-ul nu mai
+    // detecta NICIODATĂ schimbările de poziție reale, cauzate de acest
+    // meci. Acum republicăm, exact ca la salvarea scorului.
+    if (currentGameweek?.status !== "completed") {
+      await recomputeAndPublish();
+    }
   }
 
   async function recomputeAndPublish() {

@@ -45,7 +45,7 @@ import {
 import { EDITORIAL_ARTICLES } from "../feedContent/editorialContent";
 import LiveEventPanel from "../components/LiveEventPanel";
 import {
-  listAllUsersWithStatus, approveUser, rejectUser, deactivateUser, reactivateUser,
+  listAllUsersWithStatus, approveUser, rejectUser, deactivateUser, reactivateUser, getMissingPredictionsForMatch,
 } from "../services/adminService";
 import {
   MAIN_CATALOG, BONUS_CATALOG, getWeeklySurprise, getSecretMain, getSecretBonus,
@@ -118,6 +118,8 @@ export default function AdminScreen({ onBack }) {
   const [seasons, setSeasons] = useState([]);
   const [gameweeks, setGameweeks] = useState([]);
   const [matches, setMatches] = useState([]);
+  const [missingPredictions, setMissingPredictions] = useState({}); // matchId -> [{uid,nickname}] | "loading" | undefined
+  const [openMissingFor, setOpenMissingFor] = useState(null); // matchId deschis, sau null
   const [selectedSeasonId, setSelectedSeasonId] = useState("");
   const [selectedGameweekId, setSelectedGameweekId] = useState("");
   const [loading, setLoading] = useState(false);
@@ -700,6 +702,21 @@ export default function AdminScreen({ onBack }) {
     }
   }
 
+  async function toggleMissingPredictions(matchId) {
+    if (openMissingFor === matchId) { setOpenMissingFor(null); return; }
+    setOpenMissingFor(matchId);
+    if (missingPredictions[matchId] === undefined) {
+      setMissingPredictions((prev) => ({ ...prev, [matchId]: "loading" }));
+      try {
+        const list = await getMissingPredictionsForMatch(matchId);
+        setMissingPredictions((prev) => ({ ...prev, [matchId]: list }));
+      } catch (err) {
+        console.error("Eroare la citirea pronosticurilor lipsă:", err);
+        setMissingPredictions((prev) => ({ ...prev, [matchId]: "error" }));
+      }
+    }
+  }
+
   async function handleChangeStatus(matchId, newStatus) {
     await updateMatchStatus(matchId, newStatus);
     await refreshMatches(selectedGameweekId);
@@ -1117,6 +1134,29 @@ export default function AdminScreen({ onBack }) {
                         disabled={currentGameweek?.status === "completed"}
                       />
                       {m.status === "live" && <LiveEventPanel match={m} />}
+                      <button type="button" style={s.missingPredBtn} onClick={() => toggleMissingPredictions(m.id)}>
+                        {openMissingFor === m.id ? "▲ Ascunde" : "👀 Cine n-a pontat"}
+                      </button>
+                      {openMissingFor === m.id && (
+                        <div style={s.missingPredPanel}>
+                          {missingPredictions[m.id] === "loading" && <span style={s.hint}>Se încarcă…</span>}
+                          {missingPredictions[m.id] === "error" && <span style={s.hint}>Eroare — încearcă din nou.</span>}
+                          {Array.isArray(missingPredictions[m.id]) && (
+                            missingPredictions[m.id].length === 0
+                              ? <span style={s.missingPredAllDone}>✓ Toată lumea a pontat.</span>
+                              : (
+                                <>
+                                  <span style={s.hint}>{missingPredictions[m.id].length} nu au pontat încă:</span>
+                                  <div style={s.missingPredChips}>
+                                    {missingPredictions[m.id].map((u) => (
+                                      <span key={u.uid} style={s.missingPredChip}>{u.nickname}</span>
+                                    ))}
+                                  </div>
+                                </>
+                              )
+                          )}
+                        </div>
+                      )}
                     </div>
                   ))}
                   {resultsOrderedMatches.length === 0 && (
@@ -1972,6 +2012,19 @@ const s = {
   ghostBtnSmall: {
     display: "block", marginTop: 8, background: "transparent", border: "1px solid rgba(255,255,255,0.12)", borderRadius: 6,
     padding: "6px 10px", fontSize: 10, fontWeight: 600, color: "#8A93A6", cursor: "pointer",
+  },
+  missingPredBtn: {
+    display: "block", width: "100%", marginTop: 6, background: "rgba(255,255,255,0.04)", border: `1px solid ${color.borderSubtle}`,
+    borderRadius: 8, padding: "8px 10px", fontSize: 11, fontWeight: 700, color: "#B8BECC", cursor: "pointer", textAlign: "left",
+  },
+  missingPredPanel: {
+    marginTop: 6, padding: "10px 12px", background: "rgba(255,255,255,0.03)", border: `1px solid ${color.borderSubtle}`, borderRadius: 8,
+  },
+  missingPredAllDone: { fontSize: 11.5, color: color.green || "#8BD957", fontWeight: 600 },
+  missingPredChips: { display: "flex", flexWrap: "wrap", gap: 6, marginTop: 6 },
+  missingPredChip: {
+    fontSize: 10.5, fontWeight: 600, color: "#F0B54C", background: "rgba(240,181,76,0.12)",
+    border: "1px solid rgba(240,181,76,0.3)", borderRadius: 999, padding: "3px 9px",
   },
   playerRow: {
     display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10,

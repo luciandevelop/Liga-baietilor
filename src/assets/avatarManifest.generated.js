@@ -52,8 +52,17 @@ export default {
     }
   },
   "ooo-micea": {
-    "nextIndex": 1,
-    "files": {}
+    "nextIndex": 9,
+    "files": {
+      "1": "file_00000000105c81f4bd2561f8c1f3f32c.png",
+      "2": "file_0000000023388211bfb492bd371fd79f.png",
+      "3": "file_000000006a6481f5a34fc513f1ee9cce.png",
+      "4": "file_00000000819c81f4aafaecf50a01c87a.png",
+      "5": "file_000000008e6c820a831c38b638556a99.png",
+      "6": "file_00000000943081f4b4e5486d3527b092.png",
+      "7": "file_00000000a83881f48990d0c743fe43d2.png",
+      "8": "patron_final_boss.png"
+    }
   },
   "sexu-ciobanu": {
     "nextIndex": 9,

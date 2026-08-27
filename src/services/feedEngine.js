@@ -32,7 +32,8 @@ export const FEED_CATEGORIES = {
 export const PRIORITY = {
   RANK_MAXIMA: 100,   // schimbare de lider, intrare/ieșire din TOP 3, salt foarte mare (5+)
   RANK_MARE: 90,       // intrare/ieșire din TOP 10, depășire directă, salt 3-4
-  LIVE_EVENT: 72,      // gol/cartonaș roșu, introdus manual de admin, în timpul meciului
+  LIVE_EVENT_MAJOR: 73, // gol/eveniment cu greutate reală: prim gol, egalizare, schimbare de lider, gol târziu decisiv
+  LIVE_EVENT: 65,      // gol/cartonaș "banal" — extinde un avantaj deja clar, fără să schimbe situația
   MATCH_RESULT: 70,    // rezultat final de meci
   JOKER: 60,           // Joker activat
   UPCOMING_IMPORTANT: 50, // meci important care urmează (ex. Meciul Săptămânii)
@@ -41,9 +42,17 @@ export const PRIORITY = {
 };
 
 // ── prevState: { uid: { rank, points } } — snapshot-ul persistent
-// anterior (din feedService.js). currentRows: din listGeneralLeaderboard,
-// cu `.rank` deja calculat (index+1) ȘI `.seasonPoints`. ──
-export function detectRankChangeEvents(prevState, currentRows) {
+// anterior (din feedService.js). currentRows: din listGeneralLeaderboard
+// SAU din clasamentul live al etapei (vezi processLiveRankChanges),
+// cu `.rank` deja calculat (index+1) ȘI `.seasonPoints`.
+// `opts.idPrefix`/`opts.scopeLabel` — permit reutilizarea EXACT a
+// acestei funcții pentru sursa de etapă (id-uri separate, ca să nu se
+// suprapună cu evenimentele de clasament general), fără nicio schimbare
+// de comportament când nu sunt date (implicit = comportamentul vechi,
+// neatins). ──
+export function detectRankChangeEvents(prevState, currentRows, opts = {}) {
+  const idPrefix = opts.idPrefix || "rank";
+  const scopeLabel = opts.scopeLabel || "";
   if (!prevState) return []; // primul snapshot care există vreodată — nimic de comparat
   const events = [];
 
@@ -83,14 +92,14 @@ export function detectRankChangeEvents(prevState, currentRows) {
 
     const pointsBefore = before.points;
     const pointsAfter = row.seasonPoints;
-    const id = `rank_${row.uid}_${before.rank}to${row.rank}`;
+    const id = `${idPrefix}_${row.uid}_${before.rank}to${row.rank}`;
 
     if (becameLeader) {
       const overtakenText = overtaken.length > 0 ? ` — l-a depășit pe ${overtaken.join(" și ")}` : "";
       events.push({
         id, category: FEED_CATEGORIES.CLASAMENT, priority: PRIORITY.RANK_MAXIMA, ts: Date.now(),
         icon: "crown", important: true,
-        title: `${row.nickname} este noul lider al clasamentului!${overtakenText}`,
+        title: `${row.nickname} este noul lider al clasamentului${scopeLabel}!${overtakenText}`,
         subtitle: `Locul ${before.rank} → Locul 1`,
         detail: { rankBefore: before.rank, rankAfter: row.rank, pointsBefore, pointsAfter, overtaken },
       });
@@ -100,8 +109,8 @@ export function detectRankChangeEvents(prevState, currentRows) {
         id, category: FEED_CATEGORIES.CLASAMENT, priority, ts: Date.now(),
         icon: "up", important: priority === PRIORITY.RANK_MAXIMA,
         title: moved === 1
-          ? `${row.nickname} a urcat pe locul ${row.rank}${overtakenText}`
-          : `${row.nickname} a urcat ${moved} poziții, de pe locul ${before.rank} pe ${row.rank}${overtakenText}`,
+          ? `${row.nickname} a urcat pe locul ${row.rank}${scopeLabel}${overtakenText}`
+          : `${row.nickname} a urcat ${moved} poziții${scopeLabel}, de pe locul ${before.rank} pe ${row.rank}${overtakenText}`,
         subtitle: `Locul ${before.rank} → Locul ${row.rank}`,
         detail: { rankBefore: before.rank, rankAfter: row.rank, pointsBefore, pointsAfter, overtaken },
       });
@@ -110,8 +119,8 @@ export function detectRankChangeEvents(prevState, currentRows) {
         id, category: FEED_CATEGORIES.CLASAMENT, priority, ts: Date.now(),
         icon: "down", important: priority === PRIORITY.RANK_MAXIMA,
         title: Math.abs(moved) === 1
-          ? `${row.nickname} a coborât pe locul ${row.rank}`
-          : `${row.nickname} a coborât ${Math.abs(moved)} poziții, de pe locul ${before.rank} pe ${row.rank}`,
+          ? `${row.nickname} a coborât pe locul ${row.rank}${scopeLabel}`
+          : `${row.nickname} a coborât ${Math.abs(moved)} poziții${scopeLabel}, de pe locul ${before.rank} pe ${row.rank}`,
         subtitle: `Locul ${before.rank} → Locul ${row.rank}`,
         detail: { rankBefore: before.rank, rankAfter: row.rank, pointsBefore, pointsAfter },
       });
@@ -227,26 +236,32 @@ export function buildLiveMatchEvent(match, event) {
     const late = event.minute >= 85;
 
     let phrase;
+    let goalIsImportant;
     if (beforeA === 0 && beforeB === 0) {
       phrase = pick([`deschide scorul`, `punctează primul`, `trece echipa în avantaj de la 0-0`]);
+      goalIsImportant = true; // primul gol al meciului contează mereu
     } else if (wasTied) {
-      phrase = pick([`aduce ${teamName} în avantaj`, `trece ${teamName} în frunte`, `rupe egalitatea pentru ${teamName}`]);
+      phrase = pick([`aduce ${teamName} în avantaj`, `trece ${teamName} în frunte`, `duce ${teamName} în avantaj`]);
+      goalIsImportant = true; // schimbare de lider pe tabelă — mereu relevant
     } else if (teamWasBehind && nowTied) {
       phrase = late
         ? pick([`egalează dramatic, aproape de final`, `restabilește egalitatea în prelungiri`])
         : pick([`egalează pentru ${teamName}`, `readuce ${teamName} la egalitate`]);
+      goalIsImportant = true; // egalizare — mereu relevantă
     } else if (teamWasBehind) {
       phrase = pick([`reduce din diferență pentru ${teamName}`, `apropie ${teamName} pe tabelă`]);
+      goalIsImportant = late; // relevant doar dacă vine târziu, altfel gol banal
     } else {
       phrase = late
         ? pick([`sigilează victoria pentru ${teamName}`, `închide meciul în prelungiri`])
         : pick([`mărește avantajul lui ${teamName}`, `dublează diferența pentru ${teamName}`, `își continuă recitalul ${teamName}`]);
+      goalIsImportant = late; // extinde un avantaj deja clar — banal, exceptând finalul de meci
     }
 
     return {
       id: `liveevent_${event.id}`,
-      category: FEED_CATEGORIES.MECIURI, priority: PRIORITY.LIVE_EVENT, ts: Date.now(),
-      icon: "goal", important: true,
+      category: FEED_CATEGORIES.MECIURI, priority: goalIsImportant ? PRIORITY.LIVE_EVENT_MAJOR : PRIORITY.LIVE_EVENT, ts: Date.now(),
+      icon: "goal", important: goalIsImportant,
       title: event.player ? `⚽ ${event.player} ${phrase}` : `⚽ ${teamName} ${phrase}`,
       subtitle: `Minutul ${event.minute}${scoreLine}`,
       detail: { competitionName: match.competitionName, matchId: match.id, minute: event.minute, team: event.team, player: event.player || null },
@@ -255,7 +270,7 @@ export function buildLiveMatchEvent(match, event) {
   if (event.type === "red_card") {
     return {
       id: `liveevent_${event.id}`,
-      category: FEED_CATEGORIES.MECIURI, priority: PRIORITY.LIVE_EVENT, ts: Date.now(),
+      category: FEED_CATEGORIES.MECIURI, priority: PRIORITY.LIVE_EVENT_MAJOR, ts: Date.now(),
       icon: "redcard", important: true,
       title: event.player ? `🟥 Cartonaș roșu — ${event.player} (${teamName})` : `🟥 Cartonaș roșu — ${teamName}`,
       subtitle: `Minutul ${event.minute}${scoreLine}`,
@@ -274,7 +289,28 @@ function pick(options) {
   return options[hash % options.length];
 }
 
+// ── Anti-spam — regula 4 din audit: nu îngropăm Feed-ul în goluri
+// banale ale aceluiași meci. Evenimentele IMPORTANTE (prim gol,
+// egalizare, schimbare de lider, cartonaș roșu, gol târziu decisiv)
+// rămân ÎNTOTDEAUNA — doar golurile "banale" (extinde un avantaj deja
+// clar, fără context) se limitează la maximum 2 per meci, păstrând cele
+// mai recente. Filtrare DOAR la afișare — nu șterge nimic din Firestore,
+// deci nimic nu se pierde dacă regulile de importanță se rafinează mai
+// târziu. ──
 export function mergeFeedEvents(...groups) {
   const all = groups.flat().filter(Boolean);
-  return all.sort((a, b) => (b.priority - a.priority) || (b.ts - a.ts));
+  const sorted = all.sort((a, b) => (b.priority - a.priority) || (b.ts - a.ts));
+
+  const routineGoalCountByMatch = {};
+  const result = [];
+  for (const ev of sorted) {
+    const isRoutineGoal = ev.category === FEED_CATEGORIES.MECIURI && ev.icon === "goal" && !ev.important;
+    if (isRoutineGoal) {
+      const mid = ev.detail?.matchId || "unknown";
+      routineGoalCountByMatch[mid] = (routineGoalCountByMatch[mid] || 0) + 1;
+      if (routineGoalCountByMatch[mid] > 2) continue;
+    }
+    result.push(ev);
+  }
+  return result;
 }

@@ -7,7 +7,7 @@ import {
   detectRankChangeEvents, buildMatchFinalEvent, buildJokerEvent, buildUpcomingMatchEvent, buildLiveMatchEvent,
   mergeFeedEvents, FEED_CATEGORIES,
 } from "./feedEngine";
-import { listGeneralLeaderboard, listAllUsers } from "./adminService";
+import { listGeneralLeaderboard, listAllUsers, listActiveUserIds } from "./adminService";
 import { getUserPublicProfiles } from "./profilesService";
 import { EDITORIAL_ARTICLES } from "../feedContent/editorialContent";
 import { FUN_ITEMS } from "../feedContent/funContent";
@@ -58,6 +58,53 @@ export async function processRankChanges() {
     const nextState = {};
     rows.forEach((r) => { nextState[r.uid] = { rank: r.rank, points: r.seasonPoints || 0 }; });
     tx.set(RANK_SNAPSHOT_DOC, { ranks: nextState, updatedAt: serverTimestamp() });
+
+    detected.forEach((e) => tx.set(doc(db, "feedEvents", e.id), e, { merge: true }));
+    return detected;
+  });
+
+  return { events };
+}
+
+// ── ROOT CAUSE 2 din audit — reparat aici, nu doar patch-uit: clasamentul
+// GENERAL (users.seasonPoints, folosit mai sus) e ÎNGHEȚAT toată etapa —
+// se actualizează DOAR la finalizeGameweek. Meciuri care se termină ÎN
+// TIMPUL etapei nu mișcă seasonPoints deloc, deci processRankChanges()
+// de mai sus nu poate detecta NIMIC din mișcarea reală a etapei curente,
+// oricâte meciuri s-ar termina. Sursa corectă pentru asta e
+// gameweekLiveScores — se republică AUTOMAT după fiecare rezultat salvat
+// (adminService.handleSaveResult → recomputeAndPublish → publishLiveScores),
+// deci chiar reflectă etapa în timp real. Snapshot separat, per etapă
+// (cheie cu gameweekId) — se resetează natural la fiecare etapă nouă,
+// nu se amestecă cu istoricul altor etape sau cu clasamentul general. ──
+export async function processLiveRankChanges(gameweekId) {
+  if (!gameweekId) return { events: [] };
+  const snap = await getDocs(query(collection(db, "gameweekLiveScores"), where("gameweekId", "==", gameweekId)));
+  if (snap.empty) return { events: [] };
+
+  const activeUids = await listActiveUserIds();
+  const rawRows = snap.docs.map((d) => d.data()).filter((r) => activeUids.has(r.userId));
+  if (rawRows.length === 0) return { events: [] };
+
+  const sorted = [...rawRows].sort((a, b) => (a.rank ?? 999) - (b.rank ?? 999));
+  const profiles = await getUserPublicProfiles(sorted.map((r) => r.userId));
+  const rows = sorted.map((r, i) => ({
+    uid: r.userId,
+    rank: typeof r.rank === "number" ? r.rank : i + 1,
+    nickname: profiles[r.userId]?.nickname || r.userId,
+    seasonPoints: r.totalPoints, // reutilizăm câmpul generic așteptat de detectRankChangeEvents
+  }));
+
+  const snapshotRef = doc(db, "feedState", `rankSnapshotEtapa_${gameweekId}`);
+  const events = await runTransaction(db, async (tx) => {
+    const prevSnap = await tx.get(snapshotRef);
+    const prevState = prevSnap.exists() ? prevSnap.data().ranks : null;
+
+    const detected = detectRankChangeEvents(prevState, rows, { idPrefix: `rank_etapa_${gameweekId}`, scopeLabel: " etapei" });
+
+    const nextState = {};
+    rows.forEach((r) => { nextState[r.uid] = { rank: r.rank, points: r.seasonPoints || 0 }; });
+    tx.set(snapshotRef, { ranks: nextState, gameweekId, updatedAt: serverTimestamp() });
 
     detected.forEach((e) => tx.set(doc(db, "feedEvents", e.id), e, { merge: true }));
     return detected;

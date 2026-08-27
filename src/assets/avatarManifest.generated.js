@@ -51,6 +51,10 @@ export default {
       "8": "PRIMA_DOAR.jpg"
     }
   },
+  "ooo-micea": {
+    "nextIndex": 1,
+    "files": {}
+  },
   "sexu-ciobanu": {
     "nextIndex": 9,
     "files": {

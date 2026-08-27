@@ -48,13 +48,16 @@ export default {
     }
   },
   "sexu-ciobanu": {
-    "nextIndex": 6,
+    "nextIndex": 9,
     "files": {
       "1": "1.png",
       "2": "2.png",
       "3": "3.png",
       "4": "4.png",
-      "5": "5.png"
+      "5": "5.png",
+      "6": "file_000000000374821185aac3db676e53cc.png",
+      "7": "file_00000000321481f58e473985c5670043.png",
+      "8": "file_00000000bc8081f48183f6908046bf0e.png"
     }
   }
 };

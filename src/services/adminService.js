@@ -18,6 +18,7 @@ import {
 import { db } from "../firebase";
 import { computeMatchPoints, computeRankingBonuses } from "./scoringEngine";
 import { resolveCompetitionPreset } from "../competitionThemes";
+import { getUserPublicProfiles } from "./profilesService";
 
 // Aceeași regulă de lock ca în predictionsService.LOCK_MINUTES_BEFORE_KICKOFF
 // (30 min înainte de kickoff) — NU importată de-acolo intenționat, ca să nu
@@ -1402,6 +1403,25 @@ export async function listActiveUserIds() {
   const active = new Set();
   snap.docs.forEach((d) => { if (getPlayerStatus(d.data()) === "active") active.add(d.id); });
   return active;
+}
+
+// ── Cine NU a pus încă pronostic la un meci — pentru Admin, ca să poată
+// avertiza direct jucătorii. Diferență simplă: toți userii activi minus
+// cei cu predictions/{matchId}_{uid} deja scris. Nu ține cont de lock —
+// arată "lipsă" chiar dacă meciul s-a blocat deja (Admin vede oricum
+// tot, nu doar cât mai e timp). ──
+export async function getMissingPredictionsForMatch(matchId) {
+  const [activeUids, predSnap] = await Promise.all([
+    listActiveUserIds(),
+    getDocs(query(collection(db, "predictions"), where("matchId", "==", matchId))),
+  ]);
+  const submittedUids = new Set(predSnap.docs.map((d) => d.data().userId));
+  const missingUids = [...activeUids].filter((uid) => !submittedUids.has(uid));
+  if (missingUids.length === 0) return [];
+  const profiles = await getUserPublicProfiles(missingUids);
+  return missingUids
+    .map((uid) => ({ uid, nickname: profiles[uid]?.nickname || uid }))
+    .sort((a, b) => a.nickname.localeCompare(b.nickname, "ro"));
 }
 
 // ══════════════════════════════════════════════════════════════════

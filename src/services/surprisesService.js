@@ -23,7 +23,7 @@ export const MAIN_CATALOG = [
 
 export const BONUS_CATALOG = [
   { id: "roulette", label: "Ruletă", active: true },
-  { id: "mystery-box", label: "Mystery Box", active: false },
+  { id: "mystery-box", label: "Mystery Box", active: true },
   { id: "penalty-pvp", label: "Penalty PvP", active: false },
 ];
 
@@ -31,6 +31,21 @@ export const BONUS_CATALOG = [
 // pe roată — la randare, componenta le rearanjează ca valorile identice
 // să nu fie lipite (cerut explicit).
 export const ROULETTE_SEGMENTS = [0, 0, 0, 0, 25, 25, 25, 25, 25, 50, 50, 50, 50, 75, 75, 100];
+
+// 30 de cutii, distribuția aprobată explicit de Lu: 4×100, 6×75, 8×50,
+// 3×40, 2×30, 2×20, 5×0 (30 cutii, sumă 1470, medie ~49p). Ordinea din
+// array NU e ordinea cutiilor pe grilă — se amestecă o singură dată, la
+// Dezvăluire, și rămâne înghețată (poziția cutiei = indexul din array-ul
+// amestecat, stabil tot timpul alegerii).
+export const MYSTERY_BOX_VALUES = [
+  100, 100, 100, 100,
+  75, 75, 75, 75, 75, 75,
+  50, 50, 50, 50, 50, 50, 50, 50,
+  40, 40, 40,
+  30, 30,
+  20, 20,
+  0, 0, 0, 0, 0,
+];
 
 export function getSurpriseStatus(pub) {
   if (!pub) return "locked";
@@ -325,9 +340,25 @@ export async function revealMain(gameweekId) {
 
 export async function revealBonus(gameweekId) {
   const publicRef = doc(db, "weeklySurprises", gameweekId);
+  const secretRef = doc(db, "weeklySurprises", gameweekId, "secret", "bonus");
   await runTransaction(db, async (tx) => {
     const pubSnap = await tx.get(publicRef);
     if (pubSnap.exists() && pubSnap.data().bonusRevealed) return;
+
+    const secretSnap = await tx.get(secretRef);
+    const type = secretSnap.exists() ? secretSnap.data().type : null;
+    if (type === "mystery-box") {
+      // Amestecăm o SINGURĂ dată, aici — poziția cutiei (indexul din
+      // array) rămâne înghețată tot timpul alegerii. Fisher-Yates, nu
+      // Math.random().sort() (acela e cunoscut ca statistic incorect).
+      const boxValues = [...MYSTERY_BOX_VALUES];
+      for (let i = boxValues.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [boxValues[i], boxValues[j]] = [boxValues[j], boxValues[i]];
+      }
+      tx.set(secretRef, { config: { boxValues } }, { merge: true });
+    }
+
     tx.set(publicRef, { gameweekId, bonusRevealed: true, bonusRevealedAt: serverTimestamp() }, { merge: true });
   });
 }
@@ -841,21 +872,46 @@ export async function resolveMain(gameweekId) {
   });
 }
 
-// ── RESOLVE BONUS (Ruletă) — rezultatul final per user e determinist,
-// calculat din spin2 (dacă există) sau spin1: nicio decizie "de câștigător"
-// nu e necesară, doar aplicarea punctelor. Tot idempotent, tot tranzacțional. ──
+// ── RESOLVE BONUS — rezultatul final per user e determinist, calculat
+// din ULTIMA alegere (Ruletă: spin2 dacă există, altfel spin1 · Mystery
+// Box: a doua cutie aleasă, dacă a rejucat, altfel prima). Nicio decizie
+// "de câștigător" nu e necesară, doar aplicarea punctelor. Tot idempotent,
+// tot tranzacțional. ──
 export async function resolveBonus(gameweekId) {
   const publicRef = doc(db, "weeklySurprises", gameweekId);
   const activeUids = [...(await listActiveUserIds())];
+  const secretSnap = await getDoc(doc(db, "weeklySurprises", gameweekId, "secret", "bonus"));
+  const bonusType = secretSnap.exists() ? secretSnap.data().type : null;
 
-  const spinsPerUser = await Promise.all(activeUids.map(async (uid) => {
-    const [s1, s2] = await Promise.all([
-      getDoc(doc(db, "weeklySurprises", gameweekId, "rouletteSpins", `1_${uid}`)),
-      getDoc(doc(db, "weeklySurprises", gameweekId, "rouletteSpins", `2_${uid}`)),
-    ]);
-    const finalValue = s2.exists() ? s2.data().value : (s1.exists() ? s1.data().value : 0);
-    return { uid, points: finalValue };
-  }));
+  let resultsPerUser;
+  if (bonusType === "mystery-box") {
+    const boxValues = secretSnap.exists() ? (secretSnap.data().config?.boxValues || []) : [];
+    const picksSnap = await getDocs(collection(db, "weeklySurprises", gameweekId, "mysteryBoxPicks"));
+    const finalPickByUid = {};
+    picksSnap.docs.forEach((d) => {
+      const data = d.data();
+      const boxIndex = parseInt(d.id, 10);
+      const existing = finalPickByUid[data.uid];
+      if (!existing || (data.pickNumber || 1) > existing.pickNumber) {
+        finalPickByUid[data.uid] = { boxIndex, pickNumber: data.pickNumber || 1 };
+      }
+    });
+    resultsPerUser = activeUids.map((uid) => {
+      const pick = finalPickByUid[uid];
+      const points = pick ? (boxValues[pick.boxIndex] ?? 0) : 0;
+      return { uid, points };
+    });
+  } else {
+    // Ruletă — neschimbat.
+    resultsPerUser = await Promise.all(activeUids.map(async (uid) => {
+      const [s1, s2] = await Promise.all([
+        getDoc(doc(db, "weeklySurprises", gameweekId, "rouletteSpins", `1_${uid}`)),
+        getDoc(doc(db, "weeklySurprises", gameweekId, "rouletteSpins", `2_${uid}`)),
+      ]);
+      const finalValue = s2.exists() ? s2.data().value : (s1.exists() ? s1.data().value : 0);
+      return { uid, points: finalValue };
+    }));
+  }
 
   await runTransaction(db, async (tx) => {
     const pubSnap = await tx.get(publicRef);
@@ -865,7 +921,7 @@ export async function resolveBonus(gameweekId) {
     // Premiul se persistă, dar NU se mai adaugă la users.seasonPoints
     // aici — se consolidează o singură dată, la finalizeGameweek, exact
     // ca la Main (motivul e identic: evită dublarea la Resolve+Finalize).
-    spinsPerUser.forEach((r) => {
+    resultsPerUser.forEach((r) => {
       tx.set(doc(db, "weeklySurprises", gameweekId, "results", r.uid), { uid: r.uid, bonusPoints: r.points }, { merge: true });
     });
     tx.set(publicRef, { bonusResolved: true }, { merge: true });
@@ -910,6 +966,62 @@ export async function submitRouletteSpin(gameweekId, uid, spinNumber) {
   const ref = doc(db, "weeklySurprises", gameweekId, "rouletteSpins", `${spinNumber}_${uid}`);
   await setDoc(ref, { uid, value, spinNumber, createdAt: serverTimestamp() });
   return value;
+}
+
+// ══════════════════════════════════════════════════════════════════
+// MYSTERY BOX — 30 cutii cu poziții FIXE (amestecate o singură dată la
+// revealBonus, vezi mai sus). Alegerile sunt PUBLICE imediat — nume +
+// valoare vizibile tuturor, live, pe măsură ce oamenii aleg (nu suspans
+// comun la final — asta a fost cerut explicit). Doar cutiile NEALESE
+// rămân ascunse, până Adminul le dezvăluie pe toate deodată la final.
+// Fiecare user: o alegere, plus opțional UNA în plus (rejoc, ca la
+// Ruletă) — prima cutie rămâne marcată cu numele lui (vizibil ca
+// "refuzată"), a doua devine cea finală pentru scor.
+// ══════════════════════════════════════════════════════════════════
+
+// ── Tabla — cele 30 de valori, în ordinea (amestecată) înghețată la
+// reveal. null dacă Bonusul încă nu a fost dezvăluit sau nu e tipul
+// mystery-box pentru etapa asta. ──
+export async function getMysteryBoxBoard(gameweekId) {
+  const snap = await getDoc(doc(db, "weeklySurprises", gameweekId, "secret", "bonus"));
+  if (!snap.exists()) return null;
+  return snap.data().config?.boxValues || null;
+}
+
+// ── Toate alegerile făcute până acum, pentru toată lumea — folosită
+// pentru grila publică (cine a ales ce cutie, cu ce valoare). ──
+export async function getAllMysteryBoxPicks(gameweekId) {
+  const snap = await getDocs(collection(db, "weeklySurprises", gameweekId, "mysteryBoxPicks"));
+  return snap.docs
+    .map((d) => ({ boxIndex: parseInt(d.id, 10), ...d.data() }))
+    .sort((a, b) => a.boxIndex - b.boxIndex);
+}
+
+// ── Alegerea unei cutii — create-only pe indexul cutiei (Firestore
+// refuză al doilea create pe același ID, deci "o cutie = o singură
+// alegere" e garantat structural, nu doar verificat în cod). Max 2
+// alegeri per user (prima + un rejoc) — verificat printr-o interogare
+// proaspătă chiar înainte de scriere (aceeași filozofie ca-n restul
+// aplicației: grup de prieteni, nu adversarial). ──
+export async function submitMysteryBoxPick(gameweekId, uid, boxIndex) {
+  const existing = await getDocs(query(collection(db, "weeklySurprises", gameweekId, "mysteryBoxPicks"), where("uid", "==", uid)));
+  if (existing.size >= 2) throw new Error("Ai folosit deja ambele alegeri — inclusiv rejocul.");
+  const boxSnap = await getDoc(doc(db, "weeklySurprises", gameweekId, "mysteryBoxPicks", String(boxIndex)));
+  if (boxSnap.exists()) throw new Error("Cutia asta a fost deja aleasă de altcineva.");
+
+  const pickNumber = existing.size + 1;
+  const ref = doc(db, "weeklySurprises", gameweekId, "mysteryBoxPicks", String(boxIndex));
+  await setDoc(ref, { uid, pickNumber, createdAt: serverTimestamp() });
+  return { boxIndex, pickNumber };
+}
+
+// ── Admin — dezvăluie valorile cutiilor NEALESE (cele alese sunt deja
+// vizibile, live, din momentul alegerii — vezi mai sus). Un simplu flag
+// public — nu mișcă date, doar comută ce arată aplicația pentru cutiile
+// fără nume pe ele. Idempotent. ──
+export async function revealRemainingMysteryBoxes(gameweekId) {
+  const publicRef = doc(db, "weeklySurprises", gameweekId);
+  await setDoc(publicRef, { mysteryBoxAllRevealed: true }, { merge: true });
 }
 
 // ── Istoricul sezonului — o intrare per etapă, cu starea calculată. ──

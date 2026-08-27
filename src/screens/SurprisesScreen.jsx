@@ -17,6 +17,7 @@ import TriviaExperience from "../components/TriviaExperience";
 import DiceExperience from "../components/DiceExperience";
 import SabotajExperience from "../components/SabotajExperience";
 import RouletteExperience from "../components/RouletteExperience";
+import MysteryBoxExperience from "../components/MysteryBoxExperience";
 import { color, font, radius } from "../matchdayTheme";
 
 function catalogLabel(list, id) {
@@ -307,6 +308,16 @@ export default function SurprisesScreen({ user, onBack }) {
                       />
                       <RouletteLiveList gameweekId={gameweek.id} profiles={profiles} myUid={user.uid} refreshKey={spinTick} />
                     </>
+                  )}
+
+                  {secretBonus?.type === "mystery-box" && (
+                    <MysteryBoxExperience
+                      gameweekId={gameweek.id}
+                      uid={user.uid}
+                      allBoxesRevealed={!!pub?.mysteryBoxAllRevealed}
+                      resolved={!!pub?.bonusResolved}
+                      myResult={myResult}
+                    />
                   )}
                 </>
               )}

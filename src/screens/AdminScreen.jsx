@@ -49,7 +49,7 @@ import {
 } from "../services/adminService";
 import {
   MAIN_CATALOG, BONUS_CATALOG, getWeeklySurprise, getSecretMain, getSecretBonus,
-  configureSurprise, revealMain, revealBonus, resolveMain, resolveBonus, getSurpriseStatus,
+  configureSurprise, revealMain, revealBonus, resolveMain, resolveBonus, getSurpriseStatus, revealRemainingMysteryBoxes,
   configureTriviaQuestions, markTriviaCorrectAnswer, getTriviaSubmissionStatus,
   configureZaruriQuestions, markZaruriTarget, getZaruriSubmissionStatus,
   getSabotajPublicProgress, revealSabotajNetwork, undoLastSabotajChoice,
@@ -360,6 +360,7 @@ export default function AdminScreen({ onBack }) {
       else if (action === "resolveBonus") await resolveBonus(gameweekId);
       else if (action === "revealSabotaj") await revealSabotajNetwork(gameweekId);
       else if (action === "undoSabotaj") await undoLastSabotajChoice(gameweekId);
+      else if (action === "revealRemainingMystery") await revealRemainingMysteryBoxes(gameweekId);
       const [pub, sm, sb] = await Promise.all([getWeeklySurprise(gameweekId), getSecretMain(gameweekId), getSecretBonus(gameweekId)]);
       setSurprisesData((prev) => ({ ...prev, [gameweekId]: { public: pub, secretMain: sm, secretBonus: sb } }));
       if (sm?.type === "sabotaj") {
@@ -1729,6 +1730,22 @@ export default function AdminScreen({ onBack }) {
                           <span style={s.doneTag}>✓ gata</span>
                         )}
                       </div>
+
+                      {bonusType === "mystery-box" && bonusRevealed && (
+                        <div style={s.triviaBox}>
+                          {data.public?.mysteryBoxAllRevealed ? (
+                            <span style={s.doneTag}>✓ cutii rămase dezvăluite</span>
+                          ) : (
+                            <button
+                              type="button" style={s.smallBtn}
+                              disabled={surpriseActionKey === `${gw.id}_revealRemainingMystery`}
+                              onClick={() => handleSurpriseAction(gw.id, "revealRemainingMystery")}
+                            >
+                              🎁 Dezvăluie cutiile rămase
+                            </button>
+                          )}
+                        </div>
+                      )}
                     </div>
                   );
                 })}

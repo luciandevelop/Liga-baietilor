@@ -28,13 +28,14 @@ export default {
     }
   },
   "doctoru": {
-    "nextIndex": 6,
+    "nextIndex": 7,
     "files": {
       "1": "file_000000003b7881f6b6e87baead39caa5.png",
       "2": "file_000000008e18822f9b3fe4547522c0cb.png",
       "3": "file_0000000096788211afd3cc462ca9f728.png",
       "4": "file_00000000ed20820c9409d1b521c005df.png",
-      "5": "file_00000000efd081f4815791032d0edf8a.png"
+      "5": "file_00000000efd081f4815791032d0edf8a.png",
+      "6": "file_00000000ba8081f5b6642c0b5ef373ce.png"
     }
   },
   "luck87": {

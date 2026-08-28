@@ -65,8 +65,16 @@ export default {
     }
   },
   "pannnnn": {
-    "nextIndex": 1,
-    "files": {}
+    "nextIndex": 8,
+    "files": {
+      "1": "file_000000001134820a9826b910b5d5dcde.png",
+      "2": "file_000000002bc482468c6d81fec70bc273.png",
+      "3": "file_000000005324820aabf226b311e46285.png",
+      "4": "file_0000000074688243af2868654018f732.png",
+      "5": "file_000000008398820a936993d80eddfca2.png",
+      "6": "file_00000000adf88243991256ceb1c41496.png",
+      "7": "file_00000000e21081f4b61214c903fa083a.png"
+    }
   },
   "sexu-ciobanu": {
     "nextIndex": 9,

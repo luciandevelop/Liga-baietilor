@@ -64,6 +64,10 @@ export default {
       "8": "patron_final_boss.png"
     }
   },
+  "pannnnn": {
+    "nextIndex": 1,
+    "files": {}
+  },
   "sexu-ciobanu": {
     "nextIndex": 9,
     "files": {

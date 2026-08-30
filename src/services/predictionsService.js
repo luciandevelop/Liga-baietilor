@@ -1,20 +1,9 @@
 import { collection, doc, getDoc, getDocs, query, where, setDoc, deleteDoc } from "firebase/firestore";
 import { db } from "../firebase";
 import { listMatches } from "./adminService";
+import { LOCK_MINUTES_BEFORE_KICKOFF, isMatchLocked } from "./matchLockRule";
 
-// Pragul de lock e cu 30 de minute ÎNAINTE de kickoff — aceeași regulă ca
-// în firestore.rules (isBeforeLock/isAfterLock). Ținută într-o singură
-// constantă, ca UI-ul și regulile server-side să nu poată diverge.
-export const LOCK_MINUTES_BEFORE_KICKOFF = 30;
-const LOCK_MS = LOCK_MINUTES_BEFORE_KICKOFF * 60 * 1000;
-
-// Verifică dacă un meci e blocat ACUM, client-side (doar pentru UI —
-// securitatea reală e în firestore.rules, cu aceeași regulă).
-export function isMatchLocked(match) {
-  const kickoffMs = match?.kickoffAt?.toMillis ? match.kickoffAt.toMillis() : null;
-  if (kickoffMs === null) return false;
-  return Date.now() >= kickoffMs - LOCK_MS;
-}
+export { LOCK_MINUTES_BEFORE_KICKOFF, isMatchLocked };
 
 // Alege sezonul curent: primul al cărui interval [startDate, endDate]
 // conține azi. Dacă niciunul nu se potrivește, fallback sigur — cel mai

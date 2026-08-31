@@ -88,5 +88,9 @@ export default {
       "7": "file_00000000321481f58e473985c5670043.png",
       "8": "file_00000000bc8081f48183f6908046bf0e.png"
     }
+  },
+  "vladinhuu": {
+    "nextIndex": 1,
+    "files": {}
   }
 };

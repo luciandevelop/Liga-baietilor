@@ -41,6 +41,7 @@ import PlayerRankRow from "../components/PlayerRankRow";
 import EmptyState from "../components/EmptyState";
 import {
   listRecentEventsForAdmin, listAdminFunItems, addFunItem, deleteFunItem, deleteAllLiveMatchEvents,
+  regenerateCurrentGameweekFeed,
 } from "../services/feedService";
 import { EDITORIAL_ARTICLES } from "../feedContent/editorialContent";
 import LiveEventPanel from "../components/LiveEventPanel";
@@ -411,6 +412,8 @@ export default function AdminScreen({ onBack }) {
   const [funSaving, setFunSaving] = useState(false);
   const [cleaningLiveEvents, setCleaningLiveEvents] = useState(false);
   const [cleanupMessage, setCleanupMessage] = useState("");
+  const [regeneratingFeed, setRegeneratingFeed] = useState(false);
+  const [regenerateMessage, setRegenerateMessage] = useState("");
 
   async function handleCleanupLiveEvents() {
     setCleaningLiveEvents(true);
@@ -424,6 +427,32 @@ export default function AdminScreen({ onBack }) {
       setCleanupMessage("Eroare — vezi consola.");
     } finally {
       setCleaningLiveEvents(false);
+    }
+  }
+
+  // ── Regenerează Feed etapa curentă — determinist, idempotent.
+  // Reconstruiește meciuri Final + scor exact + facts + starea CURENTĂ
+  // a clasamentului etapei. NU inventează istoricul pas-cu-pas al
+  // clasamentului (cine era lider după fiecare meci în parte) — dacă nu
+  // avem snapshot-uri reale pentru fiecare pas, acea parte rămâne
+  // needeterminată, semnalat explicit în mesaj, nu ascuns. ──
+  async function handleRegenerateFeed() {
+    if (!selectedGameweekId) { setRegenerateMessage("Alege o etapă întâi."); return; }
+    const confirmed = window.confirm("Regenerezi Feed-ul pentru etapa curentă? Nu se șterge nimic existent, doar se completează ce lipsește (idempotent).");
+    if (!confirmed) return;
+    setRegeneratingFeed(true);
+    setRegenerateMessage("");
+    try {
+      const gwMatches = await listMatches(selectedGameweekId);
+      const result = await regenerateCurrentGameweekFeed(selectedGameweekId, gwMatches);
+      setRegenerateMessage(
+        `Reconstruit: ${result.reconstructed.matchFinalEvents} evenimente de meci, ${result.reconstructed.currentRankEvents} evenimente de clasament (stare curentă). ${result.note}`
+      );
+    } catch (err) {
+      console.error("Eroare la regenerarea Feed-ului:", err);
+      setRegenerateMessage("Eroare — vezi consola.");
+    } finally {
+      setRegeneratingFeed(false);
     }
   }
 
@@ -1759,6 +1788,10 @@ export default function AdminScreen({ onBack }) {
                   <button type="button" style={s.smallBtn} disabled={cleaningLiveEvents} onClick={handleCleanupLiveEvents}>
                     {cleaningLiveEvents ? "Se curăță…" : "🧹 Șterge golurile/cartonașele vechi (text greșit)"}
                   </button>
+                  <button type="button" style={s.smallBtn} disabled={regeneratingFeed} onClick={handleRegenerateFeed}>
+                    {regeneratingFeed ? "Se regenerează…" : "🔄 Regenerează Feed etapa curentă"}
+                  </button>
+                  {regenerateMessage && <p style={s.hint}>{regenerateMessage}</p>}
                   {cleanupMessage && <p style={s.hint}>{cleanupMessage}</p>}
                   {feedLoading && <p style={s.hint}>Se încarcă…</p>}
                   {!feedLoading && feedEvents.length === 0 && <p style={s.hint}>Niciun eveniment încă.</p>}

@@ -6,6 +6,7 @@ import hapoelBeerSheva from "./clubs/hapoel-beer-sheva.svg";
 import hapoelTelAviv from "./clubs/hapoel-tel-aviv.svg";
 import brann from "./clubs/brann.svg";
 import tromso from "./clubs/tromso.svg";
+import borussiaDortmund from "./clubs/borussia-dortmund.svg";
 
 export const EXTRA_CLUB_LOGOS = {
   "sabah-baku": sabahBaku,
@@ -13,6 +14,7 @@ export const EXTRA_CLUB_LOGOS = {
   "hapoel-tel-aviv": hapoelTelAviv,
   "brann": brann,
   "tromso": tromso,
+  "borussia-dortmund": borussiaDortmund,
 };
 
 export const EXTRA_CLUB_NAMES = {
@@ -21,6 +23,7 @@ export const EXTRA_CLUB_NAMES = {
   "hapoel-tel-aviv": "Hapoel Tel Aviv",
   "brann": "Brann",
   "tromso": "Tromsø",
+  "borussia-dortmund": "Borussia Dortmund",
 };
 
 export const EXTRA_CLUB_ALIASES = {
@@ -30,4 +33,12 @@ export const EXTRA_CLUB_ALIASES = {
   "hapoel-tlv": "hapoel-tel-aviv",
   "troms": "tromso",
   "tromso-il": "tromso",
+  // Nume scurte, uzuale — sigla EXISTĂ deja, doar înregistrată sub
+  // numele complet oficial. Găsit exact: "Schalke"/"Mainz"/"AS Roma"
+  // (numele pe care le tastez eu de obicei la meciuri) nu se potriveau
+  // cu "schalke-04"/"mainz-05"/"roma" (slug-urile reale din fișiere).
+  "schalke": "schalke-04",
+  "mainz": "mainz-05",
+  "as-roma": "roma",
+  "dortmund": "borussia-dortmund",
 };

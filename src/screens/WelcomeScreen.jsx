@@ -25,6 +25,8 @@ import FeedDetailModal from "../components/FeedDetailModal";
 import PredictionsRevealSheet from "../components/PredictionsRevealSheet";
 import LiveMatchDetails from "../components/LiveMatchDetails";
 import { getWeeklySurprise, getSecretMain, getSecretBonus, MAIN_CATALOG, BONUS_CATALOG } from "../services/surprisesService";
+import { loadNotifications } from "../services/notificationsService";
+import NotificationPanel from "../components/NotificationPanel";
 
 const LOCK_MS = 30 * 60 * 1000;
 
@@ -52,6 +54,9 @@ export default function WelcomeScreen({ user, profile, isAdmin, onOpenAdmin, onO
 
   const [gameweek, setGameweek] = useState(null);
   const [matches, setMatches] = useState([]);
+  const [notifItems, setNotifItems] = useState([]);
+  const [notifLoading, setNotifLoading] = useState(false);
+  const [notifOpen, setNotifOpen] = useState(false);
   const [predictions, setPredictions] = useState({});
   const [ownJoker, setOwnJoker] = useState(null);
   const [ownRow, setOwnRow] = useState(null);
@@ -190,6 +195,23 @@ export default function WelcomeScreen({ user, profile, isAdmin, onOpenAdmin, onO
       .catch((err) => console.error("Eroare la reîmprospătarea punctajului din header:", err));
   }, [user.uid]);
 
+  // Notificări — derivate live din ce chiar mai are userul de făcut
+  // (meciuri fără pronostic azi, surprize dezvăluite dar neacționate,
+  // Meciurile Săptămânii încă deschise). Fără stare "citit" persistată
+  // — conținutul se auto-actualizează, nu are nevoie de sincronizare
+  // separată. Se reîncarcă natural ori de câte ori se schimbă lista de
+  // meciuri sau etapa curentă.
+  useEffect(() => {
+    if (!gameweek || matches.length === 0) { setNotifItems([]); return; }
+    let cancelled = false;
+    setNotifLoading(true);
+    loadNotifications({ gameweekId: gameweek.id, matches, uid: user.uid, featuredMatchIds: gameweek.featuredMatchIds || [] })
+      .then(({ items }) => { if (!cancelled) setNotifItems(items); })
+      .catch((err) => console.error("Eroare la încărcarea notificărilor:", err))
+      .finally(() => { if (!cancelled) setNotifLoading(false); });
+    return () => { cancelled = true; };
+  }, [gameweek, matches, user.uid]);
+
   // Teaser Surprizele Săptămânii — încărcat o dată per etapă, doar
   // starea publică (revealed/nu) + tipul, DACĂ e deja dezvăluit. Nu e
   // nimic secret aici — secret/main e oricum inaccesibil înainte de
@@ -316,9 +338,9 @@ export default function WelcomeScreen({ user, profile, isAdmin, onOpenAdmin, onO
           nickname={profile?.nickname || "Jucător"}
           points={(freshSeasonPoints ?? profile?.seasonPoints ?? ownRow?.totalPoints ?? 0).toLocaleString("ro-RO")}
           avatarId={profile?.avatarId}
-          hasNotification={feedTop.some((e) => e.important)}
+          hasNotification={feedTop.some((e) => e.important) || notifItems.length > 0}
           onAvatarClick={onOpenProfile}
-          onBellClick={() => handleComingSoon("Notificări")}
+          onBellClick={() => setNotifOpen(true)}
         />
         <TopTabNav active="matchday" onChange={handleTopTab} />
 
@@ -565,6 +587,15 @@ export default function WelcomeScreen({ user, profile, isAdmin, onOpenAdmin, onO
           currentUserId={user.uid}
           isAdmin={isAdmin}
           onClose={() => setRevealMatch(null)}
+        />
+      )}
+      {notifOpen && (
+        <NotificationPanel
+          items={notifItems}
+          loading={notifLoading}
+          onClose={() => setNotifOpen(false)}
+          onOpenPredictions={() => onOpenPredictions()}
+          onOpenSurprises={onOpenSurprises}
         />
       )}
     </div>

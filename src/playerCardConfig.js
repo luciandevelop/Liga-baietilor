@@ -74,34 +74,68 @@ export const ALL_SERIES_IDS = ["goldElite", "futureStars", "totw", "icon"];
 // câștigă. Adăugarea unui titlu nou = un obiect nou în array, oriunde
 // e nevoie în ordinea de prioritate — nimic altceva nu se schimbă.
 // `check(stats)` primește exact obiectul întors de getPlayerCardStats.
+//
+// BUG REPARAT: "MVP-ul etapei"/"Campionul etapei" erau etichete FIXE,
+// arătate oricând rank===1/2/3 — INDIFERENT din ce clasament venea acel
+// rang (Etapă/Sezon/General). Cineva #1 în Sezon sau General primea
+// tot eticheta "etapei", greșit. Acum `label` e o FUNCȚIE de `scope`
+// ("etapa"/"sezon"/"general", trimis de apelant odată cu rank-ul),
+// nu un string fix — titlul spune corect DE UNDE vine realizarea.
+const SCOPE_LABEL = { etapa: "etapei", sezon: "sezonului", general: "general" };
+function scopedLabel(base, scope) {
+  return scope === "general" ? `${base} ${SCOPE_LABEL.general}` : `${base} ${SCOPE_LABEL[scope] || SCOPE_LABEL.etapa}`;
+}
+
 export const TITLES = [
   // "Campion General" — statutul de #1 din TOATE sezoanele, cel mai
   // rar/valoros titlu posibil, de-asta e verificat primul. Aici, NU pe
   // serie, trăiește acum recompensa pentru locul #1 — poate apărea și
   // dispărea liber de la o etapă la alta, fără să atingă identitatea
-  // permanentă a cardului.
-  { id: "champion-general", label: "Campion General", icon: "👑", check: (s) => s.isTopGeneral === true },
-  { id: "mvp", label: "MVP-ul etapei", icon: "🏆", check: (s) => s.rank === 1 },
-  { id: "champion", label: "Campionul etapei", icon: "🥈", check: (s) => s.rank === 2 || s.rank === 3 },
-  { id: "lunetist", label: "Lunetist", icon: "🎯", check: (s) => s.exactScores >= CARD_THRESHOLDS.LUNETIST_EXACT_SCORES },
+  // permanentă a cardului. NU depinde de scope (e mereu adevărat sau
+  // fals, indiferent din ce tab a fost deschis cardul).
+  { id: "champion-general", label: (s) => "Campion General", icon: "👑", check: (s) => s.isTopGeneral === true },
   {
-    id: "hotstreak", label: "Hot Streak", icon: "⚡",
+    id: "mvp", label: (s) => scopedLabel("MVP-ul", s.rankScope), icon: "🏆",
+    // NU acordăm titlul dacă rank===1 e doar o egalitate găunoasă
+    // (toată lumea la 0, o etapă de test fără date reale încă) —
+    // "MVP" trebuie să însemne ceva, nu doar "a fost primul într-un
+    // clasament gol".
+    check: (s) => s.rank === 1 && hasRealPoints(s),
+  },
+  {
+    id: "champion", label: (s) => scopedLabel("Campionul", s.rankScope), icon: "🥈",
+    check: (s) => (s.rank === 2 || s.rank === 3) && hasRealPoints(s),
+  },
+  { id: "lunetist", label: () => "Lunetist", icon: "🎯", check: (s) => s.exactScores >= CARD_THRESHOLDS.LUNETIST_EXACT_SCORES },
+  {
+    id: "hotstreak", label: () => "Hot Streak", icon: "⚡",
     check: (s) => s.etapaPoints != null && s.etapaPoints >= CARD_THRESHOLDS.HOT_STREAK_POINTS,
   },
   {
-    id: "comeback", label: "Revenire spectaculoasă", icon: "🚀",
+    id: "comeback", label: () => "Revenire spectaculoasă", icon: "🚀",
     check: (s) => s.etapaPoints != null && s.previousEtapaPoints != null &&
       (s.etapaPoints - s.previousEtapaPoints) >= CARD_THRESHOLDS.COMEBACK_POINTS,
   },
-  { id: "informa", label: "În formă", icon: "🔥", check: (s) => s.matchesThisEtapa > 0 && s.noPointsCount === 0 },
-  { id: "veteran", label: "Veteran", icon: "💎", check: (s) => s.gameweeksPlayed >= CARD_THRESHOLDS.VETERAN_GAMEWEEKS },
+  { id: "informa", label: () => "În formă", icon: "🔥", check: (s) => s.matchesThisEtapa > 0 && s.noPointsCount === 0 },
+  { id: "veteran", label: () => "Veteran", icon: "💎", check: (s) => s.gameweeksPlayed >= CARD_THRESHOLDS.VETERAN_GAMEWEEKS },
 ];
-export const DEFAULT_TITLE = { id: "active", label: "Jucător activ", icon: "🎮" };
+export const DEFAULT_TITLE_ID = "active";
+const DEFAULT_TITLE = { id: "active", label: () => "Jucător activ", icon: "🎮" };
+
+// ── "Are puncte reale" — pragul minim ca un rank===1 să conteze drept
+// realizare, nu doar o egalitate la 0 într-un clasament fără date încă.
+// Pur din puncte deja calculate — nicio presupunere nouă despre scoring.
+function hasRealPoints(s) {
+  const relevant = s.rankScope === "sezon" ? s.seasonPoints : s.rankScope === "general" ? s.generalPoints : s.etapaPoints;
+  return (relevant ?? 0) > 0;
+}
 
 // Alege primul titlu potrivit — mereu întoarce ceva (fallback la
-// DEFAULT_TITLE), niciodată slot gol.
+// DEFAULT_TITLE), niciodată slot gol. Întoarce { id, icon, label:string } —
+// label-ul e deja evaluat (nu mai e funcție) pentru apelant.
 export function resolveTitle(stats) {
-  return TITLES.find((t) => t.check(stats)) || DEFAULT_TITLE;
+  const found = TITLES.find((t) => t.check(stats)) || DEFAULT_TITLE;
+  return { id: found.id, icon: found.icon, label: found.label(stats) };
 }
 
 // ── Fun — 8 atribute posibile, fiecare user primește un subset (4)

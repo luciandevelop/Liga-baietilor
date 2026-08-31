@@ -2012,6 +2012,7 @@ export default function AdminScreen({ onBack }) {
           nickname={previewProfiles[openPlayerUid]?.nickname || openPlayerUid}
           avatarId={previewProfiles[openPlayerUid]?.avatarId}
           rank={openPlayerStats.rank}
+          scope="etapa"
           stats={openPlayerStats}
           onClose={() => setOpenPlayerUid("")}
         />

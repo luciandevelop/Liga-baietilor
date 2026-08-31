@@ -114,6 +114,7 @@ export default function LeaderboardScreen({ onBack, user, isAdmin }) {
 
   const [openUid, setOpenUid] = useState("");
   const [cardStats, setCardStats] = useState(null);
+  const [cardScope, setCardScope] = useState("etapa");
   const [cardLoading, setCardLoading] = useState(false);
 
   // Setup inițial — sezon curent, etapă (curentă sau ultima finalizată,
@@ -249,7 +250,7 @@ export default function LeaderboardScreen({ onBack, user, isAdmin }) {
   // mereu să arate meciurile etapei curente — dacă jucătorul ăla nu avea
   // date acolo, lista ieșea goală, chiar dacă chiar avea meciuri în etapa
   // pe care tocmai o deschisese.
-  async function handleOpenPlayer(uid, rank, contextGwId = gameweek?.id) {
+  async function handleOpenPlayer(uid, rank, contextGwId = gameweek?.id, scope = "etapa") {
     // Card-ul de jucător e un sub-ecran din perspectiva Back-ului — Android
     // Back trebuie să-l închidă întâi, nu să sară direct la Home. Se
     // împinge o intrare de istoric LOCALĂ acestui ecran (nu afectează
@@ -257,6 +258,7 @@ export default function LeaderboardScreen({ onBack, user, isAdmin }) {
     window.history.pushState({ leaderboardPlayerCard: uid }, "");
     setOpenUid(uid);
     setCardStats(null);
+    setCardScope(scope);
     setCardLoading(true);
     try {
       const stats = await getPlayerCardStats(uid, season?.id, contextGwId);
@@ -385,7 +387,7 @@ export default function LeaderboardScreen({ onBack, user, isAdmin }) {
                   previewBonus={gwLive ? previewBonusByUid[r.uid] : undefined}
                   top3={r.rank <= 3}
                   showBonus={!gwLive}
-                  onClick={() => handleOpenPlayer(r.uid, r.rank)}
+                  onClick={() => handleOpenPlayer(r.uid, r.rank, undefined, "etapa")}
                 />
               ));
             })()}
@@ -417,7 +419,7 @@ export default function LeaderboardScreen({ onBack, user, isAdmin }) {
                               totalPoints={r.totalPoints}
                               top3={r.rank <= 3}
                               showBonus={true}
-                              onClick={() => handleOpenPlayer(r.uid, r.rank, gw.id)}
+                              onClick={() => handleOpenPlayer(r.uid, r.rank, gw.id, "etapa")}
                             />
                           ))}
                         </div>
@@ -441,7 +443,7 @@ export default function LeaderboardScreen({ onBack, user, isAdmin }) {
                 avatarId={profiles[r.uid]?.avatarId}
                 totalPoints={r.totalPoints}
                 top3={i < 3}
-                onClick={() => handleOpenPlayer(r.uid, i + 1)}
+                onClick={() => handleOpenPlayer(r.uid, i + 1, undefined, "sezon")}
               />
             ))}
           </div>
@@ -458,7 +460,7 @@ export default function LeaderboardScreen({ onBack, user, isAdmin }) {
                 avatarId={r.avatarId}
                 totalPoints={r.seasonPoints || 0}
                 top3={i < 3}
-                onClick={() => handleOpenPlayer(r.uid, i + 1)}
+                onClick={() => handleOpenPlayer(r.uid, i + 1, undefined, "general")}
               />
             ))}
           </div>
@@ -471,6 +473,7 @@ export default function LeaderboardScreen({ onBack, user, isAdmin }) {
           nickname={profiles[openUid]?.nickname || openUid}
           avatarId={profiles[openUid]?.avatarId}
           rank={cardStats.rank}
+          scope={cardScope}
           stats={cardStats}
           onClose={closePlayerCard}
         />

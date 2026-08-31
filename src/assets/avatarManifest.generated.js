@@ -28,8 +28,15 @@ export default {
     }
   },
   "bona": {
-    "nextIndex": 1,
-    "files": {}
+    "nextIndex": 7,
+    "files": {
+      "1": "escobar_nr8.png",
+      "2": "file_000000003bb48210b8e8ce4ebe032838.png",
+      "3": "file_000000003c30824391515fe8d2f4f8fc.png",
+      "4": "file_00000000a33c82108ec6199621c578d8.png",
+      "5": "sherlock_nr18.png",
+      "6": "wolf_of_wall_street_nr16.png"
+    }
   },
   "doctoru": {
     "nextIndex": 7,

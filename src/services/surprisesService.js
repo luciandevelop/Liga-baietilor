@@ -24,7 +24,7 @@ export const MAIN_CATALOG = [
 export const BONUS_CATALOG = [
   { id: "roulette", label: "Ruletă", active: true },
   { id: "mystery-box", label: "Mystery Box", active: true },
-  { id: "penalty-pvp", label: "Penalty PvP", active: false },
+  { id: "penalty-pvp", label: "Penalty PvP", active: true },
 ];
 
 // 16 segmente, distribuția aprobată. Ordinea de-aici NU e ordinea vizuală
@@ -73,6 +73,48 @@ function shuffleDeterministic(arr, seedStr) {
   }
   return a;
 }
+
+const PENALTY_ZONES = ["left", "center", "right"];
+
+// ══════════════════════════════════════════════════════════════════
+// PENALTY PVP — funcție PURĂ, fără Firestore, testabilă independent.
+// Aceeași folosită ATÂT de getPenaltyDuelPreview (live, înainte de
+// Resolve) CÂT ȘI de resolveBonus (oficial) — o singură sursă de
+// adevăr, niciodată recalculată diferit în două locuri.
+//
+// choicesA/choicesB: { shots: [5 zone], defends: [5 zone] }
+// Runda i: A șutează în shots[i], B apără în defends[i] — GOL dacă
+// zonele diferă, APĂRAT dacă sunt identice (regula cerută explicit).
+// Simetric pentru B care șutează, A apără.
+// ══════════════════════════════════════════════════════════════════
+export function computePenaltyDuel(choicesA, choicesB) {
+  const rounds = [];
+  let aGoals = 0, aSaves = 0, bGoals = 0, bSaves = 0;
+  for (let i = 0; i < 5; i++) {
+    const aShot = choicesA.shots[i], bDefend = choicesB.defends[i];
+    const aScores = aShot !== bDefend;
+    if (aScores) aGoals++; else bSaves++;
+
+    const bShot = choicesB.shots[i], aDefend = choicesA.defends[i];
+    const bScores = bShot !== aDefend;
+    if (bScores) bGoals++; else aSaves++;
+
+    rounds.push({ aShot, bDefend, aScores, bShot, aDefend, bScores });
+  }
+  // +10 per gol marcat, +10 per apărare reușită — max 5×10+5×10=100.
+  const aPoints = aGoals * 10 + aSaves * 10;
+  const bPoints = bGoals * 10 + bSaves * 10;
+  return {
+    rounds,
+    myGoals: aGoals, mySaves: aSaves, myPoints: aPoints,
+    oppGoals: bGoals, oppSaves: bSaves, oppPoints: bPoints,
+  };
+}
+
+function validatePenaltyChoiceArray(arr) {
+  return Array.isArray(arr) && arr.length === 5 && arr.every((z) => PENALTY_ZONES.includes(z));
+}
+
 
 // ══════════════════════════════════════════════════════════════════
 // CITIRE — public + secret (secret întoarce null dacă nu ai voie încă,
@@ -341,6 +383,14 @@ export async function revealMain(gameweekId) {
 export async function revealBonus(gameweekId) {
   const publicRef = doc(db, "weeklySurprises", gameweekId);
   const secretRef = doc(db, "weeklySurprises", gameweekId, "secret", "bonus");
+  // Shuffle-ul (dacă tipul chiar e Penalty) se face AICI, în afara
+  // tranzacției — la fel ca la revealMain, care citește activeUids
+  // înainte de tx. Seed distinct de cel de la MAIN ("_bonus_penalty",
+  // nu "_main"), ca cele două pairing-uri (dacă ambele tipuri active
+  // simultan) să nu coreleze vizibil.
+  const activeUidsForPenalty = await listActiveUserIds();
+  const shuffledForPenalty = shuffleDeterministic([...activeUidsForPenalty], gameweekId + "_bonus_penalty");
+
   await runTransaction(db, async (tx) => {
     const pubSnap = await tx.get(publicRef);
     if (pubSnap.exists() && pubSnap.data().bonusRevealed) return;
@@ -357,6 +407,17 @@ export async function revealBonus(gameweekId) {
         [boxValues[i], boxValues[j]] = [boxValues[j], boxValues[i]];
       }
       tx.set(secretRef, { config: { boxValues } }, { merge: true });
+    } else if (type === "penalty-pvp") {
+      // Aceeași regulă de pairing/Bye ca la Duel Random (revealMain) —
+      // consecutiv, din lista amestecată determinist. Bye = 50p, fără
+      // meci (deja afișat explicit în PenaltyExperience.jsx).
+      const pairings = [];
+      let byePlayer = null;
+      for (let i = 0; i < shuffledForPenalty.length; i += 2) {
+        if (i + 1 < shuffledForPenalty.length) pairings.push({ playerA: shuffledForPenalty[i], playerB: shuffledForPenalty[i + 1] });
+        else byePlayer = shuffledForPenalty[i];
+      }
+      tx.set(secretRef, { config: { pairings, byePlayer } }, { merge: true });
     }
 
     tx.set(publicRef, { gameweekId, bonusRevealed: true, bonusRevealedAt: serverTimestamp() }, { merge: true });
@@ -884,6 +945,7 @@ export async function resolveBonus(gameweekId) {
   const bonusType = secretSnap.exists() ? secretSnap.data().type : null;
 
   let resultsPerUser;
+  let penaltyDetailByUid = {}; // doar pentru penalty-pvp — { uid: {myGoals,mySaves,opponentGoals,opponentSaves} }
   if (bonusType === "mystery-box") {
     const boxValues = secretSnap.exists() ? (secretSnap.data().config?.boxValues || []) : [];
     const picksSnap = await getDocs(collection(db, "weeklySurprises", gameweekId, "mysteryBoxPicks"));
@@ -901,6 +963,42 @@ export async function resolveBonus(gameweekId) {
       const points = pick ? (boxValues[pick.boxIndex] ?? 0) : 0;
       return { uid, points };
     });
+  } else if (bonusType === "penalty-pvp") {
+    // Determinist, din CHOICES persistate — NICIODATĂ dintr-un punctaj
+    // trimis direct de client. Aceeași computePenaltyDuel ca la preview
+    // — o singură sursă de adevăr, nu recalculată diferit aici.
+    const { pairings = [], byePlayer = null } = secretSnap.exists() ? (secretSnap.data().config || {}) : {};
+    const choicesSnap = await getDocs(collection(db, "weeklySurprises", gameweekId, "penaltyChoices"));
+    const choicesByUid = {};
+    choicesSnap.docs.forEach((d) => { choicesByUid[d.id] = d.data(); });
+
+    resultsPerUser = [];
+    pairings.forEach(({ playerA, playerB }) => {
+      const cA = choicesByUid[playerA], cB = choicesByUid[playerB];
+      // Cine nu a trimis alegerile pierde tot (0p) — cealaltă parte ia
+      // punctaj maxim doar pe rolul pentru care ADVERSARUL lipsește
+      // (5 lovituri automat "gol", n-are ce apăra pe bune) — aceeași
+      // filozofie ca la celelalte tipuri de Duel din aplicație.
+      if (cA && cB) {
+        const result = computePenaltyDuel(cA, cB);
+        resultsPerUser.push({ uid: playerA, points: result.myPoints });
+        resultsPerUser.push({ uid: playerB, points: result.oppPoints });
+        penaltyDetailByUid[playerA] = { myGoals: result.myGoals, mySaves: result.mySaves, opponentGoals: result.oppGoals, opponentSaves: result.oppSaves };
+        penaltyDetailByUid[playerB] = { myGoals: result.oppGoals, mySaves: result.oppSaves, opponentGoals: result.myGoals, opponentSaves: result.mySaves };
+      } else if (cA && !cB) {
+        resultsPerUser.push({ uid: playerA, points: 50 });
+        resultsPerUser.push({ uid: playerB, points: 0 });
+        penaltyDetailByUid[playerA] = { myGoals: 5, mySaves: 0, opponentGoals: 0, opponentSaves: 0 };
+      } else if (!cA && cB) {
+        resultsPerUser.push({ uid: playerA, points: 0 });
+        resultsPerUser.push({ uid: playerB, points: 50 });
+        penaltyDetailByUid[playerB] = { myGoals: 5, mySaves: 0, opponentGoals: 0, opponentSaves: 0 };
+      } else {
+        resultsPerUser.push({ uid: playerA, points: 0 });
+        resultsPerUser.push({ uid: playerB, points: 0 });
+      }
+    });
+    if (byePlayer) resultsPerUser.push({ uid: byePlayer, points: 50 });
   } else {
     // Ruletă — neschimbat.
     resultsPerUser = await Promise.all(activeUids.map(async (uid) => {
@@ -922,16 +1020,91 @@ export async function resolveBonus(gameweekId) {
     // aici — se consolidează o singură dată, la finalizeGameweek, exact
     // ca la Main (motivul e identic: evită dublarea la Resolve+Finalize).
     resultsPerUser.forEach((r) => {
-      tx.set(doc(db, "weeklySurprises", gameweekId, "results", r.uid), { uid: r.uid, bonusPoints: r.points }, { merge: true });
+      const extra = penaltyDetailByUid[r.uid] ? { penalty: penaltyDetailByUid[r.uid] } : {};
+      tx.set(doc(db, "weeklySurprises", gameweekId, "results", r.uid), { uid: r.uid, bonusPoints: r.points, ...extra }, { merge: true });
     });
     tx.set(publicRef, { bonusResolved: true }, { merge: true });
   });
 }
 
 // ══════════════════════════════════════════════════════════════════
-// RULETĂ — spin-uri per user. ID determinist "{1|2}_{uid}", create-only
-// (regula Firestore interzice orice update/delete — imutabil real).
+// PENALTY PVP — 1v1, 5 runde, fiecare jucător e și executant și portar
+// în fiecare rundă (execută pe shots[i], apără pe defends[i]). Reguli
+// de pairing IDENTICE cu Duel Random (revealBonus, mai sus) — perechi
+// consecutive dintr-o listă amestecată determinist, Bye = 50p fără meci.
 // ══════════════════════════════════════════════════════════════════
+
+// ── Perechea userului curent — { opponentUid, isBye }. null dacă
+// Bonusul ăsta nu e (încă) Penalty PvP dezvăluit. ──
+export async function getMyPenaltyPairing(gameweekId, uid) {
+  const secretSnap = await getDoc(doc(db, "weeklySurprises", gameweekId, "secret", "bonus"));
+  if (!secretSnap.exists()) return null;
+  const { pairings = [], byePlayer = null } = secretSnap.data().config || {};
+  if (byePlayer === uid) return { opponentUid: null, isBye: true };
+  const pair = pairings.find((p) => p.playerA === uid || p.playerB === uid);
+  if (!pair) return null;
+  return { opponentUid: pair.playerA === uid ? pair.playerB : pair.playerA, isBye: false };
+}
+
+// ── Alegerile PROPRII ale userului curent — null dacă nu a trimis
+// încă. Regula Firestore permite owner-ul să-și citească oricând
+// propriul document (vezi blocul de reguli din raport). ──
+export async function getMyPenaltyChoices(gameweekId, uid) {
+  try {
+    const snap = await getDoc(doc(db, "weeklySurprises", gameweekId, "penaltyChoices", uid));
+    return snap.exists() ? snap.data() : null;
+  } catch (err) {
+    return null;
+  }
+}
+
+// ── Cine a trimis deja (indiferent de conținut) — folosit DOAR ca să
+// arate "adversarul a trimis și el" în ecranul de așteptare, NU pentru
+// a citi conținutul alegerilor lui. Regula Firestore permite citirea
+// documentului penaltySubmitted/{uid} (doar flag boolean, fără zone)
+// oricui e autentificat — nu scurge nimic secret. ──
+export async function getPenaltySubmittedUids(gameweekId) {
+  try {
+    const snap = await getDocs(collection(db, "weeklySurprises", gameweekId, "penaltySubmitted"));
+    return new Set(snap.docs.map((d) => d.id));
+  } catch (err) {
+    return new Set(); // permission-denied = regulile nu sunt încă live, nu blocăm ecranul
+  }
+}
+
+// ── Trimite alegerile — validare completă client-side (Firestore
+// Rules validează din nou, independent, nu se bazează doar pe asta).
+// Scrie DOUĂ documente: penaltyChoices/{uid} (secretul real, create-only
+// — Rules interzice update/delete, deci "definitiv după trimitere" e
+// garantat STRUCTURAL, nu doar UI) și penaltySubmitted/{uid} (doar
+// marcaj public "a trimis", fără conținut secret). ──
+export async function submitPenaltyChoices(gameweekId, uid, shots, defends) {
+  if (!validatePenaltyChoiceArray(shots)) throw new Error("Loviturile trebuie să fie exact 5 zone valide (left/center/right).");
+  if (!validatePenaltyChoiceArray(defends)) throw new Error("Apărările trebuie să fie exact 5 zone valide (left/center/right).");
+
+  const existing = await getDoc(doc(db, "weeklySurprises", gameweekId, "penaltyChoices", uid));
+  if (existing.exists()) throw new Error("Ai trimis deja alegerile pentru duelul ăsta.");
+
+  await Promise.all([
+    setDoc(doc(db, "weeklySurprises", gameweekId, "penaltyChoices", uid), { uid, shots, defends, createdAt: serverTimestamp() }),
+    setDoc(doc(db, "weeklySurprises", gameweekId, "penaltySubmitted", uid), { uid, submittedAt: serverTimestamp() }),
+  ]);
+}
+
+// ── Preview LIVE al duelului — funcționează DOAR după ce AMBII au
+// trimis (regula Firestore blochează citirea alegerilor adversarului
+// altfel — vezi PRIVACY în raport). Folosește EXACT computePenaltyDuel,
+// aceeași funcție ca resolveBonus — niciodată recalculată diferit. ──
+export async function getPenaltyDuelPreview(gameweekId, myUid, opponentUid) {
+  const [mySnap, oppSnap] = await Promise.all([
+    getDoc(doc(db, "weeklySurprises", gameweekId, "penaltyChoices", myUid)),
+    getDoc(doc(db, "weeklySurprises", gameweekId, "penaltyChoices", opponentUid)).catch(() => ({ exists: () => false })),
+  ]);
+  if (!mySnap.exists() || !oppSnap.exists()) return null;
+  return computePenaltyDuel(mySnap.data(), oppSnap.data());
+}
+
+
 export async function getRouletteSpin(gameweekId, uid, spinNumber) {
   try {
     const snap = await getDoc(doc(db, "weeklySurprises", gameweekId, "rouletteSpins", `${spinNumber}_${uid}`));

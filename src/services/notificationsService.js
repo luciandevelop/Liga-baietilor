@@ -1,8 +1,9 @@
-import { doc, getDoc, collection, getDocs, query, where } from "firebase/firestore";
+import { doc, getDoc } from "firebase/firestore";
 import { db } from "../firebase";
 import {
   getWeeklySurprise, getSecretMain, getSecretBonus, MAIN_CATALOG, BONUS_CATALOG,
   getMySabotajChoice, getRouletteSpin, getAllMysteryBoxPicks, getMyTriviaAnswers,
+  getMyPenaltyPairing, getMyPenaltyChoices, getPenaltySubmittedUids,
 } from "./surprisesService";
 
 // ── Meciuri de azi fără pronostic — verificare directă pe existența
@@ -55,6 +56,10 @@ async function hasActedOnMain(gameweekId, uid, type, secretMain) {
   return true; // tip necunoscut — nu blocăm, nu presupunem
 }
 
+// ── Bonus — pentru majoritatea tipurilor, un simplu "ai acționat sau
+// nu" (boolean) e suficient. Penalty PvP e SINGURUL cu 3 stări reale
+// (vezi getPenaltyNotificationState mai jos) — tratat separat, nu
+// forțat în același tipar boolean. ──
 async function hasActedOnBonus(gameweekId, uid, type) {
   if (type === "roulette") {
     const spin = await getRouletteSpin(gameweekId, uid, 1).catch(() => null);
@@ -64,13 +69,25 @@ async function hasActedOnBonus(gameweekId, uid, type) {
     const picks = await getAllMysteryBoxPicks(gameweekId).catch(() => []);
     return picks.some((p) => p.uid === uid);
   }
-  if (type === "penalty-pvp") {
-    // tratat separat, per pereche — vezi getMyPenaltyChoices dacă/când
-    // devine parte din pachetul curent; deocamdată BONUS_CATALOG îl are
-    // active:false, deci nu ajunge aici oricum (filtrat mai devreme).
-    return true;
-  }
   return true;
+}
+
+// ── Penalty PvP — 3 stări reale, cerute explicit:
+//   "not_submitted"   — ai un duel, n-ai trimis încă alegerile
+//   "waiting_opponent" — ai trimis, adversarul încă nu
+//   "ready"            — ambii au trimis, rezultatul poate fi văzut
+// null dacă nu ai duel (Bye, sau tipul curent nu e Penalty). ──
+async function getPenaltyNotificationState(gameweekId, uid) {
+  const pairing = await getMyPenaltyPairing(gameweekId, uid).catch(() => null);
+  if (!pairing || pairing.isBye || !pairing.opponentUid) return null;
+
+  const myChoices = await getMyPenaltyChoices(gameweekId, uid).catch(() => null);
+  if (!myChoices) return "not_submitted";
+
+  const submitted = await getPenaltySubmittedUids(gameweekId).catch(() => new Set());
+  if (!submitted.has(pairing.opponentUid)) return "waiting_opponent";
+
+  return "ready";
 }
 
 // ── Surprize dezvăluite dar neacționate de userul curent — pentru
@@ -95,8 +112,20 @@ export async function getUnactionedSurprises(gameweekId, uid) {
     if (secretBonus?.type) {
       const catalogEntry = BONUS_CATALOG.find((c) => c.id === secretBonus.type);
       if (catalogEntry?.active) {
-        const acted = await hasActedOnBonus(gameweekId, uid, secretBonus.type);
-        if (!acted) results.push({ kind: "bonus", type: secretBonus.type, label: catalogEntry.label });
+        if (secretBonus.type === "penalty-pvp") {
+          const state = await getPenaltyNotificationState(gameweekId, uid);
+          if (state === "not_submitted") {
+            results.push({ kind: "bonus", type: "penalty-pvp", label: catalogEntry.label, subtitle: "Ai un duel Penalty — încă n-ai trimis alegerile" });
+          } else if (state === "ready") {
+            results.push({ kind: "bonus", type: "penalty-pvp", label: catalogEntry.label, subtitle: "Duelul tău de Penalty e gata — vezi rezultatul" });
+          }
+          // "waiting_opponent" — deliberat FĂRĂ notificare: nu-i nimic de
+          // acționat din partea userului, doar așteptare; a-l notifica
+          // n-ar face decât zgomot fără scop.
+        } else {
+          const acted = await hasActedOnBonus(gameweekId, uid, secretBonus.type);
+          if (!acted) results.push({ kind: "bonus", type: secretBonus.type, label: catalogEntry.label });
+        }
       }
     }
   }
@@ -133,7 +162,7 @@ export async function loadNotifications({ gameweekId, matches, uid, featuredMatc
   }));
   unactioned.forEach((s) => items.push({
     id: `surprise_${s.kind}_${s.type}`, kind: "surprise",
-    title: s.label, subtitle: s.kind === "main" ? "Surpriza Principală te așteaptă" : "Bonusul Săptămânii te așteaptă",
+    title: s.label, subtitle: s.subtitle || (s.kind === "main" ? "Surpriza Principală te așteaptă" : "Bonusul Săptămânii te așteaptă"),
   }));
   if (featured.length > 0) {
     items.push({

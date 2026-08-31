@@ -64,7 +64,7 @@ function getParticlesLayer(series) {
     .join(", ");
 }
 
-export default function PlayerCard({ uid, nickname, avatarId, rank, stats, onClose }) {
+export default function PlayerCard({ uid, nickname, avatarId, rank, scope = "etapa", stats, onClose }) {
   const [flipped, setFlipped] = useState(false);
   // Când meciurile arătate sunt dintr-o etapă anterioară (fallback, nu
   // etapa cerută), lista pornește închisă — "eventual se deschid la
@@ -75,11 +75,24 @@ export default function PlayerCard({ uid, nickname, avatarId, rank, stats, onClo
   if (!stats) return null;
 
   const series = getCardSeries(uid);
-  const title = resolveTitle(stats);
+  // `rankScope` intră în stats DOAR pentru resolveTitle (nu modifică
+  // obiectul original venit din adminService) — spune titlului DIN CE
+  // clasament vine rank-ul, ca eticheta să nu mai zică mereu "etapei".
+  const title = resolveTitle({ ...stats, rankScope: scope });
   const funStats = getFunStats(uid);
   const collectionId = getCollectionId(uid);
   const avatarUrl = getAvatarUrl(avatarId);
   const initial = (nickname || "?").trim().charAt(0).toUpperCase();
+
+  // Numărul mare de pe față — TREBUIE să corespundă cu scope-ul din care
+  // s-a deschis cardul (dacă titlul zice "sezonului", cifra de-alături
+  // trebuie să fie din Sezon, nu totalul de carieră din General — asta
+  // era exact confuzia semnalată: cifre uriașe de carieră lângă "MVP-ul
+  // etapei"). Fallback la generalPoints doar dacă scope-ul cerut n-are
+  // valoare (nu ar trebui să se-ntâmple, dar niciodată slot gol).
+  const frontPoints = scope === "sezon" ? (stats.seasonPoints ?? stats.generalPoints)
+    : scope === "general" ? stats.generalPoints
+    : (stats.etapaPoints ?? stats.generalPoints);
 
   // Cel mai nou meci primul — "primul lucru pe care vor userii să-l vadă".
   const matches = (stats.matches || []).slice().sort((a, b) => {
@@ -156,7 +169,7 @@ export default function PlayerCard({ uid, nickname, avatarId, rank, stats, onClo
                       <span>{title.icon}</span> {title.label}
                     </div>
                     <div style={{ ...s.frontScore, color: series.secondary, textShadow: `0 0 18px ${series.primary}` }}>
-                      {stats.generalPoints}<span style={s.frontScoreUnit}>p</span>
+                      {frontPoints}<span style={s.frontScoreUnit}>p</span>
                     </div>
                     <div style={s.frontMotto}>„{series.motto}"</div>
                     <div style={s.lbCrest}>LB</div>

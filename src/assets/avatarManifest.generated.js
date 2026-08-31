@@ -90,7 +90,14 @@ export default {
     }
   },
   "vladinhuu": {
-    "nextIndex": 1,
-    "files": {}
+    "nextIndex": 7,
+    "files": {
+      "1": "file_0000000049a882108b274da878de2f02.png",
+      "2": "file_000000006fbc8243871aa0625e6c15ec.png",
+      "3": "file_00000000805c82469eb6edc48449bc58.png",
+      "4": "file_0000000092e08246a0f15eb084f97bdf.png",
+      "5": "file_00000000ac0c820abf35ccc65e296de7.png",
+      "6": "vladinhuu_hitman_4.png"
+    }
   }
 };

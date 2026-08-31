@@ -27,6 +27,10 @@ export default {
       "7": "file_00000000ca688211859d7bc6416a1f12.png"
     }
   },
+  "bona": {
+    "nextIndex": 1,
+    "files": {}
+  },
   "doctoru": {
     "nextIndex": 7,
     "files": {

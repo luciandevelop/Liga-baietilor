@@ -18,6 +18,7 @@ import DiceExperience from "../components/DiceExperience";
 import SabotajExperience from "../components/SabotajExperience";
 import RouletteExperience from "../components/RouletteExperience";
 import MysteryBoxExperience from "../components/MysteryBoxExperience";
+import PenaltyExperience from "../components/PenaltyExperience";
 import { color, font, radius } from "../matchdayTheme";
 
 function catalogLabel(list, id) {
@@ -315,6 +316,15 @@ export default function SurprisesScreen({ user, onBack }) {
                       gameweekId={gameweek.id}
                       uid={user.uid}
                       allBoxesRevealed={!!pub?.mysteryBoxAllRevealed}
+                      resolved={!!pub?.bonusResolved}
+                      myResult={myResult}
+                    />
+                  )}
+
+                  {secretBonus?.type === "penalty-pvp" && (
+                    <PenaltyExperience
+                      gameweekId={gameweek.id}
+                      uid={user.uid}
                       resolved={!!pub?.bonusResolved}
                       myResult={myResult}
                     />

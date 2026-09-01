@@ -16,8 +16,15 @@ export default {
     }
   },
   "alex-nicoara": {
-    "nextIndex": 1,
-    "files": {}
+    "nextIndex": 7,
+    "files": {
+      "1": "04_leonidas_exact.png",
+      "2": "06_green_arrow_exact.png",
+      "3": "10_gambit_exact.png",
+      "4": "file_0000000089ec824688aa67c29d85e476.png",
+      "5": "file_000000009dd882468b9d5b7776f53454.png",
+      "6": "file_00000000fc6881f4808f837b4ff8cfb7.png"
+    }
   },
   "bogdanb": {
     "nextIndex": 8,

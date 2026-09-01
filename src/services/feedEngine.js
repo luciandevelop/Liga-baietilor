@@ -85,7 +85,8 @@ export const IMPORTANCE = {
   EXACT_SCORE_RARE: 74, EXACT_SCORE: 60,
   JOKER: 58, UPCOMING_IMPORTANT: 50, PREVIEW: 35,
   FACT_INTERNAL: 45, BANTER_ATTACHED: 0,
-  FUN: 15,
+  FUN: 15, CITY_FACT: 42,
+  SURPRISE_CREATED: 65, SURPRISE_MATCHUP: 68, SURPRISE_PROGRESS: 48, SURPRISE_RESULT: 72, SURPRISE_REWARD: 66,
 };
 
 export const VISUAL_CATEGORY = {
@@ -314,13 +315,23 @@ export function detectRankChangeEvents(prevState, currentRows, opts = {}) {
 
 export function aggregateRankStory(rawRankEvents) {
   if (rawRankEvents.length === 0) return [];
-  // BIG_CLIMB/BIG_DROP (75-80) rămân "headline" — sunt categorii numite
-  // explicit, nu trebuie îngropate în cardul agregat generic. Doar
-  // TOP10_ENTRY/EXIT (70-72) și mișcările mici (55) se comprimă.
+  // BIG_CLIMB/BIG_DROP (75-80) rămân "headline" — categorii numite
+  // explicit. TOP10_ENTRY/EXIT (70-72) și mișcările mici (55) se
+  // comprimă mereu. DAR: dacă apar 2+ headline-uri DIN ACELAȘI meci,
+  // nu le mai arătăm separat ("X coboară" + "Y coboară" + "Z intră pe
+  // podium" ca 3 carduri) — le combinăm într-O SINGURĂ poveste, exact
+  // cum a cerut explicit: "Golul lui X a făcut prăpăd: A urcă, B intră
+  // pe podium, C pierde șefia." Un singur headline rămâne solo (e deja
+  // cea mai bună poveste posibilă, n-are cu ce să se combine).
   const headline = rawRankEvents.filter((e) => e.importance >= IMPORTANCE.BIG_DROP);
   const minor = rawRankEvents.filter((e) => e.importance < IMPORTANCE.BIG_DROP);
 
-  const result = [...headline];
+  const result = [];
+  if (headline.length >= 2) {
+    result.push(buildCombinedRankStory(headline));
+  } else {
+    result.push(...headline);
+  }
   if (minor.length === 1) {
     result.push(minor[0]);
   } else if (minor.length > 1) {
@@ -340,6 +351,50 @@ export function aggregateRankStory(rawRankEvents) {
     });
   }
   return result;
+}
+
+// ── Frază scurtă per persoană, pentru povestea combinată — reflectă
+// EXACT ce i s-a întâmplat (nu generic "și-a schimbat poziția"). ──
+function shortClauseFor(e) {
+  const n = e.metadata.nickname;
+  switch (e.subtype) {
+    case "new_leader": return `${n} preia șefia`;
+    case "leader_lost": return `${n} pierde șefia`;
+    case "leader_return": return `${n} revine lider`;
+    case "podium_entry": return `${n} intră pe podium`;
+    case "podium_exit": return `${n} cade de pe podium`;
+    case "big_climb": return `${n} urcă ${Math.abs(e.metadata.moved)} locuri`;
+    case "big_drop": return `${n} coboară ${Math.abs(e.metadata.moved)} locuri`;
+    default: return `${n} își schimbă poziția`;
+  }
+}
+
+function buildCombinedRankStory(headlineEvents) {
+  const sorted = [...headlineEvents].sort((a, b) => b.importance - a.importance);
+  const MAX_NAMED = 4;
+  const named = sorted.slice(0, MAX_NAMED);
+  const clauses = named.map(shortClauseFor);
+  const extra = sorted.length > MAX_NAMED ? [`încă ${sorted.length - MAX_NAMED} jucători își schimbă poziția`] : [];
+  const allClauses = [...clauses, ...extra];
+  const seed = sorted.map((e) => e.id).join("|");
+  const id = `rank_combined_${hashSeed(seed)}`;
+  const last = allClauses[allClauses.length - 1];
+  const rest = allClauses.slice(0, -1);
+  const body = rest.length > 0 ? `${rest.join(", ")}, iar ${last}` : last;
+  return {
+    id, type: TYPE.RANK, subtype: "combined",
+    ts: Date.now(), importance: Math.max(...sorted.map((e) => e.importance)) + 2, // ușor peste cel mai mare component, ca să câștige la sortare
+    actors: sorted.map((e) => e.actors[0]),
+    metadata: { count: sorted.length, components: sorted.map((e) => e.subtype) },
+    narrativeKey: id, version: 2, icon: "up", important: true,
+    title: pick([
+      `🌪️ Rezultatul ăsta a făcut prăpăd în clasament: ${body}.`,
+      `🌪️ Clasamentul s-a răsturnat: ${body}.`,
+      `📊 Un singur rezultat, mai multe povești: ${body}.`,
+    ], seed),
+    subtitle: null, category: "clasament", priority: Math.max(...sorted.map((e) => e.importance)) + 2,
+    detail: { count: sorted.length },
+  };
 }
 
 // ══════════════════════════════════════════════════════════════════
@@ -417,6 +472,101 @@ export function buildMatchFinalEvent(match, exactScorers = [], recentVariants = 
   };
 }
 
+// ══════════════════════════════════════════════════════════════════
+// FAPT DE ORAȘ — card propriu, nu doar îngropat în preview-ul de meci.
+// Un singur fapt per meci, dedup pe etapă (nu se repetă), determinist
+// (pick pe id-ul meciului, nu pe conținut — stabil la refresh). ──
+export function buildCityFactEvent(match, cityFact) {
+  if (!cityFact) return null;
+  return {
+    id: `cityfact_${match.id}`, type: TYPE.FACT, subtype: "city",
+    ts: Date.now(), importance: IMPORTANCE.CITY_FACT, actors: [],
+    metadata: { matchId: match.id, homeTeam: match.homeTeam, awayTeam: match.awayTeam },
+    narrativeKey: `cityfact_${match.id}`, version: 2,
+    icon: "city", important: false,
+    title: cityFact.subtitle || cityFact.title,
+    subtitle: cityFact.body || null,
+    category: "city", priority: IMPORTANCE.CITY_FACT,
+    detail: { matchId: match.id, source: cityFact.source || null },
+  };
+}
+
+// ══════════════════════════════════════════════════════════════════
+// SURPRIZE — 5 tipuri GENERICE, extensibile la orice mod existent sau
+// viitor (Duel, Mystery Box, Sabotaj, Trivia, Zaruri, Penalty PvP,
+// Ruletă...) fără să reconstruim Feed-ul la fiecare mod nou adăugat.
+// `mode` + `metadata` țin specificul fiecărui tip; textul e generic,
+// construit din `label`/`detail`, nu hardcodat pe un singur mod.
+// ══════════════════════════════════════════════════════════════════
+export function buildSurpriseCreatedEvent(gameweekId, kind, mode, label) {
+  const id = `surprise_created_${gameweekId}_${kind}`;
+  return {
+    id, type: TYPE.SURPRISE, subtype: "surprise_created",
+    ts: Date.now(), importance: IMPORTANCE.SURPRISE_CREATED, actors: [],
+    metadata: { gameweekId, kind, mode }, narrativeKey: id, version: 2,
+    icon: "surprise", important: false,
+    title: pick([
+      `🎭 Surpriza ${kind === "main" ? "Principală" : "Săptămânii"} e gata: ${label}.`,
+      `🎭 ${label} — asta e provocarea ${kind === "main" ? "principală a" : "bonus a"} etapei.`,
+      `✨ S-a dezvăluit: ${label}.`,
+    ], id),
+    category: "fun", priority: IMPORTANCE.SURPRISE_CREATED,
+    detail: { gameweekId, kind, mode },
+  };
+}
+
+export function buildSurpriseMatchupEvent(gameweekId, kind, mode, description) {
+  const id = `surprise_matchup_${gameweekId}_${kind}`;
+  return {
+    id, type: TYPE.SURPRISE, subtype: "surprise_matchup",
+    ts: Date.now(), importance: IMPORTANCE.SURPRISE_MATCHUP, actors: [],
+    metadata: { gameweekId, kind, mode }, narrativeKey: id, version: 2,
+    icon: "vs", important: true,
+    title: description,
+    category: "fun", priority: IMPORTANCE.SURPRISE_MATCHUP,
+    detail: { gameweekId, kind, mode },
+  };
+}
+
+export function buildSurpriseProgressEvent(gameweekId, kind, mode, uniqueSuffix, description) {
+  const id = `surprise_progress_${gameweekId}_${kind}_${uniqueSuffix}`;
+  return {
+    id, type: TYPE.SURPRISE, subtype: "surprise_progress",
+    ts: Date.now(), importance: IMPORTANCE.SURPRISE_PROGRESS, actors: [],
+    metadata: { gameweekId, kind, mode }, narrativeKey: id, version: 2,
+    icon: "surprise", important: false,
+    title: description,
+    category: "fun", priority: IMPORTANCE.SURPRISE_PROGRESS,
+    detail: { gameweekId, kind, mode },
+  };
+}
+
+export function buildSurpriseResultEvent(gameweekId, kind, mode, description) {
+  const id = `surprise_result_${gameweekId}_${kind}`;
+  return {
+    id, type: TYPE.SURPRISE, subtype: "surprise_result",
+    ts: Date.now(), importance: IMPORTANCE.SURPRISE_RESULT, actors: [],
+    metadata: { gameweekId, kind, mode }, narrativeKey: id, version: 2,
+    icon: "trophy", important: true,
+    title: description,
+    category: "fun", priority: IMPORTANCE.SURPRISE_RESULT,
+    detail: { gameweekId, kind, mode },
+  };
+}
+
+export function buildSurpriseRewardEvent(gameweekId, kind, mode, uid, description) {
+  const id = `surprise_reward_${gameweekId}_${kind}_${uid}`;
+  return {
+    id, type: TYPE.SURPRISE, subtype: "surprise_reward",
+    ts: Date.now(), importance: IMPORTANCE.SURPRISE_REWARD, actors: [uid],
+    metadata: { gameweekId, kind, mode }, narrativeKey: id, version: 2,
+    icon: "gift", important: false,
+    title: description,
+    category: "fun", priority: IMPORTANCE.SURPRISE_REWARD,
+    detail: { gameweekId, kind, mode },
+  };
+}
+
 export function buildJokerEvent(joker, match, nickname) {
   if (!match) return null;
   return {
@@ -432,6 +582,16 @@ export function buildJokerEvent(joker, match, nickname) {
 }
 
 export function buildUpcomingMatchEvent(match, editorialSnippets, isImportant) {
+  // ── Faptele de oraș/echipă existau deja, calculate corect, dar
+  // rămâneau îngropate în `detail.editorialSnippets` — pe care
+  // FeedCard nu-l citea niciodată. Bug găsit și reparat: acum un
+  // fapt (determinist, ales din cele calculate) apare direct în
+  // subtitlul cardului, vizibil. Restul rămân disponibile în detail
+  // pentru "Vezi tot"/ecranul complet, dacă vrem să le arătăm pe
+  // toate acolo mai târziu. ──
+  const snippet = editorialSnippets && editorialSnippets.length > 0
+    ? pick(editorialSnippets.map((s) => s.subtitle || s.body), `upcoming_${match.id}`)
+    : null;
   return {
     id: `upcoming_${match.id}`, type: TYPE.MATCH, subtype: isImportant ? "upcoming_important" : "upcoming",
     ts: Date.now(), importance: isImportant ? IMPORTANCE.UPCOMING_IMPORTANT : IMPORTANCE.PREVIEW,
@@ -439,7 +599,7 @@ export function buildUpcomingMatchEvent(match, editorialSnippets, isImportant) {
     narrativeKey: `upcoming_${match.id}`, version: 2,
     icon: isImportant ? "star" : "whistle", important: isImportant,
     title: isImportant ? `${match.homeTeam} – ${match.awayTeam}: Meciul Săptămânii (Punctaj Dublu)` : `${match.homeTeam} – ${match.awayTeam}`,
-    subtitle: match.competitionName || null,
+    subtitle: snippet || match.competitionName || null,
     category: "meciuri", priority: isImportant ? IMPORTANCE.UPCOMING_IMPORTANT : IMPORTANCE.PREVIEW,
     detail: {
       competitionName: match.competitionName, matchId: match.id,
@@ -641,7 +801,7 @@ export function mergeFeedEvents(...groups) {
   const sorted = deduped.sort((a, b) => (b.priority - a.priority) || (b.ts - a.ts));
 
   const routineGoalCountByMatch = {};
-  const result = [];
+  const filtered = [];
   for (const ev of sorted) {
     const isRoutineGoal = ev.type === TYPE.MATCH && ev.subtype === "goal" && !ev.important;
     if (isRoutineGoal) {
@@ -649,7 +809,35 @@ export function mergeFeedEvents(...groups) {
       routineGoalCountByMatch[mid] = (routineGoalCountByMatch[mid] || 0) + 1;
       if (routineGoalCountByMatch[mid] > 2) continue;
     }
-    result.push(ev);
+    filtered.push(ev);
+  }
+  return editorialMix(filtered);
+}
+
+// ── Mixer editorial — DETERMINIST (nu Math.random), reordonează doar
+// cât să evite 3+ carduri consecutive din ACEEAȘI categorie, când
+// există o alternativă mai jos în listă care poate "sări" mai devreme
+// fără să strice ierarhia de importanță prea mult (doar în interiorul
+// unei ferestre mici — nu amestecă tot, nu scoate un card important
+// de sus doar ca să alterneze culori). Nu schimbă CE se publică, doar
+// ORDINEA — cerut explicit: "MATCH FACT SURPRISE PREDICTION RANKING",
+// nu "RANKING RANKING RANKING RANKING". ──
+function editorialMix(sortedEvents) {
+  const result = [];
+  const pool = [...sortedEvents];
+  const WINDOW = 15; // suficient de larg cât să găsească alternativă chiar și după un bloc mare de aceeași categorie (ex. 6-8 fapte de oraș, câte unul per meci)
+  while (pool.length > 0) {
+    const lastCat = result.length > 0 ? result[result.length - 1].category : null;
+    const prevCat = result.length > 1 ? result[result.length - 2].category : null;
+    // 2 la rând din aceeași categorie — caută o alternativă în fereastră
+    if (lastCat && lastCat === prevCat) {
+      const altIndex = pool.findIndex((e, i) => i < WINDOW && e.category !== lastCat);
+      if (altIndex > 0) {
+        result.push(pool.splice(altIndex, 1)[0]);
+        continue;
+      }
+    }
+    result.push(pool.shift());
   }
   return result;
 }

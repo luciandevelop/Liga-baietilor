@@ -6,6 +6,8 @@ import { db } from "../firebase";
 import {
   detectRankChangeEvents, aggregateRankStory, buildMatchFinalEvent, buildJokerEvent,
   buildUpcomingMatchEvent, buildLiveMatchEvent, attachBanter, mergeFeedEvents, TYPE,
+  buildCityFactEvent, buildSurpriseCreatedEvent, buildSurpriseMatchupEvent,
+  buildSurpriseProgressEvent, buildSurpriseResultEvent, buildSurpriseRewardEvent, pick,
 } from "./feedEngine";
 import {
   buildPredictionDistributionFact, buildSurpriseFact, buildTopExactScorerFact, buildStandingsGapFact,
@@ -17,6 +19,7 @@ import {
   detectConsensusStory, applyEditorialBudget, buildRecap, buildMatchPreviewCard,
 } from "./feedStoryEngine";
 import { listGeneralLeaderboard, listAllUsers, listActiveUserIds } from "./adminService";
+import { getAllSurpriseResults } from "./surprisesService";
 import { getUserPublicProfiles } from "./profilesService";
 import { EDITORIAL_ARTICLES } from "../feedContent/editorialContent";
 import { FUN_ITEMS } from "../feedContent/funContent";
@@ -173,12 +176,22 @@ export async function processLiveRankChanges(gameweekId) {
   // streak-urile rămân pe memoria NOUĂ (au nevoie de valorile proaspăt
   // actualizate — bestRank/worstRank/streak curent).
   const storyEvents = [
-    ...detectLeaderStory(oldMem, rows),
+    ...detectLeaderStory(oldMem, rows, oldMem.lastDetachGapReported || 0),
     ...detectPodiumStory(oldMem, rows),
     ...detectBottomStory(oldMem, rows),
     ...detectMomentumAndStreaks(stageMem, rows),
     ...detectRivalry(stageMem),
   ];
+
+  // Dacă "se desprinde" tocmai s-a spus, ținem minte avansul raportat,
+  // ca reprocesările următoare să compare împotriva ACESTEI valori
+  // (nu 0) — altfel pragul de creștere semnificativă e mereu îndeplinit
+  // și povestea tot se repetă la fiecare meci, exact bug-ul semnalat.
+  const detachEvent = storyEvents.find((e) => e.subtype === "leader_detach");
+  if (detachEvent) {
+    const stageMemRef2 = doc(db, "feedState", `stageMemory_${gameweekId}`);
+    await setDoc(stageMemRef2, { lastDetachGapReported: detachEvent.metadata.gap }, { merge: true }).catch(() => {});
+  }
 
   // Când Story Engine produce leader_return PENTRU ACEEAȘI persoană ÎN
   // ACEEAȘI reprocesare, cardul de bază "new_leader" (generic) devine
@@ -413,7 +426,7 @@ function getEditorialSnippetsForMatch(match) {
   return [...forTeam(homeId), ...forTeam(awayId)];
 }
 
-export async function processUpcomingMatches(matches, featuredMatchIds = []) {
+export async function processUpcomingMatches(matches, featuredMatchIds = [], gameweekId = null) {
   const now = Date.now();
   const upcoming = matches.filter((m) => {
     if (m.status !== "scheduled") return false;
@@ -426,8 +439,128 @@ export async function processUpcomingMatches(matches, featuredMatchIds = []) {
     return buildUpcomingMatchEvent(m, snippets, featuredMatchIds.includes(m.id));
   });
 
-  if (events.length > 0) await saveFeedEvents(events);
-  return events;
+  // ── Fapt de oraș — card propriu, DOAR pentru echipe cu fapt de oraș
+  // disponibil, DEDUPLICAT pe etapă (dacă "Despre oraș" al lui Real
+  // Madrid a apărut deja, nu se repetă chiar dacă Real Madrid mai
+  // joacă o dată în aceeași etapă). Fără persistare, dacă gameweekId
+  // lipsește (apelant vechi/test) — degradează elegant, nu crapă. ──
+  const cityEvents = [];
+  if (gameweekId) {
+    const usedRef = doc(db, "feedState", `usedCityFacts_${gameweekId}`);
+    const usedSnap = await getDoc(usedRef);
+    const used = new Set(usedSnap.exists() ? usedSnap.data().ids || [] : []);
+    for (const m of upcoming) {
+      const homeId = resolveTeamId(m.homeTeam), awayId = resolveTeamId(m.awayTeam);
+      const candidates = EDITORIAL_ARTICLES.filter((a) => a.title === "Despre oraș" && (a.teamId === homeId || a.teamId === awayId) && !used.has(a.id));
+      if (candidates.length === 0) continue;
+      const chosen = candidates[hashSeedLocal(m.id) % candidates.length];
+      used.add(chosen.id);
+      cityEvents.push(buildCityFactEvent(m, chosen));
+    }
+    if (cityEvents.length > 0) await setDoc(usedRef, { ids: [...used] });
+  }
+
+  const allEvents = [...events, ...cityEvents];
+  if (allEvents.length > 0) await saveFeedEvents(allEvents);
+  return allEvents;
+}
+
+// ══════════════════════════════════════════════════════════════════
+// SURPRIZE ÎN FEED — generic, extensibil la orice mod existent/viitor.
+// CREATED nu are nevoie de nicio citire nouă (reutilizează exact
+// pub/sm/sb deja încărcate pentru teaser-ul din Home). MATCHUP e
+// construit DOAR pentru tipurile cu perechi (Duel*) — celelalte moduri
+// (individuale: Trivia/Zaruri/Ruletă/Sabotaj) nu au un "matchup" de
+// descris, rămân doar cu evenimentul CREATED.
+// ══════════════════════════════════════════════════════════════════
+export async function processSurpriseCreated(gameweekId, kind, type, label) {
+  if (!type) return null;
+  const ev = buildSurpriseCreatedEvent(gameweekId, kind, type, label);
+  await saveFeedEvents([ev]);
+  return ev;
+}
+
+const PAIRING_MODES = new Set(["duel-random", "duel-extreme", "duel-rivali", "team-duel-random"]);
+
+export async function processSurpriseMatchup(gameweekId, kind, type, config) {
+  if (!PAIRING_MODES.has(type) || !config?.pairings) return null;
+  const uidsInvolved = config.pairings.flatMap((p) =>
+    p.playerA ? [p.playerA, p.playerB] : (p.teamA || []).concat(p.teamB || [])
+  );
+  if (uidsInvolved.length === 0) return null;
+  const profiles = await getUserPublicProfiles(uidsInvolved);
+  const nameOf = (uid) => profiles[uid]?.nickname || uid;
+
+  const descriptions = config.pairings.map((p) => {
+    if (p.teamA && p.teamB) {
+      return `${p.teamA.map(nameOf).join(" & ")} vs ${p.teamB.map(nameOf).join(" & ")}`;
+    }
+    return `${nameOf(p.playerA)} vs ${nameOf(p.playerB)}`;
+  });
+  const main = descriptions[0];
+  const extra = descriptions.length > 1 ? ` (+${descriptions.length - 1} ${descriptions.length - 1 === 1 ? "duel" : "dueluri"})` : "";
+  const ev = buildSurpriseMatchupEvent(gameweekId, kind, type, `⚔️ Duelul etapei e gata: ${main}${extra}.`);
+  await saveFeedEvents([ev]);
+  return ev;
+}
+
+// ── RESULT — o singură dată per surpriză rezolvată (id stabil pe
+// gameweekId+kind, deci idempotent la reapelare/refresh). Citirea
+// tuturor rezultatelor e SIGURĂ ca query larg — regula Firestore
+// pentru results/{uid} verifică mainResolved/bonusResolved pe
+// documentul PĂRINTE (aceeași condiție pentru toate documentele din
+// colecție), nu un tipar de id per-document — deci nu are problema de
+// "query refuzat" găsită la jokers/specialPicks. ──
+export async function processSurpriseResult(gameweekId, kind, type, config, label) {
+  const results = await getAllSurpriseResults(gameweekId);
+  if (results.length === 0) return null;
+  const pointsField = kind === "main" ? "mainPoints" : "bonusPoints";
+
+  let description;
+  if (config?.pairings && config.pairings.length > 0 && config.pairings[0].playerA) {
+    // Tip cu perechi individuale (Duel Random/Extreme/Rivali) — găsim
+    // perechea câștigătoare (suma cea mai mare).
+    const byUid = Object.fromEntries(results.map((r) => [r.uid, r[pointsField] || 0]));
+    const pairs = config.pairings.map((p) => ({ a: p.playerA, b: p.playerB, total: (byUid[p.playerA] || 0) + (byUid[p.playerB] || 0) }));
+    const winner = pairs.sort((x, y) => y.total - x.total)[0];
+    if (!winner) return null;
+    const profiles = await getUserPublicProfiles([winner.a, winner.b]);
+    const nameOf = (uid) => profiles[uid]?.nickname || uid;
+    description = pick([
+      `🏆 ${nameOf(winner.a)} & ${nameOf(winner.b)} câștigă ${label} cu ${winner.total}p.`,
+      `🏆 Duelul e decis: ${nameOf(winner.a)} & ${nameOf(winner.b)} iau bonusul, cu ${winner.total}p.`,
+    ], `surprise_result_${gameweekId}_${kind}`);
+  } else if (config?.pairings && config.pairings[0]?.teamA) {
+    // Duel de Echipe — perechi de grupuri.
+    const byUid = Object.fromEntries(results.map((r) => [r.uid, r[pointsField] || 0]));
+    const pairs = config.pairings.map((p) => ({
+      teamA: p.teamA, teamB: p.teamB,
+      totalA: (p.teamA || []).reduce((s, u) => s + (byUid[u] || 0), 0),
+      totalB: (p.teamB || []).reduce((s, u) => s + (byUid[u] || 0), 0),
+    }));
+    const winner = pairs.sort((x, y) => Math.max(y.totalA, y.totalB) - Math.max(x.totalA, x.totalB))[0];
+    if (!winner) return null;
+    const winTeam = winner.totalA >= winner.totalB ? winner.teamA : winner.teamB;
+    const winScore = Math.max(winner.totalA, winner.totalB);
+    const profiles = await getUserPublicProfiles(winTeam);
+    const names = winTeam.map((u) => profiles[u]?.nickname || u).join(" & ");
+    description = pick([`🏆 ${names} câștigă ${label} cu ${winScore}p și iau bonusul.`], `surprise_result_${gameweekId}_${kind}`);
+  } else {
+    // Individual (Mystery Box, Ruletă, Trivia, Zaruri, Sabotaj) — cel
+    // mai mare premiu individual.
+    const top = [...results].sort((a, b) => (b[pointsField] || 0) - (a[pointsField] || 0))[0];
+    if (!top || !top[pointsField]) return null;
+    const profiles = await getUserPublicProfiles([top.uid]);
+    const name = profiles[top.uid]?.nickname || top.uid;
+    description = pick([
+      `🏁 ${label} s-a încheiat. Cel mai mare premiu: ${name}, cu ${top[pointsField]}p.`,
+      `🏁 S-a terminat ${label} — ${name} a avut cel mai mult noroc, +${top[pointsField]}p.`,
+    ], `surprise_result_${gameweekId}_${kind}`);
+  }
+
+  const ev = buildSurpriseResultEvent(gameweekId, kind, type, description);
+  await saveFeedEvents([ev]);
+  return ev;
 }
 
 export async function listAdminFunItems() {
@@ -446,10 +579,22 @@ export async function deleteFunItem(id) {
 export async function loadFullFeed() {
   const [live, users, adminFun] = await Promise.all([listLiveFeedEvents(), listAllUsers(), listAdminFunItems()]);
 
-  const fun = [
+  // ── FUN filler — capat la câteva bucăți, NU tot poolul deodată.
+  // Cu tot poolul inclus mereu, orice etapă mai liniștită se termina
+  // cu un bloc lung, monoton, de proverbe/glume la coadă — exact
+  // "carduri similare consecutive" semnalat. Eșantion mic, rotativ
+  // determinist pe zi (stabil în aceeași zi, se schimbă a doua zi). ──
+  const daySeed = new Date().toISOString().slice(0, 10);
+  const allFun = [
     ...FUN_ITEMS.map((f) => ({ id: `fun_${f.id}`, label: f.label, text: f.text })),
     ...adminFun.map((f) => ({ id: `fun_${f.id}`, label: f.label, text: f.text })),
-  ].map((f) => ({
+  ];
+  const FUN_SAMPLE_SIZE = 3;
+  const startIdx = hashSeedLocal(daySeed) % Math.max(allFun.length, 1);
+  const sampledFun = allFun.length <= FUN_SAMPLE_SIZE ? allFun
+    : Array.from({ length: FUN_SAMPLE_SIZE }, (_, i) => allFun[(startIdx + i) % allFun.length]);
+
+  const fun = sampledFun.map((f) => ({
     id: f.id, type: TYPE.FACT, category: "fun", priority: 15, ts: Date.now(),
     icon: "fun", important: false, title: f.text, subtitle: f.label,
   }));

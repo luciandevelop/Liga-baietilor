@@ -44,7 +44,7 @@ export function emptyStageMemory(gameweekId) {
   return {
     gameweekId, schemaVersion: SCHEMA_VERSION,
     leaderHistory: [], matchesProcessed: 0, byUid: {}, recapGenerated: false,
-    swapPairs: {}, updatedAt: Date.now(),
+    swapPairs: {}, lastDetachGapReported: 0, updatedAt: Date.now(),
   };
 }
 
@@ -108,7 +108,7 @@ export function updateStageMemoryWithMatchScoring(mem, exactUids, zeroUids) {
   return next;
 }
 
-export function detectLeaderStory(mem, rows) {
+export function detectLeaderStory(mem, rows, lastDetachGap = 0) {
   const events = [];
   const leader = rows.find((r) => r.rank === 1);
   if (!leader) return events;
@@ -117,7 +117,7 @@ export function detectLeaderStory(mem, rows) {
   const justBecameLeader = history.length === 0 || history[history.length - 1].uid !== leader.uid;
 
   if (justBecameLeader && wasLeaderBefore && history.length > 1) {
-    const id = `story_leaderreturn_${mem.gameweekId}_${leader.uid}_${mem.matchesProcessed + 1}`;
+    const id = `story_leaderreturn_${mem.gameweekId}_${leader.uid}_${history.length}`;
     events.push(mkStory(id, "leader_story", "leader_return", IMPORTANCE.LEADER_RETURN, [leader.uid],
       pick([`👑 ${leader.nickname} revine pe primul loc etapei.`, `👑 ${leader.nickname} recuperează fruntea clasamentului.`], id),
       null, { leaderCount: history.length }));
@@ -130,12 +130,20 @@ export function detectLeaderStory(mem, rows) {
   const second = rows.find((r) => r.rank === 2);
   if (second) {
     const gap = (leader.seasonPoints ?? 0) - (second.seasonPoints ?? 0);
-    if (gap >= 25) {
-      const id = `story_leadgap_${mem.gameweekId}_${mem.matchesProcessed + 1}_big`;
+    // BUG REPARAT: povestea "se desprinde" se repeta la FIECARE meci
+    // cât timp avansul rămânea peste prag, chiar dacă nu se schimbase
+    // nimic relevant ("Doctoru se desprinde" de 6 ori la rând, exact
+    // genul de repetiție semnalat explicit). Acum se spune din nou
+    // DOAR dacă avansul a crescut semnificativ față de ultima oară
+    // când a fost povestit (prag de creștere, nu doar "încă mare").
+    // ID STABIL pe leader.uid+gap (nu contor de reprocesare) — găsit
+    // prin testul de idempotency, era același bug ca la bottom story.
+    if (gap >= 25 && gap - lastDetachGap >= 15) {
+      const id = `story_leadgap_${mem.gameweekId}_${leader.uid}_${gap}_big`;
       events.push(mkStory(id, "leader_story", "leader_detach", IMPORTANCE.RANK_MAXIMA, [leader.uid],
         pick([`🏃 ${leader.nickname} se desprinde: +${gap} față de locul 2.`, `🏃 ${leader.nickname} începe să fugă de restul: avans de ${gap}p.`], id), null, { gap }));
     } else if (gap <= 3) {
-      const id = `story_leadgap_${mem.gameweekId}_${mem.matchesProcessed + 1}_tight`;
+      const id = `story_leadgap_${mem.gameweekId}_${leader.uid}_${gap}_tight`;
       events.push(mkStory(id, "leader_story", "leader_threatened", IMPORTANCE.TIGHT_BATTLE, [leader.uid, second.uid],
         pick([`🚨 ${leader.nickname} mai are doar ${gap}p avans față de ${second.nickname}.`], id), null, { gap }));
     }
@@ -153,13 +161,14 @@ export function detectPodiumStory(mem, rows) {
   // ar trebui să conteze drept "modificat masiv", nu doar cazul rar în
   // care TOȚI 3 sunt complet noi.
   if (prevPodium.length === 3 && changedCount >= 2) {
-    const id = `story_podiumshuffle_${mem.gameweekId}_${mem.matchesProcessed + 1}`;
+    const id = `story_podiumshuffle_${mem.gameweekId}_${podiumUids.join("-")}`;
     events.push(mkStory(id, "podium_story", "podium_reshuffle", IMPORTANCE.PODIUM_SHUFFLE, podiumUids,
       pick([`🔥 Podiumul s-a schimbat complet.`, `🔥 Podium aproape complet nou.`], id), null, { podiumUids, changedCount }));
   }
   const p1 = rows.find((r) => r.rank === 1), p3 = rows.find((r) => r.rank === 3);
   if (p1 && p3 && (p1.seasonPoints ?? 0) - (p3.seasonPoints ?? 0) <= THRESH.TIGHT_TOP3_POINTS) {
-    const id = `story_podiumtight_${mem.gameweekId}_${mem.matchesProcessed + 1}`;
+    const top3Uids = rows.filter((r) => r.rank <= 3).map((r) => r.uid).sort().join("-");
+    const id = `story_podiumtight_${mem.gameweekId}_${top3Uids}`;
     events.push(mkStory(id, "podium_story", "podium_tight", IMPORTANCE.TIGHT_BATTLE, rows.filter((r) => r.rank <= 3).map((r) => r.uid),
       pick([`🔥 Nebunie în față: primii trei sunt despărțiți de doar ${(p1.seasonPoints ?? 0) - (p3.seasonPoints ?? 0)}p.`], id), null, {}));
   }
@@ -173,10 +182,14 @@ export function detectBottomStory(mem, rows) {
   const prevLastEntry = Object.entries(mem.byUid).find(([, s]) => s.currentRank === total);
   if (last && prevLastEntry && prevLastEntry[0] !== last.uid) {
     const escapee = rows.find((r) => r.uid === prevLastEntry[0]);
-    const idEscape = `story_bottomescape_${mem.gameweekId}_${prevLastEntry[0]}_${mem.matchesProcessed + 1}`;
+    // ID STABIL — bazat pe TRANZIȚIA reală (cine scapă → cine preia),
+    // nu pe un contor de reprocesare. Reparat: bug real găsit prin
+    // testul de idempotency (reprocesarea EXACT acelorași date genera
+    // un id nou de fiecare dată, deci un eveniment "nou" fals).
+    const idEscape = `story_bottomescape_${mem.gameweekId}_${prevLastEntry[0]}_to_${last.uid}`;
     if (escapee) events.push(mkStory(idEscape, "bottom_story", "escape_last", IMPORTANCE.BOTTOM_ESCAPE, [escapee.uid],
       pick([`🪦 ${escapee.nickname} scapă în sfârșit de ultimul loc.`], idEscape), null, {}));
-    const idTake = `story_bottomtake_${mem.gameweekId}_${last.uid}_${mem.matchesProcessed + 1}`;
+    const idTake = `story_bottomtake_${mem.gameweekId}_${prevLastEntry[0]}_to_${last.uid}`;
     events.push(mkStory(idTake, "bottom_story", "bottom_takeover", IMPORTANCE.BOTTOM_TAKEOVER, [last.uid],
       pick([`🚨 ${last.nickname} preia lanterna roșie.`], idTake), null, {}));
   }
@@ -184,7 +197,8 @@ export function detectBottomStory(mem, rows) {
   if (bottom3.length === 3) {
     const spread = Math.max(...bottom3.map((r) => r.seasonPoints ?? 0)) - Math.min(...bottom3.map((r) => r.seasonPoints ?? 0));
     if (spread <= THRESH.TIGHT_BOTTOM3_POINTS) {
-      const id = `story_bottomtight_${mem.gameweekId}_${mem.matchesProcessed + 1}`;
+      const bottom3Uids = bottom3.map((r) => r.uid).sort().join("-");
+      const id = `story_bottomtight_${mem.gameweekId}_${bottom3Uids}`;
       events.push(mkStory(id, "bottom_story", "bottom_battle", IMPORTANCE.TIGHT_BATTLE, bottom3.map((r) => r.uid),
         pick([`🥊 Ultimii trei sunt despărțiți de doar ${spread}p. Lupta e aprigă și acolo.`], id), null, {}));
     }
@@ -216,7 +230,7 @@ export function detectMomentumAndStreaks(mem, rows) {
     if (slot.zeroStreak >= THRESH.STREAK_ZERO_MIN) {
       const id = `story_zerostreak_${mem.gameweekId}_${row.uid}_${slot.zeroStreak}`;
       events.push(mkStory(id, "momentum", "zero_streak", IMPORTANCE.STREAK_ZERO, [row.uid],
-        pick([`🥶 Al ${ordinalRo(slot.zeroStreak)} meci consecutiv fără puncte pentru ${row.nickname}.`], id), null, { streak: slot.zeroStreak }));
+        pick([`🥶 ${ordinalRo(slot.zeroStreak).charAt(0).toUpperCase()}${ordinalRo(slot.zeroStreak).slice(1)} meci consecutiv fără puncte pentru ${row.nickname}.`], id), null, { streak: slot.zeroStreak }));
     }
     if (slot.worstRank != null && slot.worstRank - row.rank >= THRESH.COMEBACK_MIN_RANGE && row.rank <= 3) {
       const id = `story_comeback_${mem.gameweekId}_${row.uid}_${slot.worstRank}to${row.rank}`;

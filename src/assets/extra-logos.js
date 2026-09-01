@@ -41,4 +41,21 @@ export const EXTRA_CLUB_ALIASES = {
   "mainz": "mainz-05",
   "as-roma": "roma",
   "dortmund": "borussia-dortmund",
+  // ── Audit Speciale (Champions/Europa/Conference/ligi naționale) —
+  // TOATE astea au sigla deja prezentă în clubs/, doar sub un nume
+  // scurt diferit de eticheta folosită în teamRegistry.js. Nicio
+  // imagine nouă necesară pentru acestea. ──
+  "psv-eindhoven": "psv",
+  "stuttgart": "vfb-stuttgart",
+  "celta-vigo": "celta",
+  "gnk-dinamo": "dinamo-zagreb",
+  "ipswich-town": "ipswich",
+  "racing-santander": "racing",
+  "sepsi-osk": "sepsi",
+  "uta-arad": "uta",
+  "fc-voluntari": "voluntari",
+  "sabah-fk": "sabah-baku",
+  "braga": "sc-braga",
+  "n-e-c": "nec-nijmegen",
+  "viktoria-plze": "viktoria-plzen",
 };

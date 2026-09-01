@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { getCurrentSeason, getCurrentGameweek, loadUserPredictions, loadUserJoker, isMatchLocked } from "../services/predictionsService";
-import { listenMatches, listenLiveGameweekScores, listGameweekScores, getUserSeasonPoints, listJokersForGameweek } from "../services/adminService";
+import { listenMatches, listenLiveGameweekScores, listGameweekScores, getUserSeasonPoints } from "../services/adminService";
 import { getUserPublicProfiles } from "../services/profilesService";
-import { processRankChanges, processFinishedMatches, processJokerActivation, processUpcomingMatches, loadFullFeed } from "../services/feedService";
+import { processRankChanges, processFinishedMatches, processJokerActivation, processUpcomingMatches, loadFullFeed, processSurpriseCreated, processSurpriseMatchup, processSurpriseResult } from "../services/feedService";
 import useNow from "../hooks/useNow";
 import { usePrefersReducedMotion } from "../motion";
 import { getMatchStatus } from "../utils/matchStatus";
@@ -116,19 +116,32 @@ export default function WelcomeScreen({ user, profile, isAdmin, onOpenAdmin, onO
           processFinishedMatches(finished).then((evs) => { if (evs.length > 0) refreshFeedTop(); }).catch((err) => console.error("Eroare Feed meciuri:", err));
         }
 
-        listJokersForGameweek(gw.id).then(async (jokers) => {
-          const newOnes = jokers.filter((j) => !processedJokersRef.current.has(`${j.gameweekId}_${j.userId}`));
-          if (newOnes.length === 0) return;
-          const profilesForJokers = await getUserPublicProfiles(newOnes.map((j) => j.userId));
-          let any = false;
-          for (const j of newOnes) {
-            processedJokersRef.current.add(`${j.gameweekId}_${j.userId}`);
-            const jm = m.find((x) => x.id === j.matchId);
-            const nickname = profilesForJokers[j.userId]?.nickname || j.userId;
-            if (jm) { await processJokerActivation(j, jm, nickname); any = true; }
-          }
-          if (any) refreshFeedTop();
-        }).catch((err) => console.error("Eroare Feed jokeri:", err));
+        // ── Joker în Feed — REPARAT. Varianta veche interoga TOATE
+        // jokerele etapei într-un singur query (where gameweekId==) —
+        // dar regula Firestore pentru /jokers/{jokerId} verifică
+        // TIPARUL ID-ului (gameweekId_uid), nu câmpul gameweekId din
+        // interogare. Exact același gen de nepotrivire găsită și
+        // reparată mai devreme la specialPicks — Firestore refuză
+        // interogări largi când regula depinde de altceva decât
+        // filtrul propriu-zis. Pentru un user normal (non-admin),
+        // interogarea probabil eșua silențios — de-asta Jokerul
+        // "aproape că nu exista" în Feed.
+        //
+        // Reparat: fiecare user citește DOAR propriul Joker (id exact,
+        // mereu permis de regulă, fără query), și-l publică în Feed
+        // NUMAI după ce meciul s-a blocat — exact regula reală de
+        // reveal, nu una nouă, inventată. Cu userii activi deschizând
+        // aplicația de-a lungul etapei, toate jokerele ajung publicate
+        // treptat, fiecare de pe propriul client.
+        loadUserJoker(gw.id, user.uid).then(async (j) => {
+          if (!j || processedJokersRef.current.has(`${j.gameweekId}_${j.userId}`)) return;
+          const jm = m.find((x) => x.id === j.matchId);
+          if (!jm || !isMatchLocked(jm)) return; // privacy: nedezvăluit înainte de lock
+          processedJokersRef.current.add(`${j.gameweekId}_${j.userId}`);
+          const nickname = profile?.nickname || user.uid;
+          await processJokerActivation(j, jm, nickname);
+          refreshFeedTop();
+        }).catch((err) => console.error("Eroare Feed joker propriu:", err));
 
         // Predicțiile proprii — au nevoie de ID-urile reale ale meciurilor,
         // disponibile abia aici (realtime). O singură dată e suficient
@@ -232,6 +245,28 @@ export default function WelcomeScreen({ user, profile, isAdmin, onOpenAdmin, onO
         mainLabel: sm ? (MAIN_CATALOG.find((c) => c.id === sm.type)?.label || sm.type) : null,
         bonusLabel: sb ? (BONUS_CATALOG.find((c) => c.id === sb.type)?.label || sb.type) : null,
       });
+
+      // ── Feed — CREATED nu adaugă nicio citire nouă (pub/sm/sb erau
+      // deja încărcate pentru teaser). Id-ul evenimentului e stabil
+      // (surprise_created_{gwId}_{kind}) — save-ul repetat, la fiecare
+      // deschidere a Home-ului, e idempotent prin design, nu prin
+      // verificare separată "am mai procesat asta?". ──
+      if (sm) {
+        const mainLabel = MAIN_CATALOG.find((c) => c.id === sm.type)?.label || sm.type;
+        processSurpriseCreated(gameweek.id, "main", sm.type, mainLabel).catch((err) => console.error("Eroare Feed surpriză principală:", err));
+        processSurpriseMatchup(gameweek.id, "main", sm.type, sm.config).catch((err) => console.error("Eroare Feed matchup principal:", err));
+        if (pub.mainResolved) {
+          processSurpriseResult(gameweek.id, "main", sm.type, sm.config, mainLabel).catch((err) => console.error("Eroare Feed rezultat principal:", err));
+        }
+      }
+      if (sb) {
+        const bonusLabel = BONUS_CATALOG.find((c) => c.id === sb.type)?.label || sb.type;
+        processSurpriseCreated(gameweek.id, "bonus", sb.type, bonusLabel).catch((err) => console.error("Eroare Feed surpriză bonus:", err));
+        processSurpriseMatchup(gameweek.id, "bonus", sb.type, sb.config).catch((err) => console.error("Eroare Feed matchup bonus:", err));
+        if (pub.bonusResolved) {
+          processSurpriseResult(gameweek.id, "bonus", sb.type, sb.config, bonusLabel).catch((err) => console.error("Eroare Feed rezultat bonus:", err));
+        }
+      }
     })();
     return () => { cancelled = true; };
   }, [gameweek?.id]);
@@ -244,7 +279,7 @@ export default function WelcomeScreen({ user, profile, isAdmin, onOpenAdmin, onO
     // Toate meciurile care urmează (fereastră 7 zile), nu doar Meciul
     // Săptămânii — fiecare primește context editorial STRICT dacă
     // există conținut pentru echipele respective (regula zero).
-    processUpcomingMatches(matches, featuredIds)
+    processUpcomingMatches(matches, featuredIds, gameweek.id)
       .then((events) => { if (events.length > 0) refreshFeedTop(); })
       .catch((err) => console.error("Eroare Feed meciuri viitoare:", err));
   }, [gameweek, matches]);

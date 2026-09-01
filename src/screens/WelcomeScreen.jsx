@@ -447,19 +447,32 @@ export default function WelcomeScreen({ user, profile, isAdmin, onOpenAdmin, onO
           )}
 
           {surpriseTeaser && (
-            <button type="button" style={s.surpriseTeaserRow} onClick={onOpenSurprises}>
-              <span style={s.surpriseTeaserLeft}>🎭 Surpriza Săptămânii</span>
-              <span style={s.surpriseTeaserRight}>
-                {!surpriseTeaser.mainRevealed && !surpriseTeaser.bonusRevealed ? (
-                  "🔒 Două surprize te așteaptă"
-                ) : (
-                  <>
-                    {surpriseTeaser.mainRevealed ? `🏆 ${surpriseTeaser.mainLabel}` : "🏆 🔒"}
-                    {"  ·  "}
-                    {surpriseTeaser.bonusRevealed ? `🎁 ${surpriseTeaser.bonusLabel}` : "🎁 🔒"}
-                  </>
-                )}
-              </span>
+            <button type="button" style={s.surpriseCard} onClick={onOpenSurprises}>
+              <div style={s.surpriseCardGlow} />
+              <div style={s.surpriseCardHead}>
+                <span style={s.surpriseCardTitle}>🎭 SURPRIZA SĂPTĂMÂNII</span>
+                <span style={s.surpriseCardArrow}>→</span>
+              </div>
+              <div style={s.surpriseCardRows}>
+                <span style={s.surpriseCardRow}>
+                  <span style={s.surpriseCardIcon}>🏆</span>
+                  <span style={s.surpriseCardRowText}>
+                    {surpriseTeaser.mainRevealed ? surpriseTeaser.mainLabel : "Surpriza Principală"}
+                  </span>
+                  <span style={surpriseTeaser.mainRevealed ? s.surpriseCardStatusActive : s.surpriseCardStatusLocked}>
+                    {surpriseTeaser.mainRevealed ? "Activ" : "🔒"}
+                  </span>
+                </span>
+                <span style={s.surpriseCardRow}>
+                  <span style={s.surpriseCardIcon}>🎁</span>
+                  <span style={s.surpriseCardRowText}>
+                    {surpriseTeaser.bonusRevealed ? surpriseTeaser.bonusLabel : "Bonusul Săptămânii"}
+                  </span>
+                  <span style={surpriseTeaser.bonusRevealed ? s.surpriseCardStatusActive : s.surpriseCardStatusLocked}>
+                    {surpriseTeaser.bonusRevealed ? "Activ" : "🔒"}
+                  </span>
+                </span>
+              </div>
             </button>
           )}
 
@@ -676,14 +689,40 @@ const s = {
   eyeBtnLabel: { fontSize: 11.5, fontWeight: 700 },
 
   otherLiveSection: { marginBottom: 20 },
-  surpriseTeaserRow: {
-    display: "flex", alignItems: "center", justifyContent: "space-between", width: "100%",
-    background: "linear-gradient(90deg, rgba(212,175,55,0.1), rgba(139,58,138,0.08))",
-    border: "1px solid rgba(212,175,55,0.3)", borderRadius: radius.md, padding: "12px 14px",
-    marginBottom: 16, cursor: "pointer", fontFamily: font.body,
+  // ── Card premium „Surpriza Săptămânii" — dark, glow auriu discret,
+  // ierarhie clară (titlu mare sus, 2 rânduri de status dedesubt).
+  // Aceeași țintă de click ca înainte (onOpenSurprises), doar cromatica
+  // mult mai vizibilă. Înălțime ~110-120px, nu un hero. ──
+  surpriseCard: {
+    position: "relative", overflow: "hidden", display: "block", width: "100%", textAlign: "left",
+    background: "linear-gradient(155deg, rgba(212,175,55,0.14), rgba(20,16,8,0.5) 60%, rgba(139,58,138,0.10))",
+    border: "1px solid rgba(212,175,55,0.35)", borderRadius: radius.lg,
+    padding: "14px 16px 16px", marginBottom: 16, cursor: "pointer", fontFamily: font.body,
+    boxShadow: `${shadow.card}, ${shadow.rim}`,
   },
-  surpriseTeaserLeft: { fontSize: 12, fontWeight: 700, color: color.textPrimary },
-  surpriseTeaserRight: { fontSize: 11.5, fontWeight: 700, color: color.goldLight },
+  surpriseCardGlow: {
+    position: "absolute", top: -40, right: -40, width: 140, height: 140, borderRadius: "50%",
+    background: "radial-gradient(circle, rgba(212,175,55,0.28), transparent 70%)", pointerEvents: "none",
+  },
+  surpriseCardHead: { display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12, position: "relative" },
+  surpriseCardTitle: {
+    fontSize: 13.5, fontWeight: 800, letterSpacing: "0.03em", color: color.textPrimary, fontFamily: font.display,
+  },
+  surpriseCardArrow: { fontSize: 15, fontWeight: 800, color: color.goldLight },
+  surpriseCardRows: { display: "flex", flexDirection: "column", gap: 8, position: "relative" },
+  surpriseCardRow: { display: "flex", alignItems: "center", gap: 9 },
+  surpriseCardIcon: { fontSize: 15, flexShrink: 0, width: 22, textAlign: "center" },
+  surpriseCardRowText: {
+    flex: 1, fontSize: 12.5, fontWeight: 600, color: color.textSecondary,
+    overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+  },
+  surpriseCardStatusActive: {
+    fontSize: 9.5, fontWeight: 800, letterSpacing: "0.04em", color: "#0A0D14",
+    background: color.goldGradient, borderRadius: 999, padding: "3px 9px", flexShrink: 0,
+  },
+  surpriseCardStatusLocked: {
+    fontSize: 11, color: color.textFaint, flexShrink: 0,
+  },
   otherLiveLabel: { fontSize: 11, fontWeight: 800, letterSpacing: "0.05em", color: "#F0555A", marginBottom: 10, fontFamily: font.body },
   otherLiveList: { display: "flex", flexDirection: "column", gap: 10 },
   otherLiveCard: {

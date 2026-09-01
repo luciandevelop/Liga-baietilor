@@ -19,23 +19,67 @@ export const PICK_TYPES = { SINGLE: "single", RANKED: "ranked", GROUP: "group" }
 // ales "ALTUL" primește punctajul complet, automat (scoreSinglePick
 // deja face asta — pick.choice === correctAnswer). ──
 export const CL_TOP_SCORER_OPTIONS = [
-  { id: "mbappe", label: "Kylian Mbappé" },
-  { id: "kane", label: "Harry Kane" },
-  { id: "haaland", label: "Erling Haaland" },
-  { id: "dembele", label: "Ousmane Dembélé" },
-  { id: "bellingham", label: "Jude Bellingham" },
-  { id: "vinicius", label: "Vinícius Júnior" },
-  { id: "raphinha", label: "Raphinha" },
-  { id: "lamine-yamal", label: "Lamine Yamal" },
-  { id: "kvaratskhelia", label: "Khvicha Kvaratskhelia" },
-  { id: "lautaro", label: "Lautaro Martínez" },
-  { id: "isak", label: "Alexander Isak" },
-  { id: "julian-alvarez", label: "Julián Álvarez" },
-  { id: "havertz", label: "Kai Havertz" },
-  { id: "gyokeres", label: "Viktor Gyökeres" },
-  { id: "osimhen", label: "Victor Osimhen" },
+  { id: "mbappe", label: "Kylian Mbappé", club: "Real Madrid", image: "mbappe" },
+  { id: "kane", label: "Harry Kane", club: "Bayern München", image: "kane" },
+  { id: "haaland", label: "Erling Haaland", club: "Manchester City", image: "haaland" },
+  { id: "dembele", label: "Ousmane Dembélé", club: "Paris Saint-Germain", image: "dembele" },
+  { id: "bellingham", label: "Jude Bellingham", club: "Real Madrid", image: "bellingham" },
+  { id: "vinicius", label: "Vinícius Júnior", club: "Real Madrid", image: "vinicius" },
+  { id: "raphinha", label: "Raphinha", club: "Barcelona", image: "raphinha" },
+  { id: "lamine-yamal", label: "Lamine Yamal", club: "Barcelona", image: "lamine-yamal" },
+  { id: "kvaratskhelia", label: "Khvicha Kvaratskhelia", club: "Paris Saint-Germain", image: "kvaratskhelia" },
+  { id: "lautaro", label: "Lautaro Martínez", club: "Inter", image: "lautaro" },
+  { id: "isak", label: "Alexander Isak", club: "Liverpool", image: "isak" },
+  { id: "julian-alvarez", label: "Julián Álvarez", club: "Atlético Madrid", image: "julian-alvarez" },
+  { id: "havertz", label: "Kai Havertz", club: "Arsenal", image: "havertz" },
+  { id: "gyokeres", label: "Viktor Gyökeres", club: "Arsenal", image: "gyokeres" },
+  { id: "osimhen", label: "Victor Osimhen", club: "Galatasaray", image: "osimhen" },
   { id: "altul", label: "ALTUL" },
 ];
+
+// ── Portrete — sursa unică pentru enrichment-ul de la afișare
+// (SpecialPhasePicker.jsx). Cheia e slug-ul REAL folosit de aplicație
+// la deschiderea fazei (slugifyOption(label) din AdminScreen.jsx —
+// ex. "Kylian Mbappé" → "kylian-mbappe"), NU id-ul scurt de mai sus
+// (acela există doar ca identificator intern pentru pre-completare).
+// Numele fișierelor = EXACT contractul stabilit și confirmat cu Lu. ──
+export const GOLGHETER_PORTRAIT_FILENAME = {
+  "kylian-mbappe": "kylian-mbappe.webp",
+  "harry-kane": "harry-kane.webp",
+  "erling-haaland": "erling-haaland.webp",
+  "ousmane-dembele": "ousmane-dembele.webp",
+  "jude-bellingham": "jude-bellingham.webp",
+  "vinicius-junior": "vinicius-junior.webp",
+  "raphinha": "raphinha.webp",
+  "lamine-yamal": "lamine-yamal.webp",
+  "khvicha-kvaratskhelia": "khvicha-kvaratskhelia.webp",
+  "lautaro-martinez": "lautaro-martinez.webp",
+  "alexander-isak": "alexander-isak.webp",
+  "julian-alvarez": "julian-alvarez.webp",
+  "kai-havertz": "kai-havertz.webp",
+  "viktor-gyokeres": "viktor-gyokeres.webp",
+  "victor-osimhen": "victor-osimhen.webp",
+};
+
+// ── Aceeași funcție de slug ca AdminScreen.jsx (slugifyOption) —
+// definită O SINGURĂ dată aici, ca cele două să nu poată diverge
+// vreodată. opt.id din phaseState (scris la deschiderea fazei) e
+// EXACT slugify(label) — cheile de mai sus/harta de mai jos folosesc
+// aceeași formulă, ca match-ul să funcționeze mereu, indiferent cine
+// scrie opțiunile (buton de pre-completare sau text tastat manual). ──
+function slugifyLabel(label) {
+  return label.toLowerCase().trim().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+}
+
+// Hartă gata de folosit — slug → { club, filename }. Construită O
+// SINGURĂ dată din CL_TOP_SCORER_OPTIONS, ca sursa de adevăr să rămână
+// unică (adaugi un jucător nou acolo + poza lui aici, gata).
+export const GOLGHETER_ENRICHMENT = Object.fromEntries(
+  CL_TOP_SCORER_OPTIONS.filter((o) => o.id !== "altul").map((o) => [
+    slugifyLabel(o.label),
+    { club: o.club, filename: GOLGHETER_PORTRAIT_FILENAME[slugifyLabel(o.label)] || null },
+  ])
+);
 
 // ── Speciale de tip "Top N cu poziții" — funcție comună (cerută
 // explicit, secțiunea 26), valorile configurabile per fază, NU

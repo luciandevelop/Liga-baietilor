@@ -15,6 +15,10 @@ export default {
       "5": "5.png"
     }
   },
+  "alex-nicoara": {
+    "nextIndex": 1,
+    "files": {}
+  },
   "bogdanb": {
     "nextIndex": 8,
     "files": {

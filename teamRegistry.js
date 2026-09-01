@@ -18,9 +18,12 @@ function team(id, label) {
   return { id, label };
 }
 
-// ── Champions League — cele 29 de echipe calificate direct în league
-// phase (play-off-urile încă în desfășurare la data implementării,
-// deliberat excluse per instrucțiune explicită — nu inventăm restul). ──
+// ── Champions League — toate cele 36 de echipe din league phase
+// 2026/27, confirmate: 29 calificate direct + 7 câștigătoare din
+// play-off (Sabah, LASK, Bodø/Glimt, AEK Athens, Viking, Slovan
+// Bratislava, Fenerbahçe — confirmate din sursă UEFA, 26 august 2026).
+// Predicțiile deja salvate pe cele 29 rămân valide — lista doar
+// SE COMPLETEAZĂ, niciun id existent nu se schimbă. ──
 export const CL_LEAGUE_PHASE_TEAMS = [
   team("arsenal", "Arsenal"),
   team("barcelona", "Barcelona"),
@@ -51,35 +54,78 @@ export const CL_LEAGUE_PHASE_TEAMS = [
   team("sporting-cp", "Sporting CP"),
   team("roma", "Roma"),
   team("como-1907", "Como"),
+  // ── cele 7 din play-off, adăugate acum ──
+  team("sabah-baku", "Sabah FK"),
+  team("lask", "LASK"),
+  team("bodo-glimt", "Bodø/Glimt"),
+  team("aek-athens", "AEK Athens"),
+  team("viking", "Viking FK"),
+  team("slovan-bratislava", "Slovan Bratislava"),
+  team("fenerbahce", "Fenerbahçe"),
 ];
 
-// ── Europa League / Conference League — favorite + "ALTA" (opțiune
-// reală de scorare, nu un fallback vizual — vezi specialsScoringEngine
-// nou, mai jos în specialsService.js). ──
-export const EL_FAVORITES = [
-  team("tottenham", "Tottenham"),
-  team("as-monaco", "AS Monaco"),
-  team("eintracht-frankfurt", "Eintracht Frankfurt"),
+// ── Europa League — toate cele 36 de echipe din league phase 2026/27,
+// confirmate din sursă UEFA. Lista ÎNLOCUIEȘTE modelul vechi de
+// "10 favorite + ALTA" — cerut explicit acum (Câștigătoare EL folosește
+// toate participantele, la fel ca Champions League, nu doar favorite). ──
+export const EL_TEAMS = [
+  team("ararat-armenia", "Ararat-Armenia"),
+  team("salzburg", "Salzburg"),
+  team("sturm-graz", "Sturm Graz"),
+  team("anderlecht", "Anderlecht"),
+  team("union-sg", "Union SG"),
+  team("levski-sofia", "Levski Sofia"),
+  team("dinamo-zagreb", "GNK Dinamo"),
+  team("omonia", "Omonia"),
+  team("sparta-praha", "Sparta Praha"),
+  team("viktoria-plzen", "Viktoria Plzeň"),
+  team("bournemouth", "Bournemouth"),
+  team("crystal-palace", "Crystal Palace"),
+  team("sunderland", "Sunderland"),
   team("lyon", "Lyon"),
-  team("fenerbahce", "Fenerbahçe"),
+  team("marseille", "Marseille"),
+  team("rennes", "Rennes"),
+  team("hoffenheim", "Hoffenheim"),
+  team("bayer-leverkusen", "Bayer Leverkusen"),
+  team("ofi-crete", "OFI Crete"),
+  team("olympiacos", "Olympiacos"),
+  team("ferencvaros", "Ferencváros"),
+  team("hapoel-beer-sheva", "Hapoel Beer-Sheva"),
+  team("milan", "Milan"),
+  team("juventus", "Juventus"),
+  team("az-alkmaar", "AZ Alkmaar"),
+  team("nec", "N.E.C."),
+  team("lillestrom", "Lillestrøm"),
+  team("jagiellonia", "Jagiellonia"),
+  team("lech-poznan", "Lech Poznań"),
+  team("benfica", "Benfica"),
+  team("torreense", "Torreense"),
+  team("celtic", "Celtic"),
+  team("celje", "Celje"),
   team("real-sociedad", "Real Sociedad"),
-  team("bologna", "Bologna"),
-  team("rangers", "Rangers"),
-  team("fcsb", "FCSB"),
+  team("celta", "Celta Vigo"),
   team("besiktas", "Beşiktaş"),
 ];
 
+// ── Conference League — 15 favorite + "ALTA" (opțiune reală de
+// scorare — vezi computeSpecialPoints din specialsService.js). Lista
+// dată explicit acum, înlocuiește complet lista veche de 10. ──
 export const UECL_FAVORITES = [
-  team("crystal-palace", "Crystal Palace"),
-  team("celta", "Celta Vigo"),
-  team("genk", "Genk"),
+  team("brighton", "Brighton"),
+  team("atalanta", "Atalanta"),
+  team("freiburg", "Freiburg"),
+  team("as-monaco", "AS Monaco"),
+  team("braga", "Braga"),
+  team("ajax", "Ajax"),
+  team("midtjylland", "Midtjylland"),
+  team("fc-copenhagen", "FC Copenhagen"),
+  team("crvena-zvezda", "Crvena Zvezda"),
+  team("getafe", "Getafe"),
   team("gent", "Gent"),
-  team("rapid-bucuresti", "Rapid București"),
-  team("olympiacos", "Olympiacos"),
-  team("aek-athens", "AEK Athens"),
-  team("dynamo-kyiv", "Dynamo Kyiv"),
-  team("legia", "Legia Warszawa"),
-  team("shamrock-rovers", "Shamrock Rovers"),
+  team("panathinaikos", "Panathinaikos"),
+  team("twente", "Twente"),
+  team("lugano", "Lugano"),
+  team("pafos", "Pafos"),
 ];
 
 // Marcaj universal "altă echipă decât favoritele" — id fix, recunoscut
@@ -136,7 +182,7 @@ export function resolveTeamOptions(competitionId, phaseId) {
     case "uefa-champions-league":
       return CL_LEAGUE_PHASE_TEAMS;
     case "uefa-europa-league":
-      return [...EL_FAVORITES, ALTA_OPTION];
+      return EL_TEAMS;
     case "uefa-conference-league":
       return [...UECL_FAVORITES, ALTA_OPTION];
     case "english-premier-league":

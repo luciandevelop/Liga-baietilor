@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { PICK_TYPES } from "../specialDefinitions";
+import { PICK_TYPES, GOLGHETER_ENRICHMENT } from "../specialDefinitions";
 import { saveSpecialPick } from "../services/specialsService";
 import ClubLogo from "./ClubLogo";
 import { color, font, radius } from "../matchdayTheme";
@@ -61,6 +61,55 @@ export default function SpecialPhasePicker({ phaseDef, phaseState, uid, ownPick,
           const isSingleSelected = phaseDef.type === PICK_TYPES.SINGLE && selection === opt.id;
           const rankIndex = Array.isArray(selection) ? selection.indexOf(opt.id) : -1;
           const isMultiSelected = rankIndex >= 0;
+          const isSelected = isSingleSelected || isMultiSelected;
+          const isGolgheter = phaseDef.id === "cl-golgheter";
+          const isAltul = opt.id === "altul" || opt.id === "alta";
+
+          // ── Cardul de portret — DOAR pentru Golgheter, DOAR pentru
+          // jucătorii reali (nu ALTUL). Restul fazelor (echipe) rămân
+          // exact cum erau — nimic schimbat pentru ele. ──
+          if (isGolgheter && !isAltul) {
+            const enrichment = GOLGHETER_ENRICHMENT[opt.id] || null;
+            return (
+              <button
+                key={opt.id}
+                type="button"
+                onClick={() => (phaseDef.type === PICK_TYPES.SINGLE ? setSelection(opt.id) : toggleMulti(opt.id))}
+                style={{ ...s.scorerCard, ...(isSelected ? s.scorerCardActive : {}) }}
+              >
+                <PlayerPortrait filename={enrichment?.filename} label={opt.label} />
+                <span style={s.scorerInfo}>
+                  <span style={s.scorerName}>{opt.label}</span>
+                  {enrichment?.club && (
+                    <span style={s.scorerClub}>
+                      <ClubLogo teamName={enrichment.club} size={16} />
+                      {enrichment.club}
+                    </span>
+                  )}
+                </span>
+                {isSelected && <span style={s.scorerCheck}>✓</span>}
+              </button>
+            );
+          }
+
+          if (isGolgheter && isAltul) {
+            return (
+              <button
+                key={opt.id}
+                type="button"
+                onClick={() => (phaseDef.type === PICK_TYPES.SINGLE ? setSelection(opt.id) : toggleMulti(opt.id))}
+                style={{ ...s.scorerCard, ...(isSelected ? s.scorerCardActive : {}) }}
+              >
+                <span style={s.scorerAltulIcon}>❓</span>
+                <span style={s.scorerInfo}>
+                  <span style={s.scorerName}>ALTUL</span>
+                  <span style={s.scorerClubMuted}>Orice alt jucător</span>
+                </span>
+                {isSelected && <span style={s.scorerCheck}>✓</span>}
+              </button>
+            );
+          }
+
           return (
             <button
               key={opt.id}
@@ -68,11 +117,11 @@ export default function SpecialPhasePicker({ phaseDef, phaseState, uid, ownPick,
               onClick={() => (phaseDef.type === PICK_TYPES.SINGLE ? setSelection(opt.id) : toggleMulti(opt.id))}
               style={{
                 ...s.optionBtn,
-                ...(isSingleSelected || isMultiSelected ? s.optionBtnActive : {}),
+                ...(isSelected ? s.optionBtnActive : {}),
               }}
             >
               <span style={s.optionContent}>
-                {showLogos && opt.id !== "alta" && opt.id !== "altul" && (
+                {showLogos && !isAltul && (
                   <ClubLogo teamName={opt.club || opt.label} size={22} />
                 )}
                 <span style={s.optionText}>
@@ -93,6 +142,28 @@ export default function SpecialPhasePicker({ phaseDef, phaseState, uid, ownPick,
         {saving ? "Se salvează…" : ownPick ? "Actualizează alegerea" : "Salvează alegerea"}
       </button>
     </div>
+  );
+}
+
+// ── Portret cu fallback — dacă imaginea lipsește (nu s-a urcat încă)
+// SAU nu se încarcă (fișier corupt/lipsă), NU strică UI-ul: cade pe o
+// siluetă generică, numele/clubul rămân vizibile la fel. ──
+function PlayerPortrait({ filename, label }) {
+  const [broken, setBroken] = useState(!filename);
+  if (broken) {
+    return (
+      <span style={s.portraitFallback}>
+        {(label || "?").trim().charAt(0).toUpperCase()}
+      </span>
+    );
+  }
+  return (
+    <img
+      src={`/assets/scorers/${filename}`}
+      alt={label}
+      style={s.portrait}
+      onError={() => setBroken(true)}
+    />
   );
 }
 
@@ -120,4 +191,26 @@ const s = {
     background: color.goldGradient, border: "none", borderRadius: radius.sm, padding: "12px 0",
     fontSize: 13, fontWeight: 800, color: color.goldOn, cursor: "pointer", fontFamily: font.body,
   },
+  // ── Golgheter — cardul de portret ──
+  scorerCard: {
+    display: "flex", alignItems: "center", gap: 12, width: "100%",
+    background: color.surfaceInset, border: `1px solid ${color.border}`, borderRadius: radius.md,
+    padding: "8px 12px", cursor: "pointer", textAlign: "left",
+  },
+  scorerCardActive: { border: `1.5px solid ${color.gold}`, background: "rgba(212,175,55,0.1)" },
+  portrait: { width: 48, height: 48, borderRadius: "50%", objectFit: "cover", flexShrink: 0, background: color.surface },
+  portraitFallback: {
+    width: 48, height: 48, borderRadius: "50%", flexShrink: 0, background: color.surface,
+    display: "flex", alignItems: "center", justifyContent: "center",
+    fontSize: 18, fontWeight: 800, color: color.textFaint, fontFamily: font.display,
+  },
+  scorerAltulIcon: {
+    width: 48, height: 48, borderRadius: "50%", flexShrink: 0, background: color.surface,
+    display: "flex", alignItems: "center", justifyContent: "center", fontSize: 20,
+  },
+  scorerInfo: { display: "flex", flexDirection: "column", gap: 3, flex: 1, minWidth: 0 },
+  scorerName: { fontSize: 13.5, fontWeight: 700, color: color.textPrimary, fontFamily: font.body },
+  scorerClub: { display: "flex", alignItems: "center", gap: 5, fontSize: 11, fontWeight: 500, color: color.textFaint, fontFamily: font.body },
+  scorerClubMuted: { fontSize: 11, fontWeight: 500, color: color.textFaint, fontFamily: font.body },
+  scorerCheck: { color: color.gold, fontWeight: 800, fontSize: 17, flexShrink: 0 },
 };

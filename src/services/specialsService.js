@@ -149,6 +149,17 @@ export async function saveSpecialPick(phaseId, uid, pickData) {
   );
 }
 
+// Alegerile TUTUROR, pentru MAI MULTE faze deodată — folosit de
+// overview-ul agregat din Admin (secțiunea "Cine a completat
+// Specialele"). Reutilizează exact loadAllSpecialPicks per fază, doar
+// le rulează în paralel și le combină.
+export async function listAllSpecialPicksForPhases(phaseIds) {
+  const results = await Promise.all(phaseIds.map((id) => loadAllSpecialPicks(id).catch(() => [])));
+  const byPhase = {};
+  phaseIds.forEach((id, i) => { byPhase[id] = results[i]; });
+  return byPhase;
+}
+
 // Lista tuturor competițiilor + fazele lor, din configurare — folosită
 // direct de ecrane, fără nicio interogare.
 export function listAllSpecialCompetitions() {

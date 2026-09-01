@@ -129,7 +129,18 @@ function rankImportance(ctx) {
   if (ctx.bigDrop) return IMPORTANCE.BIG_DROP;
   if (ctx.enteredTop10) return IMPORTANCE.TOP10_ENTRY;
   if (ctx.leftTop10) return IMPORTANCE.TOP10_EXIT;
-  if (ctx.climb3plus || ctx.drop3plus || ctx.lastPlaceChange) return IMPORTANCE.RANK_MINOR;
+  // BUG REPARAT: "lastPlaceChange" (orice mutare care ATINGE ultimul
+  // loc) califica pentru publicare INDIFERENT de câte poziții s-au
+  // mișcat cu adevărat — o mutare banală de 1 loc (10→11) la coada
+  // clasamentului apărea ca și card individual, de fiecare dată când
+  // se întâmpla, la orice user. Exact spam-ul semnalat explicit
+  // ("RZVN a coborât pe 11", "Bogdan B a coborât pe 11", "AndreiS a
+  // coborât pe 11" — 3 carduri aproape identice). Povestea REALĂ,
+  // interesantă ("cineva preia lanterna roșie") e deja spusă mult mai
+  // bine de detectBottomStory (bottom_takeover/escape_last) — nu are
+  // nevoie de dublură aici. Rămâne doar climb3plus/drop3plus (mutare
+  // reală de minim 3 poziții).
+  if (ctx.climb3plus || ctx.drop3plus) return IMPORTANCE.RANK_MINOR;
   return null;
 }
 

@@ -11,7 +11,6 @@ import CinematicBackdrop from "../components/CinematicBackdrop";
 import AppHeader from "../components/AppHeader";
 import TopTabNav from "../components/TopTabNav";
 import BottomTabBar from "../components/BottomTabBar";
-import PremiumCard from "../components/PremiumCard";
 import PremiumButton from "../components/PremiumButton";
 import ClubLogo from "../components/ClubLogo";
 import CompetitionBadge from "../components/CompetitionBadge";
@@ -294,11 +293,6 @@ export default function WelcomeScreen({ user, profile, isAdmin, onOpenAdmin, onO
   const totalMatches = matches.length;
   const firstUnpredicted = allSorted.find((m) => !predictions[m.id]);
 
-  function handleComingSoon(label) {
-    setToast(`${label} — în curând`);
-    setTimeout(() => setToast(""), 1800);
-  }
-
   function handleTopTab(id) {
     if (id === "matchday") return;
     if (id === "clasament") return onOpenLeaderboard();
@@ -557,24 +551,6 @@ export default function WelcomeScreen({ user, profile, isAdmin, onOpenAdmin, onO
               ))}
             </div>
           </div>
-
-          <div style={s.sectionLabel}>Specialul săptămânii</div>
-          <PressableCard reduced={reduced} onClick={() => handleComingSoon("Surpriza Etapei")} style={{ marginBottom: 18 }}>
-            <div style={s.specialTop}>
-              <span style={s.specialName}>Surpriza Etapei</span>
-              <span style={s.specialState}>Blocat</span>
-            </div>
-            <div style={s.specialDesc}>Un mod special diferit în fiecare etapă — puncte în plus, risc în plus.</div>
-            <div style={s.specialBtn}>Vezi detalii</div>
-          </PressableCard>
-
-          <div style={s.sectionLabel}>Explorează</div>
-          <div style={s.shortcutsGrid}>
-            <PremiumCard tone="gold" title="Clasament" subtitle="Competiție" onClick={onOpenLeaderboard} />
-            <PremiumCard tone="purple" title="Dueluri" subtitle="Rivalitate" locked lockCondition="În curând" onClick={() => handleComingSoon("Dueluri")} />
-            <PremiumCard tone="green" title="Zaruri" subtitle="Risc" locked lockCondition="În curând" onClick={() => handleComingSoon("Zaruri")} />
-            <PremiumCard tone="blue" title="Echipa Etapei" subtitle="Prestigiu" locked lockCondition="După primul meci" onClick={() => handleComingSoon("Echipa Etapei")} />
-          </div>
         </div>
       )}
 
@@ -768,17 +744,6 @@ const s = {
   seeAllBtn: { background: "none", border: "none", color: color.goldLight, fontSize: 11.5, fontWeight: 700, cursor: "pointer", fontFamily: font.body },
   feedList: { display: "flex", flexDirection: "column", gap: 6 },
   feedEmpty: { fontSize: 11.5, color: color.textFaint, fontFamily: font.body, padding: "8px 0" },
-
-  specialTop: { display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 },
-  specialName: { fontFamily: font.display, fontSize: 14, fontWeight: 700, color: color.textPrimary },
-  specialState: {
-    fontSize: 9.5, fontWeight: 800, letterSpacing: "0.04em", color: color.textFaint,
-    background: color.surfaceInset, border: `1px solid ${color.border}`, borderRadius: 999, padding: "3px 9px",
-  },
-  specialDesc: { fontSize: 11.5, color: color.textSecondary, fontFamily: font.body, marginBottom: 12, lineHeight: 1.4 },
-  specialBtn: { fontSize: 11.5, fontWeight: 700, color: color.goldLight, fontFamily: font.body },
-
-  shortcutsGrid: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 20 },
 
   errorWrap: { maxWidth: 420, margin: "80px auto", textAlign: "center", padding: "0 20px" },
   errorTitle: { fontSize: 16, fontWeight: 700, color: color.textPrimary, marginBottom: 8, fontFamily: font.body },

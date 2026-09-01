@@ -1,7 +1,9 @@
 import { useEffect, useState } from "react";
-import { listAllSpecialCompetitions, listSpecialPhases, openSpecialPhase, resolveSpecialPhase } from "../services/specialsService";
-import { PICK_TYPES } from "../specialDefinitions";
+import { listAllSpecialCompetitions, listSpecialPhases, openSpecialPhase, resolveSpecialPhase, listAllSpecialPicksForPhases } from "../services/specialsService";
+import { PICK_TYPES, getPhaseDefinition } from "../specialDefinitions";
+import { resolveTeamOptions } from "../teamRegistry";
 import SpecialResolvePicker from "../components/SpecialResolvePicker";
+import SpecialsCompletionOverview from "../components/SpecialsCompletionOverview";
 import useNow from "../hooks/useNow";
 import { getMatchStatus } from "../utils/matchStatus";
 import {
@@ -22,7 +24,7 @@ import {
   listAllMatches,
   runMatchHealthCheck,
   updateMatch,
-  listAllUsers,
+  listAllUsers, getPlayerStatus,
   getPlayerCardStats,
   republishAllMatchPointsForGameweek,
 } from "../services/adminService";
@@ -151,6 +153,9 @@ export default function AdminScreen({ onBack }) {
   const [specialCompId, setSpecialCompId] = useState("");
   const [specialPhaseId, setSpecialPhaseId] = useState("");
   const [specialPhasesForSeason, setSpecialPhasesForSeason] = useState([]);
+  const [completionPicksByPhase, setCompletionPicksByPhase] = useState({});
+  const [completionLoading, setCompletionLoading] = useState(false);
+  const [completionActiveUsers, setCompletionActiveUsers] = useState([]);
   const [optionsText, setOptionsText] = useState("");
   const [closesAtInput, setClosesAtInput] = useState("");
   const [openSaving, setOpenSaving] = useState(false);
@@ -913,12 +918,29 @@ export default function AdminScreen({ onBack }) {
     listSpecialPhases(selectedSeasonId)
       .then(setSpecialPhasesForSeason)
       .catch((err) => console.error("Eroare la încărcarea fazelor speciale:", err));
+    listAllUsers()
+      .then((users) => setCompletionActiveUsers(users.filter((u) => getPlayerStatus(u) === "active")))
+      .catch((err) => console.error("Eroare la lista de useri activi (overview Speciale):", err));
   }, [tab, selectedSeasonId, openMsg, resolveMsg]);
+
+  // ── Overview agregat: cine a completat Specialele — peste TOATE
+  // fazele deschise deja (nu cele blocate), recalculat ori de câte ori
+  // se schimbă lista de faze sau se deschide/rezolvă ceva. ──
+  useEffect(() => {
+    if (tab !== "speciale" || specialPhasesForSeason.length === 0) { setCompletionPicksByPhase({}); return; }
+    setCompletionLoading(true);
+    const phaseIds = specialPhasesForSeason.map((p) => p.phaseId);
+    listAllSpecialPicksForPhases(phaseIds)
+      .then(setCompletionPicksByPhase)
+      .catch((err) => console.error("Eroare la overview-ul de completare Speciale:", err))
+      .finally(() => setCompletionLoading(false));
+  }, [tab, specialPhasesForSeason]);
 
   const specialCompetitions = listAllSpecialCompetitions();
   const specialComp = specialCompetitions.find((c) => c.id === specialCompId) || null;
   const specialPhaseDef = specialComp?.phases.find((p) => p.id === specialPhaseId) || null;
   const specialPhaseState = specialPhasesForSeason.find((p) => p.phaseId === specialPhaseId) || null;
+  const availableSpecialPhases = specialPhasesForSeason.map((p) => ({ id: p.phaseId, label: getPhaseDefinition(p.phaseId)?.phase?.label || p.phaseId }));
 
   function slugifyOption(label) {
     return label.toLowerCase().trim().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
@@ -1297,6 +1319,16 @@ export default function AdminScreen({ onBack }) {
             {/* ── Speciale — deschide/rezolvă fazele Specialelor Sezonului ── */}
             {tab === "speciale" && (
               <SectionCard title="Specialele Sezonului">
+                <div style={{ marginBottom: 16, paddingBottom: 16, borderBottom: "1px solid rgba(255,255,255,0.08)" }}>
+                  <div style={{ fontSize: 12, fontWeight: 800, color: "#fff", marginBottom: 4 }}>Cine a completat Specialele</div>
+                  <SpecialsCompletionOverview
+                    availablePhases={availableSpecialPhases}
+                    allUsers={completionActiveUsers}
+                    picksByPhase={completionPicksByPhase}
+                    loading={completionLoading}
+                  />
+                </div>
+
                 <select style={s.select} value={specialCompId} onChange={(e) => { setSpecialCompId(e.target.value); setSpecialPhaseId(""); }}>
                   <option value="">Alege competiția…</option>
                   {specialCompetitions.map((c) => (
@@ -1351,6 +1383,18 @@ export default function AdminScreen({ onBack }) {
                         <> (De obicei are sens după „{specialComp.phases.find((p) => p.id === specialPhaseDef.requiresPhase)?.label}", dar poți deschide și mai devreme.)</>
                       )}
                     </p>
+                    {(() => {
+                      const realOptions = resolveTeamOptions(specialComp.id, specialPhaseDef.id);
+                      if (!realOptions) return null;
+                      return (
+                        <button
+                          type="button" style={s.smallBtn}
+                          onClick={() => setOptionsText(realOptions.map((o) => o.label).join("\n"))}
+                        >
+                          📋 Pre-completează cu lista reală ({realOptions.length})
+                        </button>
+                      );
+                    })()}
                     <textarea
                       style={s.textarea}
                       rows={5}

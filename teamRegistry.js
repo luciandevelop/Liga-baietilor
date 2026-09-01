@@ -13,6 +13,7 @@
 // Actualizare sezon viitor: se editează STRICT listele de mai jos —
 // niciun ecran, niciun component nu se schimbă.
 // ══════════════════════════════════════════════════════════════════
+import { CL_TOP_SCORER_OPTIONS } from "./src/specialDefinitions.js";
 
 function team(id, label) {
   return { id, label };
@@ -178,6 +179,12 @@ export const SUPERLIGA_TEAMS = [
 // pentru fiecare competiție". Adăugarea unei competiții noi (Mondial,
 // EURO) = un nou `case` aici, nimic altundeva. ──
 export function resolveTeamOptions(competitionId, phaseId) {
+  // Fazele cu candidați JUCĂTORI (nu echipe) — verificate ÎNTÂI, altfel
+  // "cl-golgheter" cădea pe case-ul "uefa-champions-league" și butonul
+  // de pre-completare umplea greșit cu cele 36 de echipe, nu cei 15
+  // jucători. Bug găsit și reparat acum.
+  if (phaseId === "cl-golgheter") return CL_TOP_SCORER_OPTIONS;
+
   switch (competitionId) {
     case "uefa-champions-league":
       return CL_LEAGUE_PHASE_TEAMS;

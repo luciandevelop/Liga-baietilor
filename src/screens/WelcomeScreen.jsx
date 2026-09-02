@@ -2,7 +2,9 @@ import { useEffect, useRef, useState } from "react";
 import { getCurrentSeason, getCurrentGameweek, loadUserPredictions, loadUserJoker, isMatchLocked } from "../services/predictionsService";
 import { listenMatches, listenLiveGameweekScores, listGameweekScores, getUserSeasonPoints } from "../services/adminService";
 import { getUserPublicProfiles } from "../services/profilesService";
-import { processRankChanges, processFinishedMatches, processJokerActivation, processUpcomingMatches, loadFullFeed, processSurpriseCreated, processSurpriseMatchup, processSurpriseResult } from "../services/feedService";
+import { processRankChanges, processFinishedMatches, processJokerActivation, processUpcomingMatches, loadFullFeed, processSurpriseCreated, processSurpriseMatchup, processSurpriseResult, processExternalMatchDelta, processMatchIntelligence } from "../services/feedService";
+import { doc, getDoc } from "firebase/firestore";
+import { db } from "../firebase";
 import useNow from "../hooks/useNow";
 import { usePrefersReducedMotion } from "../motion";
 import { getMatchStatus } from "../utils/matchStatus";
@@ -282,6 +284,45 @@ export default function WelcomeScreen({ user, profile, isAdmin, onOpenAdmin, onO
     processUpcomingMatches(matches, featuredIds, gameweek.id)
       .then((events) => { if (events.length > 0) refreshFeedTop(); })
       .catch((err) => console.error("Eroare Feed meciuri viitoare:", err));
+  }, [gameweek, matches]);
+
+  // ── Date live externe (API-Football) — server-side (Vercel + GitHub
+  // Actions) actualizează externalFootballCache la ~10 minute; clientul
+  // doar CITEȘTE cache-ul (niciun apel direct la API-Football de-aici)
+  // și transformă noutățile în povești Feed. "Enhancement, nu
+  // dependency" — dacă cache-ul lipsește/e vechi, nu se întâmplă nimic
+  // rău, Feed-ul intern continuă normal. Interval blând (2 min) cât
+  // timp aplicația e deschisă — suficient pentru "aproximativ 5-10
+  // minute", acceptat explicit. ──
+  useEffect(() => {
+    if (!gameweek || matches.length === 0) return;
+    const mappedMatches = matches.filter((m) => m.externalFixtureId);
+    if (mappedMatches.length === 0) return;
+
+    let cancelled = false;
+    async function pollExternal() {
+      for (const m of mappedMatches) {
+        try {
+          const snap = await getDoc(doc(db, "externalFootballCache", String(m.externalFixtureId)));
+          if (cancelled || !snap.exists()) continue;
+          const cacheDoc = snap.data();
+          const hasNews = (cacheDoc.lastDeltaEvents?.length > 0) || cacheDoc.lastStatusChange || cacheDoc.lastScoreChange;
+          if (hasNews) {
+            const events = await processExternalMatchDelta(m, cacheDoc);
+            if (events.length > 0 && !cancelled) refreshFeedTop();
+          }
+          // Match Intelligence — ID-uri deterministe (o singură dată per
+          // matchId), deci sigur de reapelat la fiecare ciclu de poll.
+          const miEvents = await processMatchIntelligence(m, cacheDoc);
+          if (miEvents.length > 0 && !cancelled) refreshFeedTop();
+        } catch (err) {
+          console.error("Eroare la citirea datelor live externe:", err);
+        }
+      }
+    }
+    pollExternal();
+    const intervalId = setInterval(pollExternal, 2 * 60 * 1000);
+    return () => { cancelled = true; clearInterval(intervalId); };
   }, [gameweek, matches]);
 
   // Meciul principal (hero) — prioritate STRICTĂ, cerută explicit:

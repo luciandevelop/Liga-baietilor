@@ -1,4 +1,6 @@
 import { useEffect, useState } from "react";
+import { doc, getDoc, collection, getDocs, query, where } from "firebase/firestore";
+import { db, auth } from "../firebase";
 import { listAllSpecialCompetitions, listSpecialPhases, openSpecialPhase, resolveSpecialPhase, listAllSpecialPicksForPhases } from "../services/specialsService";
 import { PICK_TYPES, getPhaseDefinition } from "../specialDefinitions";
 import { resolveTeamOptions } from "../teamRegistry";
@@ -410,6 +412,11 @@ export default function AdminScreen({ onBack }) {
 
   // ── Feed (Admin) ──
   const [feedEvents, setFeedEvents] = useState([]);
+  const [liveDataQuota, setLiveDataQuota] = useState(null);
+  const [liveDataDiagnostics, setLiveDataDiagnostics] = useState({ mapped: 0, unmatched: 0, ambiguous: 0, live: 0, lastEventTitle: null });
+  const [liveDataLoading, setLiveDataLoading] = useState(false);
+  const [testingConnection, setTestingConnection] = useState(false);
+  const [testConnectionResult, setTestConnectionResult] = useState("");
   const [feedAdminFun, setFeedAdminFun] = useState([]);
   const [feedLoading, setFeedLoading] = useState(false);
   const [newFunLabel, setNewFunLabel] = useState("");
@@ -435,7 +442,66 @@ export default function AdminScreen({ onBack }) {
     }
   }
 
-  // ── Regenerează Feed etapa curentă — determinist, idempotent.
+  // ── LIVE DATA — citește O DATĂ, când tab-ul se deschide (nu poll
+  // agresiv din Admin; datele reale se actualizează server-side, aici
+  // e doar diagnostic). ──
+  useEffect(() => {
+    if (tab !== "feed") return;
+    setLiveDataLoading(true);
+    (async () => {
+      try {
+        const quotaSnap = await getDoc(doc(db, "externalFootballCache", "_quota"));
+        setLiveDataQuota(quotaSnap.exists() ? quotaSnap.data() : null);
+
+        if (!selectedGameweekId) return;
+        const matchesSnap = await getDocs(query(collection(db, "matches"), where("gameweekId", "==", selectedGameweekId)));
+        const gwMatches = matchesSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+        const mapped = gwMatches.filter((m) => m.externalFixtureId).length;
+
+        const diagSnap = await getDocs(collection(db, "externalFootballCache"));
+        let unmatched = 0, ambiguous = 0, live = 0, lastEventTitle = null, lastEventTs = 0;
+        diagSnap.docs.forEach((d) => {
+          const data = d.data();
+          if (d.id.startsWith("_diagnostic_")) {
+            if (data.status === "UNMATCHED") unmatched++;
+            if (data.status === "AMBIGUOUS") ambiguous++;
+          } else if (d.id !== "_quota") {
+            if (["1H", "2H", "HT", "ET"].includes(data.status)) live++;
+            if (data.lastDeltaEvents?.length > 0 && data.updatedAt > lastEventTs) {
+              lastEventTs = data.updatedAt;
+              lastEventTitle = `${data.homeTeam} ${data.homeScore}-${data.awayScore} ${data.awayTeam} (${data.status})`;
+            }
+          }
+        });
+        setLiveDataDiagnostics({ mapped, unmatched, ambiguous, live, lastEventTitle });
+      } catch (err) {
+        console.error("Eroare la încărcarea diagnosticului Live Data:", err);
+      } finally {
+        setLiveDataLoading(false);
+      }
+    })();
+  }, [tab, selectedGameweekId]);
+
+  async function handleTestFootballConnection() {
+    setTestingConnection(true);
+    setTestConnectionResult("");
+    try {
+      const idToken = await auth.currentUser.getIdToken();
+      const resp = await fetch("/api/football-test", { headers: { Authorization: `Bearer ${idToken}` } });
+      const data = await resp.json();
+      if (!resp.ok) { setTestConnectionResult(`Eroare: ${data.error || resp.status}`); return; }
+      setTestConnectionResult(
+        `${data.reachable ? "✅ Conectat" : "❌ Neconectat"} · Cotă rămasă azi: ${data.quotaRemaining ?? "necunoscută"} · Răspuns valid: ${data.responseValid ? "da" : "nu"}`
+      );
+    } catch (err) {
+      setTestConnectionResult("Eroare — vezi consola.");
+      console.error("Eroare Test Connection:", err);
+    } finally {
+      setTestingConnection(false);
+    }
+  }
+
+
   // Reconstruiește meciuri Final + scor exact + facts + starea CURENTĂ
   // a clasamentului etapei. NU inventează istoricul pas-cu-pas al
   // clasamentului (cine era lider după fiecare meci în parte) — dacă nu
@@ -1828,6 +1894,28 @@ export default function AdminScreen({ onBack }) {
             {/* ── Feed — evenimente automate, articole editoriale, FUN ── */}
             {tab === "feed" && (
               <>
+                <SectionCard title="🔴 LIVE DATA (API-Football)">
+                  {liveDataLoading && <p style={s.hint}>Se încarcă…</p>}
+                  {!liveDataLoading && !liveDataQuota && <p style={s.hint}>Niciun sync încă.</p>}
+                  {!liveDataLoading && liveDataQuota && (
+                    <div style={{ fontSize: 12, lineHeight: 1.8, color: "#C7CCDA" }}>
+                      Provider: API-Football<br />
+                      Ultimă sincronizare: {liveDataQuota.lastSync ? new Date(liveDataQuota.lastSync).toLocaleString("ro-RO") : "—"}<br />
+                      Ultima reușită: {liveDataQuota.lastSuccess ? new Date(liveDataQuota.lastSuccess).toLocaleString("ro-RO") : "—"}<br />
+                      Cotă folosită azi: {liveDataQuota.requestsUsed ?? 0}/100<br />
+                      Meciuri relevante: {liveDataDiagnostics.mapped + liveDataDiagnostics.unmatched + liveDataDiagnostics.ambiguous}<br />
+                      Mapate: {liveDataDiagnostics.mapped} · Nemapate: {liveDataDiagnostics.unmatched} · Ambigue: {liveDataDiagnostics.ambiguous}<br />
+                      Live acum: {liveDataDiagnostics.live}<br />
+                      Ultimul eveniment extern: {liveDataDiagnostics.lastEventTitle || "—"}<br />
+                      Ultima eroare: {liveDataQuota.lastError || "—"}
+                    </div>
+                  )}
+                  <button type="button" style={s.smallBtn} disabled={testingConnection} onClick={handleTestFootballConnection}>
+                    {testingConnection ? "Se testează…" : "🔌 Test Connection"}
+                  </button>
+                  {testConnectionResult && <p style={s.hint}>{testConnectionResult}</p>}
+                </SectionCard>
+
                 <SectionCard title="Evenimente recente (automate)">
                   <button type="button" style={s.smallBtn} disabled={cleaningLiveEvents} onClick={handleCleanupLiveEvents}>
                     {cleaningLiveEvents ? "Se curăță…" : "🧹 Șterge golurile/cartonașele vechi (text greșit)"}

@@ -39,23 +39,47 @@ export default async function handler(req, res) {
       quota = { date: todayKey, requestsUsed: 0, lastSync: null, lastSuccess: null, lastError: null };
     }
 
-    // ── 2. Ce meciuri sunt "relevante" acum (fereastră ±3h de kickoff,
-    // și nu deja marcate finished la noi). Dacă NIMIC relevant → 0 cereri,
-    // ieșire imediată, indiferent cât de des ne cheamă GitHub. ──
+    // ── 2. Etapa curentă — BUG REAL GĂSIT ȘI REPARAT: căutam un câmp
+    // gameweeks.status=="active" care NU există în structura reală a
+    // documentelor (verificat direct în predictionsService.js —
+    // resolveCurrentGameweek). Aplicația determină etapa curentă prin
+    // fereastra weekStart/weekEnd, nu printr-un status. Interogarea
+    // veche întorcea mereu gol, indiferent câte etape active existau
+    // real — de-aici "no_active_gameweek" fals, cu Etapa 5 activă.
     const now = Date.now();
-    const gwSnap = await db.collection("gameweeks").where("status", "==", "active").limit(1).get();
-    if (gwSnap.empty) {
-      return res.status(200).json({ skipped: true, reason: "no_active_gameweek", requestsUsedToday: quota.requestsUsed });
+    const gwCandidatesSnap = await db.collection("gameweeks").get();
+    const gwCandidates = gwCandidatesSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+    const currentGw = gwCandidates.find((g) => {
+      const start = g.weekStart?.toMillis ? g.weekStart.toMillis() : null;
+      const end = g.weekEnd?.toMillis ? g.weekEnd.toMillis() : null;
+      return start !== null && end !== null && now >= start && now <= end;
+    });
+    if (!currentGw) {
+      return res.status(200).json({ skipped: true, reason: "no_gameweek_in_current_week_window", requestsUsedToday: quota.requestsUsed });
     }
-    const gwId = gwSnap.docs[0].id;
+    const gwId = currentGw.id;
+    const featuredIds = new Set(currentGw.featuredMatchIds || []);
+
     const matchesSnap = await db.collection("matches").where("gameweekId", "==", gwId).get();
     const allMatches = matchesSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+    // ── Meciurile săptămânii (featured) intră în Match Intelligence cu
+    // până la 48h înainte de kickoff — cerut explicit, ca H2H/formă/
+    // predicții să nu aștepte ziua meciului. Restul rămân pe fereastra
+    // îngustă (3h), pentru economie de request-uri. ──
+    const FEATURED_WINDOW_MS = 48 * 3600 * 1000;
     const relevant = allMatches.filter((m) => {
       if (m.status === "finished") return false;
       const kickoffMs = m.kickoffAt?.toMillis ? m.kickoffAt.toMillis() : null;
       if (!kickoffMs) return false;
-      return Math.abs(now - kickoffMs) <= RELEVANT_WINDOW_MS || (kickoffMs > now && kickoffMs - now <= RELEVANT_WINDOW_MS);
+      const window = featuredIds.has(m.id) ? FEATURED_WINDOW_MS : RELEVANT_WINDOW_MS;
+      return Math.abs(now - kickoffMs) <= window || (kickoffMs > now && kickoffMs - now <= window);
     });
+
+    if (relevant.length === 0) {
+      quota.lastSync = now;
+      await quotaRef.set(quota, { merge: true });
+      return res.status(200).json({ skipped: true, reason: "gameweek_found_but_no_match_in_sync_window", requestsUsedToday: quota.requestsUsed });
+    }
 
     // ── BUG REAL GĂSIT ȘI REPARAT ACUM: fereastra ±3h ("relevant") era
     // folosită și pentru interogarea de scor LIVE, repetată la fiecare
@@ -82,12 +106,6 @@ export default async function handler(req, res) {
       const withinWindow = now >= kickoffMs - LIVE_WINDOW_BEFORE_MS && now <= kickoffMs + LIVE_WINDOW_AFTER_MS;
       const stillLiveInCache = ["1H", "2H", "HT", "ET"].includes(cachedStatus);
       return withinWindow || stillLiveInCache;
-    }
-
-    if (relevant.length === 0) {
-      quota.lastSync = now;
-      await quotaRef.set(quota, { merge: true });
-      return res.status(200).json({ skipped: true, reason: "no_relevant_matches", requestsUsedToday: quota.requestsUsed });
     }
 
     // BUG REPARAT: acest prag global folosea SAFETY_MARGIN (85), oprind

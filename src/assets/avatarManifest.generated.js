@@ -123,8 +123,15 @@ export default {
     }
   },
   "rzvn": {
-    "nextIndex": 1,
-    "files": {}
+    "nextIndex": 7,
+    "files": {
+      "1": "file_000000000d34824686917605d47c1d05.png",
+      "2": "file_000000003e888246826b8ac132197655.png",
+      "3": "file_00000000686c824682d6b32b42d1edae.png",
+      "4": "file_00000000b6188246aed13f7295e8ce7a.png",
+      "5": "file_00000000cb848246809edf646c74b0c8.png",
+      "6": "file_00000000e3ec82468ba34d2d00e0d082.png"
+    }
   },
   "sexu-ciobanu": {
     "nextIndex": 9,

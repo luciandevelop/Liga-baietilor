@@ -158,8 +158,15 @@ export default {
     }
   },
   "utzy": {
-    "nextIndex": 1,
-    "files": {}
+    "nextIndex": 7,
+    "files": {
+      "1": "file_0000000026a8824687d6bec92050910f.png",
+      "2": "file_0000000038dc8246b597823f20015072.png",
+      "3": "file_000000004a648246b69b6fe15dc18f18.png",
+      "4": "poza_4_fara_text.png",
+      "5": "poza_5_fara_text.png",
+      "6": "poza_6_fara_text.png"
+    }
   },
   "vikigbt": {
     "nextIndex": 8,

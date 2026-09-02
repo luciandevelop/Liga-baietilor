@@ -61,6 +61,10 @@ export default {
       "6": "wolf_of_wall_street_nr16.png"
     }
   },
+  "cristian": {
+    "nextIndex": 1,
+    "files": {}
+  },
   "doctoru": {
     "nextIndex": 7,
     "files": {

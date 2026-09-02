@@ -27,8 +27,16 @@ export default {
     }
   },
   "andreis": {
-    "nextIndex": 1,
-    "files": {}
+    "nextIndex": 8,
+    "files": {
+      "1": "01_normala.png",
+      "2": "03_steaua_exact_din_colaj.png",
+      "3": "04_maiou_exact_din_colaj.png",
+      "4": "07_joker_exact_din_colaj.png",
+      "5": "08_tony_stark_exact_din_colaj.png",
+      "6": "09_costum_exact_din_colaj.png",
+      "7": "file_0000000009048246954b59a2358ab3b9.png"
+    }
   },
   "bogdanb": {
     "nextIndex": 8,

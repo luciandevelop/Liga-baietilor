@@ -62,8 +62,16 @@ export default {
     }
   },
   "cristian": {
-    "nextIndex": 1,
-    "files": {}
+    "nextIndex": 8,
+    "files": {
+      "1": "file_0000000003448210a8275577ffe772ca.png",
+      "2": "file_000000000c60820a8a2f66b6eafa1fb9.png",
+      "3": "file_000000001c0c824690f08611037be217.png",
+      "4": "file_00000000f2888246bed3fd8544b11da7.png",
+      "5": "file_00000000f82482468d731a6a357c8e65.png",
+      "6": "personaj_01.png",
+      "7": "poza_3_superman_fara_cifra.png"
+    }
   },
   "doctoru": {
     "nextIndex": 7,

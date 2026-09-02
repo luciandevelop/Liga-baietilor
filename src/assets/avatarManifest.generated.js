@@ -87,8 +87,7 @@ export default {
   "luck87": {
     "nextIndex": 9,
     "files": {
-      "1": "1.png",
-      "7": "file_00000000049c820a8015bce9e6a9ddb7.png"
+      "1": "1.png"
     }
   },
   "ooo-micea": {

@@ -25,6 +25,8 @@
 //                  — reprocesarea aceluiași eveniment e no-op în Firestore
 // ══════════════════════════════════════════════════════════════════
 
+import { canRevealPredictions } from "./matchLockRule";
+
 // ── Hash determinist REAL, pe un string arbitrar (de obicei eventId) —
 // BUG REPARAT: varianta veche hash-uia lungimile textelor din pool-ul de
 // opțiuni, nu evenimentul propriu-zis, deci ACELAȘI pool dădea mereu
@@ -87,6 +89,8 @@ export const IMPORTANCE = {
   FACT_INTERNAL: 45, BANTER_ATTACHED: 0,
   FUN: 15, CITY_FACT: 42,
   SURPRISE_CREATED: 65, SURPRISE_MATCHUP: 68, SURPRISE_PROGRESS: 48, SURPRISE_RESULT: 72, SURPRISE_REWARD: 66,
+  LIVE_STARTED: 40, LIVE_GOAL: 77, LIVE_LEAD_CHANGE: 82, LIVE_HALFTIME: 45, LIVE_RED_CARD: 70, LIVE_FULLTIME: 68,
+  LINEUP: 52, LINEUP_SCORER_SURPRISE: 62, H2H_FACT: 38, FORM_FACT: 36, INJURY: 44, API_PREDICTION: 40,
 };
 
 export const VISUAL_CATEGORY = {
@@ -575,6 +579,195 @@ export function buildSurpriseRewardEvent(gameweekId, kind, mode, uid, descriptio
     title: description,
     category: "fun", priority: IMPORTANCE.SURPRISE_REWARD,
     detail: { gameweekId, kind, mode },
+  };
+}
+
+// ══════════════════════════════════════════════════════════════════
+// LIVE MATCH EVENTS — din date externe (API-Football), NORMALIZATE
+// deja (vezi api/_lib/footballLogic.js). Gardă de privacy INTERNĂ
+// (defense in depth, ca la feedFactsEngine.js) — dacă meciul nu-i
+// blocat încă, funcția refuză singură corelarea cu predicții,
+// INDIFERENT ce-i dă apelantul.
+//
+// `internal` (opțional) = { exactCount, jokerCount } — calculat de
+// feedService.js din predicțiile PROPRII ale aplicației, NUMAI dacă
+// meciul e deja blocat (apelantul verifică O DATĂ, funcția verifică
+// A DOUA OARĂ — dacă nu se potrivesc, câștigă varianta STRICTĂ, fără
+// corelare). ──
+// external = din API-Football (extern), spre deosebire de
+// buildLiveMatchEvent (mai jos) care e pentru evenimente introduse
+// manual de Admin — două surse diferite, nume diferite, ca să nu se
+// suprascrie una pe alta.
+export function buildExternalLiveEvent(kind, match, snapshot, extra, internal) {
+  const canCorrelate = canRevealPredictions(match) && internal;
+  const base = { home: match.homeTeam, away: match.awayTeam };
+  const id = `live_${snapshot.fixtureId}_${kind}_${extra?.eventId || snapshot.minute || kind}`;
+
+  function withCorrelation(bareTitle, richTitleFn) {
+    if (!canCorrelate) return bareTitle;
+    return richTitleFn(internal) || bareTitle;
+  }
+
+  let title, importance, icon;
+  switch (kind) {
+    case "MATCH_STARTED":
+      importance = IMPORTANCE.LIVE_STARTED; icon = "live";
+      title = pick([`🔴 A început ${base.home} – ${base.away}.`], id);
+      break;
+
+    case "GOAL": {
+      importance = IMPORTANCE.LIVE_GOAL; icon = "goal";
+      const { before, after, team, player, semantic } = extra;
+      const scoreStr = `${after.home}–${after.away}`;
+      const scoreLabel = { opens: "deschide scorul", equalizer: "egalează", lead_change: "întoarce scorul", extends_lead: "mărește avantajul", scores: "marchează" }[semantic];
+      const bare = pick([
+        `⚽ ${team} ${scoreLabel}${player ? ` prin ${player}` : ""}! ${scoreStr}, minutul ${extra.minute}.`,
+      ], id);
+      title = withCorrelation(bare, (i) =>
+        i.exactCount > 0
+          ? pick([`⚽ ${team} ${scoreLabel}! ${scoreStr} în minutul ${extra.minute}. ${i.exactCount} băieți sunt momentan pe scor exact.`], id)
+          : bare
+      );
+      break;
+    }
+
+    case "HALFTIME":
+      importance = IMPORTANCE.LIVE_HALFTIME; icon = "whistle";
+      title = pick([`⏱ Pauză: ${base.home} ${snapshot.homeScore}–${snapshot.awayScore} ${base.away}.`], id);
+      break;
+
+    case "RED_CARD": {
+      importance = IMPORTANCE.LIVE_RED_CARD; icon = "card";
+      title = pick([`🟥 Roșu pentru ${extra.team}${extra.player ? ` (${extra.player})` : ""}, minutul ${extra.minute}.`], id);
+      break;
+    }
+
+    case "MISSED_PENALTY": {
+      importance = IMPORTANCE.LIVE_GOAL; icon = "goal";
+      title = pick([`🧤 Penalty ratat! ${extra.team}${extra.player ? ` (${extra.player})` : ""} nu marchează, minutul ${extra.minute}.`], id);
+      break;
+    }
+
+    case "FULLTIME":
+      importance = IMPORTANCE.LIVE_FULLTIME; icon = "whistle";
+      title = pick([`🏁 Final la ${base.home}: ${base.home} ${snapshot.homeScore}–${snapshot.awayScore} ${base.away}.`], id);
+      break;
+
+    default:
+      return null;
+  }
+
+  return {
+    id, type: TYPE.MATCH, subtype: `live_${kind.toLowerCase()}`, ts: Date.now(),
+    importance, actors: [], version: 2, icon, important: kind === "GOAL" || kind === "FULLTIME",
+    title, subtitle: null, category: "meciuri", priority: importance,
+    detail: { matchId: match.id, fixtureId: snapshot.fixtureId, provider: "api-football" },
+  };
+}
+
+// ══════════════════════════════════════════════════════════════════
+// MATCH INTELLIGENCE — carduri din date reale API-Football (lineup,
+// H2H, formă, accidentări, predicții API), transformate editorial.
+// NU inventează nimic — dacă datele nu susțin o afirmație clară,
+// funcția întoarce null, Story Engine nu publică nimic pentru acel tip.
+// ══════════════════════════════════════════════════════════════════
+
+export function buildLineupEvent(match, lineup) {
+  if (!lineup?.home?.startingXI?.length) return null;
+  const id = `lineup_${match.id}`;
+  const keyPlayers = lineup.home.startingXI.slice(0, 3).map((p) => p.name).join(", ");
+  return {
+    id, type: TYPE.MATCH, subtype: "lineup", ts: Date.now(), importance: IMPORTANCE.LINEUP,
+    actors: [], version: 2, icon: "lineup", important: false,
+    title: pick([`📋 Echipele sunt afară la ${match.homeTeam} – ${match.awayTeam}.`], id),
+    subtitle: pick([`${match.homeTeam} merge pe ${lineup.home.formation || "?"}. ${keyPlayers}${lineup.home.startingXI.length > 3 ? " și restul." : "."}`], id),
+    category: "meciuri", priority: IMPORTANCE.LINEUP,
+    detail: { matchId: match.id, lineup },
+  };
+}
+
+// H2H — publică DOAR dacă datele susțin o afirmație clară (o echipă
+// domină net, sau meciurile produc constant multe goluri). Altfel null
+// — nu forțăm un fapt plictisitor din date echilibrate.
+export function buildH2HFact(match, h2h) {
+  if (!h2h || h2h.totalMatches < 3) return null;
+  const id = `h2h_${match.id}`;
+  const homeDominant = h2h.homeWins >= h2h.totalMatches * 0.6;
+  const awayDominant = h2h.awayWins >= h2h.totalMatches * 0.6;
+  let title = null;
+  if (homeDominant) {
+    title = pick([`📊 Istoria e cu ${match.homeTeam}: ${h2h.homeWins} victorii din ultimele ${h2h.totalMatches} dueluri cu ${match.awayTeam}.`], id);
+  } else if (awayDominant) {
+    title = pick([`📊 ${match.awayTeam} are avantaj istoric: ${h2h.awayWins} victorii din ultimele ${h2h.totalMatches} cu ${match.homeTeam}.`], id);
+  } else if (h2h.avgGoals >= 3) {
+    title = pick([`👀 Meciuri cu goluri: ultimele ${h2h.totalMatches} dueluri au produs în medie ${h2h.avgGoals} goluri.`], id);
+  }
+  if (!title) return null;
+  return {
+    id, type: TYPE.FACT, subtype: "h2h", ts: Date.now(), importance: IMPORTANCE.H2H_FACT,
+    actors: [], version: 2, icon: "stats", important: false, title, subtitle: null,
+    category: "fun", priority: IMPORTANCE.H2H_FACT, detail: { matchId: match.id, h2h },
+  };
+}
+
+// Formă — publică doar dacă diferența e reală, nu "amândouă la fel".
+export function buildFormFact(match, homeForm, awayForm) {
+  if (!homeForm?.form || !awayForm?.form) return null;
+  const score = (f) => f.split("").reduce((s, c) => s + (c === "W" ? 1 : c === "D" ? 0 : -1), 0);
+  const homeScore = score(homeForm.form), awayScore = score(awayForm.form);
+  if (Math.abs(homeScore - awayScore) < 3) return null; // prea apropiat, nu-i o poveste
+  const id = `form_${match.id}`;
+  const better = homeScore > awayScore ? match.homeTeam : match.awayTeam;
+  const betterForm = homeScore > awayScore ? homeForm.form : awayForm.form;
+  return {
+    id, type: TYPE.FACT, subtype: "form", ts: Date.now(), importance: IMPORTANCE.FORM_FACT,
+    actors: [], version: 2, icon: "fire", important: false,
+    title: pick([`🔥 ${better} vine în formă bună: ${betterForm}.`], id), subtitle: null,
+    category: "fun", priority: IMPORTANCE.FORM_FACT, detail: { matchId: match.id, homeForm, awayForm },
+  };
+}
+
+// Accidentări — compact, FĂRĂ să inventăm "vedetă" (nu avem o metodă
+// sigură de a determina importanța unui jucător).
+export function buildInjuryEvent(match, injuries) {
+  if (!injuries || injuries.length === 0) return null;
+  const id = `injuries_${match.id}`;
+  const names = injuries.slice(0, 4).map((i) => i.player).join(", ");
+  return {
+    id, type: TYPE.FACT, subtype: "injury", ts: Date.now(), importance: IMPORTANCE.INJURY,
+    actors: [], version: 2, icon: "injury", important: false,
+    title: pick([`🚑 Absențe la ${match.homeTeam} – ${match.awayTeam}: ${names}${injuries.length > 4 ? ` și încă ${injuries.length - 4}` : ""}.`], id),
+    subtitle: null, category: "fun", priority: IMPORTANCE.INJURY, detail: { matchId: match.id, injuries },
+  };
+}
+
+// Predicții API — comparate cu consensul NOSTRU DOAR după reveal
+// (privacy guard intern, defense in depth). Înainte de reveal, arată
+// doar procentele API-ului, fără nicio referire la ce cred băieții.
+export function buildApiPredictionEvent(match, apiPrediction, ourConsensus) {
+  if (!apiPrediction) return null;
+  const id = `apipred_${match.id}`;
+  const favorite = apiPrediction.homePct > apiPrediction.awayPct ? match.homeTeam : match.awayTeam;
+  const favoritePct = Math.max(apiPrediction.homePct, apiPrediction.awayPct);
+
+  const canCompare = canRevealPredictions(match) && ourConsensus;
+  if (canCompare) {
+    const ourFavorite = ourConsensus.homeCount > ourConsensus.awayCount ? match.homeTeam : match.awayTeam;
+    const agree = favorite === ourFavorite;
+    return {
+      id, type: TYPE.FACT, subtype: "api_prediction", ts: Date.now(), importance: IMPORTANCE.API_PREDICTION,
+      actors: [], version: 2, icon: "chart", important: false,
+      title: agree
+        ? pick([`🧠 Băieții sunt de acord cu datele: ambii văd ${favorite} favorit.`], id)
+        : pick([`😈 Liga merge contra curentului: datele văd ${favorite} favorit (${favoritePct}%), băieții merg pe ${ourFavorite}.`], id),
+      subtitle: null, category: "fun", priority: IMPORTANCE.API_PREDICTION, detail: { matchId: match.id },
+    };
+  }
+  return {
+    id, type: TYPE.FACT, subtype: "api_prediction", ts: Date.now(), importance: IMPORTANCE.API_PREDICTION,
+    actors: [], version: 2, icon: "chart", important: false,
+    title: pick([`🤖 Datele îl văd favorit pe ${favorite} (${favoritePct}%).`], id),
+    subtitle: null, category: "fun", priority: IMPORTANCE.API_PREDICTION, detail: { matchId: match.id },
   };
 }
 

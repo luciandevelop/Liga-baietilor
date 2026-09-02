@@ -5,10 +5,16 @@ import {
 import { db } from "../firebase";
 import {
   detectRankChangeEvents, aggregateRankStory, buildMatchFinalEvent, buildJokerEvent,
-  buildUpcomingMatchEvent, buildLiveMatchEvent, attachBanter, mergeFeedEvents, TYPE,
+  buildUpcomingMatchEvent, buildLiveMatchEvent, buildExternalLiveEvent, attachBanter, mergeFeedEvents, TYPE,
   buildCityFactEvent, buildSurpriseCreatedEvent, buildSurpriseMatchupEvent,
   buildSurpriseProgressEvent, buildSurpriseResultEvent, buildSurpriseRewardEvent, pick,
+  buildLineupEvent, buildH2HFact, buildFormFact, buildInjuryEvent, buildApiPredictionEvent,
 } from "./feedEngine";
+import { canRevealPredictions } from "./matchLockRule";
+// Logică pură, PARTAJATĂ cu api/football-sync.js (sursă unică de
+// adevăr pentru semantica de scor — "deschide/egalează/preia/mărește"
+// trebuie să fie IDENTICĂ pe server și pe client, nu recalculată diferit).
+import { classifyScoreChange } from "../../api/_lib/footballLogic";
 import {
   buildPredictionDistributionFact, buildSurpriseFact, buildTopExactScorerFact, buildStandingsGapFact,
   buildBiggestMoveOfGameweekFact,
@@ -511,6 +517,151 @@ export async function processSurpriseMatchup(gameweekId, kind, type, config) {
 // documentul PĂRINTE (aceeași condiție pentru toate documentele din
 // colecție), nu un tipar de id per-document — deci nu are problema de
 // "query refuzat" găsită la jokers/specialPicks. ──
+// ── Mystery Box — un eveniment per cutie DESCHISĂ (aleasă), niciodată
+// pentru cutiile încă nealese. Apelat chiar de clientul care tocmai a
+// ales (submitMysteryBoxPick), cu propriul nickname — fiecare user
+// publică DOAR propria alegere, nu pe ale altora. ID stabil pe
+// gameweekId+boxIndex, deci idempotent la orice reîncercare. ──
+// ══════════════════════════════════════════════════════════════════
+// EXTERNAL LIVE — citește delta-ul deja calculat SERVER-SIDE (funcția
+// Vercel api/football-sync.js scrie în externalFootballCache/{fixtureId}
+// exact ce-i NOU la fiecare sincronizare). Clientul NU reface delta
+// detection — doar transformă noutățile în povești Feed, refolosind
+// EXACT Story Engine-ul existent (niciun motor nou). ID-uri complet
+// deterministe (din buildExternalLiveEvent) — de-i citește 1 user sau
+// 16, simultan, rezultatul-i identic, fără duplicate.
+//
+// Corelare cu date proprii (predicții/scoruri exacte) — DOAR dacă
+// meciul e deja blocat (dublă verificare: aici ȘI în interiorul
+// buildExternalLiveEvent, defense in depth, ca la restul faptelor).
+// ══════════════════════════════════════════════════════════════════
+// ══════════════════════════════════════════════════════════════════
+// MATCH INTELLIGENCE — citește cache-ul (lineup/H2H/form/predicții
+// API/accidentări), publică STRICT ce merită (max câteva per meci —
+// "aceste date sunt RAW MATERIAL, nu fiecare informație devine
+// automat card", cerut explicit). Fiecare funcție de construcție
+// (buildH2HFact etc.) DEJA întoarce null dacă datele nu susțin o
+// afirmație clară — aici doar le colectăm și publicăm o dată, idempotent
+// (ID-uri deterministe pe matchId, deci fără duplicate la reprocesare).
+// ══════════════════════════════════════════════════════════════════
+export async function processMatchIntelligence(match, cacheDoc) {
+  if (!cacheDoc) return [];
+
+  // BUG REPARAT: fiecare informație disponibilă (lineup/H2H/formă/
+  // predicție) se publica necondiționat — un meci cu toate datele
+  // disponibile producea 4 carduri deodată, exact "log tehnic" nu
+  // "editorial" semnalat explicit. Acum construim TOATE candidatele,
+  // apoi alegem STRICT primele 3, în ordinea de prioritate cerută:
+  // lineup > H2H > formă > predicție API. Injuries rămân separat
+  // (compact, nu intră în acest cap — deja tratate ca prioritate cea
+  // mai joasă la nivel de buget, nu doar editorial).
+  const MAX_INTELLIGENCE_STORIES = 3;
+  const candidates = [];
+
+  if (cacheDoc.lineup) {
+    const ev = buildLineupEvent(match, cacheDoc.lineup);
+    if (ev) candidates.push(ev);
+  }
+  if (cacheDoc.h2h) {
+    const ev = buildH2HFact(match, cacheDoc.h2h);
+    if (ev) candidates.push(ev);
+  }
+  if (cacheDoc.form?.home && cacheDoc.form?.away) {
+    const ev = buildFormFact(match, cacheDoc.form.home, cacheDoc.form.away);
+    if (ev) candidates.push(ev);
+  }
+  if (cacheDoc.apiPrediction) {
+    let ourConsensus = null;
+    if (canRevealPredictions(match)) {
+      try {
+        const predsSnap = await getDocs(query(collection(db, "predictions"), where("matchId", "==", match.id)));
+        const rows = predsSnap.docs.map((d) => d.data());
+        ourConsensus = { homeCount: rows.filter((p) => p.scoreA > p.scoreB).length, awayCount: rows.filter((p) => p.scoreA < p.scoreB).length };
+      } catch { ourConsensus = null; }
+    }
+    const ev = buildApiPredictionEvent(match, cacheDoc.apiPrediction, ourConsensus);
+    if (ev) candidates.push(ev);
+  }
+
+  // `candidates` e deja în ordinea de prioritate cerută (push-uite în
+  // ordinea lineup→h2h→form→prediction) — tăiem doar la coadă, nu
+  // re-sortăm (lineup rămâne mereu primul dacă există).
+  const events = candidates.slice(0, MAX_INTELLIGENCE_STORIES);
+
+  // Injuries — SEPARAT de cap-ul editorial (deja e prioritatea cea mai
+  // joasă la buget; dacă a ajuns să existe în cache, tot merită
+  // spusă, dar nu concurează cu lineup/H2H/formă/predicție pentru cele
+  // 3 sloturi).
+  if (cacheDoc.injuries?.length > 0) {
+    const ev = buildInjuryEvent(match, cacheDoc.injuries);
+    if (ev) events.push(ev);
+  }
+
+  if (events.length > 0) await saveFeedEvents(events);
+  return events;
+}
+
+export async function processExternalMatchDelta(match, cacheDoc) {
+  if (!cacheDoc) return [];
+  const events = [];
+  const snapshot = { fixtureId: cacheDoc.fixtureId, status: cacheDoc.status, minute: cacheDoc.minute, homeScore: cacheDoc.homeScore, awayScore: cacheDoc.awayScore };
+
+  // Corelare internă — doar dacă privacy permite, calculat O SINGURĂ
+  // dată aici (nu la fiecare tip de eveniment).
+  let internal = null;
+  if (canRevealPredictions(match)) {
+    try {
+      const mpSnap = await getDocs(query(collection(db, "matchPoints"), where("matchId", "==", match.id)));
+      const mpRows = mpSnap.docs.map((d) => d.data());
+      internal = { exactCount: mpRows.filter((p) => p.scorePoints === 120).length, jokerCount: 0 };
+    } catch { internal = null; }
+  }
+
+  if (cacheDoc.lastStatusChange?.to === "1H" && cacheDoc.lastStatusChange?.from !== "1H") {
+    const ev = buildExternalLiveEvent("MATCH_STARTED", match, snapshot, {}, internal);
+    if (ev) events.push(ev);
+  }
+  if (cacheDoc.lastStatusChange?.to === "HT") {
+    const ev = buildExternalLiveEvent("HALFTIME", match, snapshot, {}, internal);
+    if (ev) events.push(ev);
+  }
+  if (cacheDoc.lastStatusChange?.to === "FT") {
+    // INFORMATIV — NU acordă puncte, NU înlocuiește Admin Final.
+    const ev = buildExternalLiveEvent("FULLTIME", match, snapshot, {}, internal);
+    if (ev) events.push(ev);
+  }
+  for (const rawEvent of cacheDoc.lastDeltaEvents || []) {
+    if (rawEvent.type === "GOAL" || rawEvent.type === "OWN_GOAL" || rawEvent.type === "PENALTY_GOAL") {
+      const before = cacheDoc.lastScoreChange?.before || { home: 0, away: 0 };
+      const after = cacheDoc.lastScoreChange?.after || snapshot;
+      const semantic = classifyScoreChange(before, after);
+      const ev = buildExternalLiveEvent("GOAL", match, snapshot,
+        { eventId: rawEvent.id, before, after, team: rawEvent.team, player: rawEvent.player, minute: rawEvent.minute, semantic }, internal);
+      if (ev) events.push(ev);
+    } else if (rawEvent.type === "RED_CARD") {
+      const ev = buildExternalLiveEvent("RED_CARD", match, snapshot, { eventId: rawEvent.id, team: rawEvent.team, player: rawEvent.player, minute: rawEvent.minute }, internal);
+      if (ev) events.push(ev);
+    } else if (rawEvent.type === "MISSED_PENALTY") {
+      const ev = buildExternalLiveEvent("MISSED_PENALTY", match, snapshot, { eventId: rawEvent.id, team: rawEvent.team, player: rawEvent.player, minute: rawEvent.minute }, internal);
+      if (ev) events.push(ev);
+    }
+  }
+
+  if (events.length > 0) await saveFeedEvents(events);
+  return events;
+}
+
+export async function processMysteryBoxOpened(gameweekId, boxIndex, boxValue, nickname, totalBoxes) {
+  const id = `surprise_progress_${gameweekId}_bonus_box${boxIndex}`;
+  const description = pick([
+    `🎁 ${nickname} a deschis cutia #${boxIndex + 1}. 💰 Înăuntru: +${boxValue}p.`,
+    `🎁 Cutia #${boxIndex + 1}, deschisă de ${nickname}: +${boxValue}p.`,
+  ], id);
+  const ev = buildSurpriseProgressEvent(gameweekId, "bonus", "mystery-box", `box${boxIndex}`, description);
+  await saveFeedEvents([ev]);
+  return ev;
+}
+
 export async function processSurpriseResult(gameweekId, kind, type, config, label) {
   const results = await getAllSurpriseResults(gameweekId);
   if (results.length === 0) return null;

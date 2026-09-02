@@ -88,13 +88,7 @@ export default {
     "nextIndex": 9,
     "files": {
       "1": "1.png",
-      "2": "2.png",
-      "3": "3.png",
-      "4": "4.png",
-      "5": "5.png",
-      "6": "A_DOUA_DOAR.jpg",
-      "7": "file_00000000049c820a8015bce9e6a9ddb7.png",
-      "8": "PRIMA_DOAR.jpg"
+      "7": "file_00000000049c820a8015bce9e6a9ddb7.png"
     }
   },
   "ooo-micea": {

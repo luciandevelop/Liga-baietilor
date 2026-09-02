@@ -1,1 +1,29 @@
+name: Sincronizare API-Football (live)
 
+# Interval 10 minute — minim tehnic permis de GitHub e 5, dar 10 lasă
+# marjă bugetului de 100/zi și e mai robust la întârzierile best-effort
+# ale scheduler-ului GitHub (documentat: joburi orare care n-au rulat
+# deloc timp de ore întregi în perioade de încărcare mare). Acceptăm
+# asta — pentru o aplicație privată, live la 5-10 minute e suficient.
+#
+# GitHub NU are nevoie de API_FOOTBALL_KEY — Vercel face fetch-ul.
+# GitHub trebuie DOAR să știe URL-ul rutei și CRON_SECRET (Settings →
+# Secrets and variables → Actions → New repository secret).
+#
+# URL-ul poate fi public fără risc — orice apel fără CRON_SECRET corect
+# primește 401, imediat, fără să atingă API-Football deloc.
+
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch: {}
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 1
+    steps:
+      - name: Apel către funcția Vercel
+        run: |
+          curl -sf -X POST "https://baietilor.vercel.app/api/football-sync" \
+            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}"

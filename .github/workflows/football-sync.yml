@@ -12,5 +12,4 @@ jobs:
     steps:
       - name: Apel catre functia Vercel
         run: |
-          curl -s -o /tmp/response.txt -w "HTTP STATUS: %{http_code}\n" -X POST "https://baietilor.vercel.app/api/football-sync" -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}"
-          cat /tmp/response.txt
+          curl -sf -X POST "https://liga-baietilor.vercel.app/api/football-sync" -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}"

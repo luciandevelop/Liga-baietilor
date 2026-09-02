@@ -85,9 +85,15 @@ export default {
     }
   },
   "luck87": {
-    "nextIndex": 9,
+    "nextIndex": 15,
     "files": {
-      "1": "1.png"
+      "1": "1.png",
+      "9": "file_000000000d248246aac5dd466e63b7d5.png",
+      "10": "file_0000000014ac82469b52db7e2278110c.png",
+      "11": "file_00000000414c8246a0bf84e0396c0f1f.png",
+      "12": "file_00000000a7a48246ae3036d4c3e51449.png",
+      "13": "file_00000000d8d08246a32e5e2322e6b719.png",
+      "14": "file_00000000e5c882469d1754d4fae3d0a3.png"
     }
   },
   "ooo-micea": {

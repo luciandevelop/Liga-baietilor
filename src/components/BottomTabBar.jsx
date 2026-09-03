@@ -24,10 +24,12 @@ const ICONS = {
       <path d="M12 2l2.6 5.9 6.4.6-4.8 4.3 1.4 6.2L12 15.9 6.4 19l1.4-6.2-4.8-4.3 6.4-.6L12 2z" stroke={c} strokeWidth="1.6" strokeLinejoin="round" />
     </svg>
   ),
-  profil: (c) => (
+  surpriza: (c) => (
     <svg width="19" height="19" viewBox="0 0 24 24" fill="none">
-      <circle cx="12" cy="8" r="3.5" stroke={c} strokeWidth="1.6" />
-      <path d="M5 20c1.5-4 4.5-6 7-6s5.5 2 7 6" stroke={c} strokeWidth="1.6" strokeLinecap="round" />
+      <rect x="4" y="9" width="16" height="11" rx="1.5" stroke={c} strokeWidth="1.6" />
+      <path d="M4 13h16" stroke={c} strokeWidth="1.6" />
+      <path d="M12 9v11" stroke={c} strokeWidth="1.6" />
+      <path d="M12 9c-1.2-3-3-4-4.2-3.2C6.4 6.6 7 9 12 9zM12 9c1.2-3 3-4 4.2-3.2C17.6 6.6 17 9 12 9z" stroke={c} strokeWidth="1.6" strokeLinejoin="round" />
     </svg>
   ),
 };
@@ -37,7 +39,7 @@ const ITEMS = [
   { id: "pronosticuri", label: "Pronosticuri" },
   { id: "clasament", label: "Clasament" },
   { id: "speciale", label: "Speciale" },
-  { id: "profil", label: "Profil" },
+  { id: "surpriza", label: "Surpriza" },
 ];
 
 export default function BottomTabBar({ active, onChange }) {

@@ -7,8 +7,12 @@ import {
   loadUserJoker,
   saveJoker,
   deleteJoker,
+  loadUserJokerExtra,
+  saveJokerExtra,
+  deleteJokerExtra,
   isMatchLocked,
 } from "../services/predictionsService";
+import { checkJokerExtraEligibility } from "../services/surprisesService";
 import { listenMatches } from "../services/adminService";
 import { getMatchStatus } from "../utils/matchStatus";
 import MatchPredictionCard from "../components/MatchPredictionCard";
@@ -37,6 +41,13 @@ export default function PredictionsScreen({ user, isAdmin, onBack, scrollToMatch
   const [joker, setJoker] = useState(null); // { matchId } | null
   const [jokerSaving, setJokerSaving] = useState(false);
   const [jokerError, setJokerError] = useState("");
+  // Joker Extra — complet separat de Jokerul normal de mai sus. Eligibil
+  // doar dacă alegerea finală din Mystery Box a căzut pe o cutie
+  // specială (verificat live, nu presupus).
+  const [jokerExtra, setJokerExtra] = useState(null); // { matchId } | null
+  const [jokerExtraEligible, setJokerExtraEligible] = useState(false);
+  const [jokerExtraSaving, setJokerExtraSaving] = useState(false);
+  const [jokerExtraError, setJokerExtraError] = useState("");
 
   // ── Subtab nou: "mine" (implicit) vs "locked" (toate pronosticurile
   // meciurilor blocate, secundar, nu concurează cu restul aplicației). ──
@@ -93,6 +104,23 @@ export default function PredictionsScreen({ user, isAdmin, onBack, scrollToMatch
       setJokerError("Nu s-a putut încărca Jokerul: " + (err.message || err.code));
     }
     setJoker(existingJoker);
+
+    // Joker Extra — eligibilitate + alegere existentă. Eșecul ăsta e la
+    // fel de "opțional" ca la Jokerul normal — nu blocăm restul paginii.
+    try {
+      const eligible = await checkJokerExtraEligibility(gw.id, user.uid);
+      setJokerExtraEligible(eligible);
+      if (eligible) {
+        const existingJokerExtra = await loadUserJokerExtra(gw.id, user.uid);
+        setJokerExtra(existingJokerExtra);
+      } else {
+        setJokerExtra(null);
+      }
+    } catch (err) {
+      console.error("Eroare la încărcarea Jokerului Extra:", err);
+      setJokerExtraEligible(false);
+      setJokerExtra(null);
+    }
 
     // ── REALTIME pe meciuri — aceeași sursă unică (listenMatches) ca Home.
     // BUG P0 reparat aici: înainte, listMatches() era o citire O SINGURĂ
@@ -219,6 +247,41 @@ export default function PredictionsScreen({ user, isAdmin, onBack, scrollToMatch
     }
   }
 
+  // ── Joker Extra — aceleași handlere, colecție separată. Constrângerea
+  // "nu poate fi pus pe același meci cu Jokerul normal" e verificată aici,
+  // înainte de scriere — nu atinge deloc handleSetJoker de mai sus.
+  async function handleSetJokerExtra(match) {
+    if (joker?.matchId === match.id) {
+      setJokerExtraError("Nu poți pune Jokerul Extra pe același meci cu Jokerul normal.");
+      return;
+    }
+    setJokerExtraSaving(true);
+    setJokerExtraError("");
+    try {
+      await saveJokerExtra({ gameweekId: gameweek.id, uid: user.uid, matchId: match.id });
+      setJokerExtra({ userId: user.uid, gameweekId: gameweek.id, matchId: match.id });
+    } catch (err) {
+      console.error("Eroare la salvarea Jokerului Extra:", err);
+      setJokerExtraError(err.message || err.code);
+    } finally {
+      setJokerExtraSaving(false);
+    }
+  }
+
+  async function handleRemoveJokerExtra() {
+    setJokerExtraSaving(true);
+    setJokerExtraError("");
+    try {
+      await deleteJokerExtra(gameweek.id, user.uid);
+      setJokerExtra(null);
+    } catch (err) {
+      console.error("Eroare la renunțarea Jokerului Extra:", err);
+      setJokerExtraError(err.message || err.code);
+    } finally {
+      setJokerExtraSaving(false);
+    }
+  }
+
   if (loadState === "loading") {
     return (
       <div style={s.page}>
@@ -257,6 +320,9 @@ export default function PredictionsScreen({ user, isAdmin, onBack, scrollToMatch
   // nu doar mutarea către un meci nou deja locked.
   const jokerMatch = joker ? matches.find((x) => x.id === joker.matchId) : null;
   const jokerMatchLocked = jokerMatch ? isMatchLocked(jokerMatch) : false;
+  // Aceeași logică, pentru Joker Extra — complet separată de cea de mai
+  // sus (variabile proprii, nu ating jokerMatch/jokerMatchLocked).
+  const jokerExtraMatch = jokerExtra ? matches.find((x) => x.id === jokerExtra.matchId) : null;
 
   const lockedMatches = matches.filter((m) => isMatchLocked(m)).sort((a, b) => b.kickoffAt.toMillis() - a.kickoffAt.toMillis());
 
@@ -284,6 +350,12 @@ export default function PredictionsScreen({ user, isAdmin, onBack, scrollToMatch
         <PageHead eyebrow={season?.name} title={gameweek.title} subtitle={`${matches.length} meciuri`} onBack={onBack} />
 
         {jokerError && <div style={s.jokerErrorBanner}>Joker: {jokerError}</div>}
+        {jokerExtraError && <div style={s.jokerErrorBanner}>Joker Extra: {jokerExtraError}</div>}
+        {jokerExtraEligible && !jokerExtra && (
+          <div style={s.jokerExtraBanner}>
+            🃏✨ Ai găsit un Joker Extra la Mystery Box! Alege un al doilea meci de dublat, pe lângă Jokerul normal.
+          </div>
+        )}
 
         {matches.length === 0 ? (
           <div style={s.emptyState}>Etapa asta nu are încă meciuri adăugate.</div>
@@ -316,6 +388,14 @@ export default function PredictionsScreen({ user, isAdmin, onBack, scrollToMatch
                   ? locked || jokerSaving
                   : isFeatured || locked || jokerSaving || Boolean(joker);
 
+                // Joker Extra — aceeași regulă de "un singur activ deodată",
+                // PLUS nu poate fi pus pe meciul care are deja Jokerul
+                // normal (verificat și în handleSetJokerExtra, la scriere).
+                const isJokerExtra = jokerExtra?.matchId === m.id;
+                const jokerExtraDisabled = isJokerExtra
+                  ? locked || jokerExtraSaving
+                  : isFeatured || locked || jokerExtraSaving || Boolean(jokerExtra) || isJoker;
+
                 return (
                   <div key={m.id} data-match-id={m.id}>
                     <MatchPredictionCard
@@ -334,6 +414,11 @@ export default function PredictionsScreen({ user, isAdmin, onBack, scrollToMatch
                       onToggleJoker={() => (isJoker ? handleRemoveJoker() : handleSetJoker(m))}
                       jokerDisabled={jokerDisabled}
                       jokerUsedElsewhereNote={!isJoker && joker && jokerMatch ? `Jokerul e activ pe ${jokerMatch.homeTeam} vs ${jokerMatch.awayTeam}` : null}
+                      jokerExtraEligible={jokerExtraEligible}
+                      isJokerExtra={isJokerExtra}
+                      onToggleJokerExtra={() => (isJokerExtra ? handleRemoveJokerExtra() : handleSetJokerExtra(m))}
+                      jokerExtraDisabled={jokerExtraDisabled}
+                      jokerExtraUsedElsewhereNote={!isJokerExtra && jokerExtra && jokerExtraMatch ? `Jokerul Extra e activ pe ${jokerExtraMatch.homeTeam} vs ${jokerExtraMatch.awayTeam}` : null}
                       currentUid={user.uid}
                     />
                     {isLive && (
@@ -443,6 +528,10 @@ const s = {
   jokerErrorBanner: {
     fontSize: 11.5, color: "#F0555A", background: "rgba(240,85,90,0.1)", border: "1px solid rgba(240,85,90,0.3)",
     borderRadius: 10, padding: "8px 12px", marginBottom: 14, fontFamily: font.body,
+  },
+  jokerExtraBanner: {
+    fontSize: 11.5, color: "#F0D060", background: "rgba(212,175,55,0.1)", border: "1px solid rgba(212,175,55,0.35)",
+    borderRadius: 10, padding: "8px 12px", marginBottom: 14, fontFamily: font.body, lineHeight: 1.5,
   },
   matchList: { display: "flex", flexDirection: "column", gap: 10 },
   finishedSection: { display: "flex", flexDirection: "column", gap: 10, marginTop: 6 },

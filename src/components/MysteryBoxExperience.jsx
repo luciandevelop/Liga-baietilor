@@ -9,6 +9,46 @@ import { color, font, radius } from "../matchdayTheme";
 
 const VALUE_COLOR = { 0: "#5B6270", 20: "#8A6A3A", 30: "#8A6A3A", 40: "#8A6A3A", 50: "#3A6E8A", 75: "#6B3A8A", 100: "#D4AF37" };
 
+// Nivele vizuale pe valoare — calculate din valoarea cutiei, nu din
+// numărul lor (funcționează identic la 30 sau 40 de cutii, sau orice
+// altă distribuție viitoare). 100 = premiu mare, cu glow auriu; 75 =
+// puternic, violet; 50 = valoros, albastru; 40/30/20 = neutru progresiv;
+// 0 = clar dezamăgitor, estompat. Fără animații noi — doar
+// glow/border/background/text, cerut explicit.
+const VALUE_TIER = { 100: "jackpot", 75: "high", 50: "good", 40: "mid", 30: "mid", 20: "mid", 0: "sad" };
+const TIER_BOX_STYLE = {
+  jackpot: {
+    border: "1px solid rgba(212,175,55,0.85)",
+    background: "linear-gradient(160deg, rgba(212,175,55,0.24), rgba(212,175,55,0.05))",
+    boxShadow: "0 0 16px -3px rgba(212,175,55,0.6)",
+  },
+  high: {
+    border: "1px solid rgba(155,92,219,0.65)",
+    background: "linear-gradient(160deg, rgba(155,92,219,0.18), rgba(155,92,219,0.04))",
+    boxShadow: "0 0 11px -3px rgba(155,92,219,0.4)",
+  },
+  good: {
+    border: "1px solid rgba(58,110,138,0.6)",
+    background: "rgba(58,110,138,0.12)",
+  },
+  mid: {
+    border: "1px solid rgba(255,255,255,0.10)",
+    background: "rgba(255,255,255,0.03)",
+  },
+  sad: {
+    border: "1px solid rgba(91,98,112,0.22)",
+    background: "rgba(255,255,255,0.015)",
+  },
+};
+const TIER_VALUE_STYLE = {
+  jackpot: { fontSize: 13, fontWeight: 900, color: "#F0D060", textShadow: "0 0 6px rgba(240,208,96,0.55)" },
+  high: { fontSize: 12, fontWeight: 800, color: "#C79EF0" },
+  good: { fontSize: 11.5, fontWeight: 800, color: "#7FB8DE" },
+  mid: { fontSize: 11, fontWeight: 700, color: "#B8A278" },
+  sad: { fontSize: 10.5, fontWeight: 600, color: "#5B6270" },
+};
+function tierOf(value) { return VALUE_TIER[value] || "mid"; }
+
 // Componentă auto-suficientă (ca TriviaExperience/DiceExperience) — nu
 // depinde de `profiles` din SurprisesScreen (construit acolo doar pentru
 // participanții CUNOSCUȚI dinainte — Duel, Sabotaj etc.). La Mystery Box
@@ -54,6 +94,19 @@ export default function MysteryBoxExperience({ gameweekId, uid, allBoxesRevealed
   const myPickCount = myPicks.length;
   const myFinalPick = myPicks[myPicks.length - 1];
   const canPickMore = myPickCount < 2;
+
+  // Distribuția — calculată STRICT din `board` (configurația reală,
+  // înghețată per etapă — 30, 40 sau orice alt total viitor) și din
+  // `picksByBox` (cutiile deja alese). Niciun număr hardcodat separat —
+  // dacă distribuția din MYSTERY_BOX_VALUES se schimbă vreodată, panoul
+  // se recalculează singur, corect, fără nicio altă atingere de cod.
+  const totalCounts = {};
+  const remainingCounts = {};
+  board.forEach((v, idx) => {
+    totalCounts[v] = (totalCounts[v] || 0) + 1;
+    if (!picksByBox[idx]) remainingCounts[v] = (remainingCounts[v] || 0) + 1;
+  });
+  const distributionValues = Object.keys(totalCounts).map(Number).sort((a, b) => b - a);
 
   async function handleConfirmPick() {
     if (pendingBox === null) return;
@@ -102,12 +155,28 @@ export default function MysteryBoxExperience({ gameweekId, uid, allBoxesRevealed
         </div>
       )}
 
+      <div style={s.distroPanel}>
+        <div style={s.distroTitle}>DISTRIBUȚIA CUTIILOR</div>
+        <div style={s.distroGrid}>
+          {distributionValues.map((v) => {
+            const tier = tierOf(v);
+            return (
+              <div key={v} style={{ ...s.distroChip, ...TIER_BOX_STYLE[tier] }}>
+                <span style={{ ...s.distroValue, ...TIER_VALUE_STYLE[tier] }}>{v}p</span>
+                <span style={s.distroCount}>×{totalCounts[v]} inițial · {remainingCounts[v] || 0} rămase</span>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
       <div style={s.grid}>
         {board.map((value, idx) => {
           const pick = picksByBox[idx];
           const isMine = pick?.uid === uid;
           const isClickable = !resolved && canPickMore && !pick;
           const showValue = !!pick || (allBoxesRevealed && !pick);
+          const tier = tierOf(value);
           // Public, pentru ORICINE se uită — nu doar pentru proprietar:
           // o cutie e "rejucată" dacă e prima alegere a lui `pick.uid`
           // ȘI acel jucător are și o a doua. A doua alegere (pickNumber
@@ -124,9 +193,13 @@ export default function MysteryBoxExperience({ gameweekId, uid, allBoxesRevealed
               onClick={() => isClickable && setPendingBox(idx)}
               style={{
                 ...s.box,
-                ...(pick ? (isMine ? s.boxMine : s.boxTaken) : {}),
+                // Codificarea vizuală pe valoare se aplică ORICÂND cutia
+                // e vizibilă — aleasă SAU dezvăluită de Admin la final —
+                // exact aceeași, ca să fie clar "ce a rămas pe masă".
+                ...(showValue ? TIER_BOX_STYLE[tier] : {}),
+                ...(pick && isMine ? s.boxMineRing : {}),
                 ...(wasRerolled ? s.boxRefused : {}),
-                ...(allBoxesRevealed && !pick ? s.boxUnclaimedRevealed : {}),
+                ...(!isClickable ? { cursor: "default" } : {}),
                 ...(isClickable ? { animation: "boxWiggle 2.2s ease-in-out infinite" } : {}),
               }}
             >
@@ -135,12 +208,12 @@ export default function MysteryBoxExperience({ gameweekId, uid, allBoxesRevealed
                 <>
                   <PlayerAvatar avatarId={profiles[pick.uid]?.avatarId} nickname={profiles[pick.uid]?.nickname} size={26} />
                   <span style={s.boxName}>{profiles[pick.uid]?.nickname || pick.uid}</span>
-                  <span style={{ ...s.boxValue, color: wasRerolled ? "#8A6A6A" : (VALUE_COLOR[value] || "#fff"), ...(wasRerolled ? s.boxValueRefused : {}) }}>{value}p</span>
+                  <span style={{ ...s.boxValue, ...TIER_VALUE_STYLE[tier], ...(wasRerolled ? { color: "#8A6A6A", ...s.boxValueRefused } : {}) }}>{value}p</span>
                   {wasRerolled && <span style={s.refusedTag}>rejucată</span>}
                   {isFinalPick && <span style={s.finalTag}>finală</span>}
                 </>
               ) : showValue ? (
-                <span style={{ ...s.boxValue, color: VALUE_COLOR[value] || "#fff", opacity: 0.5 }}>{value}p</span>
+                <span style={{ ...s.boxValue, ...TIER_VALUE_STYLE[tier], opacity: 0.75 }}>{value}p</span>
               ) : (
                 <span style={s.boxMystery}>🎁</span>
               )}
@@ -209,6 +282,25 @@ const s = {
   decideBtnRow: {},
   keepNote: { fontSize: 10, color: color.textFaint, fontFamily: font.body },
 
+  // ── Panoul de distribuție — afișat mereu, deasupra grilei. Chip-urile
+  // refolosesc exact aceeași codificare de culoare/glow ca și cutiile
+  // (TIER_BOX_STYLE/TIER_VALUE_STYLE), ca legătura vizuală să fie clară.
+  distroPanel: {
+    background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.08)",
+    borderRadius: radius.md, padding: "10px 10px 8px", marginBottom: 12,
+  },
+  distroTitle: {
+    fontSize: 9.5, fontWeight: 800, letterSpacing: "0.06em", color: color.textFaint,
+    fontFamily: font.body, marginBottom: 8, textAlign: "center",
+  },
+  distroGrid: { display: "flex", flexWrap: "wrap", gap: 6, justifyContent: "center" },
+  distroChip: {
+    display: "flex", flexDirection: "column", alignItems: "center", gap: 1,
+    borderRadius: radius.sm, padding: "5px 8px", minWidth: 64,
+  },
+  distroValue: { fontFamily: font.display, lineHeight: 1.1 },
+  distroCount: { fontSize: 8, color: color.textFaint, fontFamily: font.body, lineHeight: 1.3 },
+
   grid: { display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 7 },
   box: {
     position: "relative", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 2,
@@ -217,12 +309,14 @@ const s = {
   },
   boxNum: { position: "absolute", top: 2, left: 4, fontSize: 8, color: color.textFaint, fontFamily: font.body },
   boxMystery: { fontSize: 18 },
-  boxMine: { background: "rgba(139,217,87,0.10)", border: "1px solid rgba(139,217,87,0.4)" },
-  boxTaken: { background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.12)", cursor: "default" },
-  boxUnclaimedRevealed: { background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.08)", cursor: "default" },
+  // Inel discret (outline, nu background) pentru "cutia mea" — nu mai
+  // acoperă culoarea de tier a valorii, doar adaugă un contur verde.
+  boxMineRing: { outline: "1.5px solid rgba(139,217,87,0.8)", outlineOffset: "-1.5px" },
   // Cutie rejucată — clar respinsă, ca să nu pară un al doilea premiu
-  // valabil: fundal/bordură estompate peste orice altă culoare de bază.
-  boxRefused: { background: "rgba(255,255,255,0.02)", border: "1px solid rgba(240,85,90,0.25)", opacity: 0.55 },
+  // valabil: fundal/bordură estompate peste orice altă culoare de bază,
+  // și anulează glow-ul de tier (boxShadow: none), indiferent cât de
+  // valoroasă era cutia.
+  boxRefused: { background: "rgba(255,255,255,0.02)", border: "1px solid rgba(240,85,90,0.25)", boxShadow: "none", opacity: 0.55 },
   boxName: {
     fontSize: 8, fontWeight: 700, color: color.textPrimary, fontFamily: font.body, textAlign: "center",
     overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: "100%",

@@ -215,7 +215,12 @@ export default function LeaderboardScreen({ onBack, user, isAdmin }) {
     }
 
     refresh(true);
-    const interval = setInterval(() => refresh(false), 30000); // reîmprospătare periodică — nu onSnapshot (calcul multi-query, nu un singur query)
+    // Interval mărit de la 30s la 2 minute — diagnosticul recalculează
+    // clasamentul live de la zero de fiecare dată (toți userii activi +
+    // toate meciurile etapei), cost real pe Firestore. Clasamentul
+    // rămâne suficient de proaspăt (scorurile reale nu se schimbă mai
+    // des de-atât oricum), dar de 4x mai puține citiri cât stai pe ecran.
+    const interval = setInterval(() => refresh(false), 120000);
     return () => { cancelled = true; clearInterval(interval); };
   }, [gameweek?.id, gameweek?.status]);
 

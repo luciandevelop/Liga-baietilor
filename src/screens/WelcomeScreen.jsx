@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { getCurrentSeason, getCurrentGameweek, loadUserPredictions, loadUserJoker, loadUserJokerExtra, isMatchLocked } from "../services/predictionsService";
 import { listenMatches, listenLiveGameweekScores, listGameweekScores, getUserSeasonPoints } from "../services/adminService";
 import { getUserPublicProfiles } from "../services/profilesService";
-import { processRankChanges, processFinishedMatches, processJokerActivation, processUpcomingMatches, loadFullFeed, processSurpriseCreated, processSurpriseMatchup, processSurpriseResult, processExternalMatchDelta, processMatchIntelligence, processDailyFillerIfQuiet, processClubFactsForMatch } from "../services/feedService";
+import { processRankChanges, processFinishedMatches, processJokerActivation, processUpcomingMatches, getHomeFeedTop, processSurpriseCreated, processSurpriseMatchup, processSurpriseResult, processExternalMatchDelta, processMatchIntelligence, processDailyFillerIfQuiet, processClubFactsForMatch } from "../services/feedService";
 import { doc, getDoc } from "firebase/firestore";
 import { db } from "../firebase";
 import useNow from "../hooks/useNow";
@@ -71,11 +71,43 @@ export default function WelcomeScreen({ user, profile, isAdmin, onOpenAdmin, onO
   const [revealMatch, setRevealMatch] = useState(null); // meciul LIVE deschis cu 👁, sau null
   const [surpriseTeaser, setSurpriseTeaser] = useState(null); // { mainLabel, bonusLabel } | null
   const processedJokersRef = useRef(new Set());
+  // Cache local — joker-ul/joker extra ale userului curent nu se schimbă
+  // din update-uri EXTERNE de meciuri; le citim o singură dată per
+  // montare (nu la fiecare re-fire a listenMatches), la fel ca la
+  // predicțiile proprii (predictionsLoadedRef, mai jos).
+  const jokerFetchedRef = useRef(false);
+  const cachedJokerRef = useRef(null);
+  const cachedJokerExtraRef = useRef(null);
+  // Throttle pentru refreshFeedTop — sunt peste 8 locuri diferite care
+  // pot cere o reîmprospătare aproape simultan (meci terminat, Joker,
+  // Joker Extra, clasament, surpriză, fapte de club...). Fără asta,
+  // fiecare declanșează propria citire de Feed. Cu throttle, indiferent
+  // câte cereri vin într-o fereastră scurtă, se face O SINGURĂ citire
+  // reală, cel mult o dată la FEED_THROTTLE_MS.
+  const feedThrottleRef = useRef({ pending: false, lastRun: 0 });
+  const FEED_THROTTLE_MS = 20000;
 
   async function refreshFeedTop() {
+    const state = feedThrottleRef.current;
+    if (state.pending) return; // deja programată o reîmprospătare — nu mai adăugăm alta
+    const elapsed = Date.now() - state.lastRun;
+    if (elapsed >= FEED_THROTTLE_MS) {
+      state.lastRun = Date.now();
+      await doRefreshFeedTop();
+    } else {
+      state.pending = true;
+      setTimeout(async () => {
+        state.pending = false;
+        state.lastRun = Date.now();
+        await doRefreshFeedTop();
+      }, FEED_THROTTLE_MS - elapsed);
+    }
+  }
+
+  async function doRefreshFeedTop() {
     try {
-      const { merged } = await loadFullFeed();
-      setFeedTop(merged.slice(0, 8));
+      const { merged } = await getHomeFeedTop({ max: 8 });
+      setFeedTop(merged);
     } catch (err) {
       console.error("Eroare la reîmprospătarea Feed-ului:", err);
     }
@@ -134,31 +166,45 @@ export default function WelcomeScreen({ user, profile, isAdmin, onOpenAdmin, onO
         // reveal, nu una nouă, inventată. Cu userii activi deschizând
         // aplicația de-a lungul etapei, toate jokerele ajung publicate
         // treptat, fiecare de pe propriul client.
-        loadUserJoker(gw.id, user.uid).then(async (j) => {
-          if (!j || processedJokersRef.current.has(`${j.gameweekId}_${j.userId}`)) return;
-          const jm = m.find((x) => x.id === j.matchId);
-          if (!jm || !isMatchLocked(jm)) return; // privacy: nedezvăluit înainte de lock
-          processedJokersRef.current.add(`${j.gameweekId}_${j.userId}`);
-          const nickname = profile?.nickname || user.uid;
-          await processJokerActivation(j, jm, nickname);
-          refreshFeedTop();
-        }).catch((err) => console.error("Eroare Feed joker propriu:", err));
+        //
+        // COST FIRESTORE: citit O SINGURĂ DATĂ per montare (guard
+        // jokerFetchedRef), nu la fiecare re-fire a listenMatches —
+        // joker-ul PROPRIU nu se schimbă din update-uri externe de
+        // meciuri, doar starea de "blocat" a meciului lui se schimbă,
+        // iar aceea vine oricum din `m`, deja citit gratuit aici.
+        (async () => {
+          if (!jokerFetchedRef.current) {
+            jokerFetchedRef.current = true;
+            cachedJokerRef.current = await loadUserJoker(gw.id, user.uid).catch((err) => { console.error("Eroare citire Joker propriu:", err); return null; });
+            cachedJokerExtraRef.current = await loadUserJokerExtra(gw.id, user.uid).catch((err) => { console.error("Eroare citire Joker Extra propriu:", err); return null; });
+          }
+          const j = cachedJokerRef.current;
+          if (j && !processedJokersRef.current.has(`${j.gameweekId}_${j.userId}`)) {
+            const jm = m.find((x) => x.id === j.matchId);
+            if (jm && isMatchLocked(jm)) { // privacy: nedezvăluit înainte de lock
+              processedJokersRef.current.add(`${j.gameweekId}_${j.userId}`);
+              const nickname = profile?.nickname || user.uid;
+              await processJokerActivation(j, jm, nickname);
+              refreshFeedTop();
+            }
+          }
 
-        // Joker Extra — EXACT același mecanism de auto-publicare ca mai
-        // sus (fiecare user citește DOAR propriul Joker Extra, id exact,
-        // publică abia după lock), doar cu cheia de dedup marcată
-        // "_extra" ca să nu se confunde cu Jokerul normal în același Set.
-        // Reutilizează processJokerActivation existent (isExtra=true) —
-        // niciun eveniment nou de Feed, doar textul diferă.
-        loadUserJokerExtra(gw.id, user.uid).then(async (je) => {
-          if (!je || processedJokersRef.current.has(`${je.gameweekId}_${je.userId}_extra`)) return;
-          const jem = m.find((x) => x.id === je.matchId);
-          if (!jem || !isMatchLocked(jem)) return;
-          processedJokersRef.current.add(`${je.gameweekId}_${je.userId}_extra`);
-          const nickname = profile?.nickname || user.uid;
-          await processJokerActivation(je, jem, nickname, true);
-          refreshFeedTop();
-        }).catch((err) => console.error("Eroare Feed joker extra propriu:", err));
+          // Joker Extra — EXACT același mecanism de auto-publicare ca mai
+          // sus, doar cu cheia de dedup marcată "_extra" ca să nu se
+          // confunde cu Jokerul normal în același Set. Reutilizează
+          // processJokerActivation existent (isExtra=true) — niciun
+          // eveniment nou de Feed, doar textul diferă.
+          const je = cachedJokerExtraRef.current;
+          if (je && !processedJokersRef.current.has(`${je.gameweekId}_${je.userId}_extra`)) {
+            const jem = m.find((x) => x.id === je.matchId);
+            if (jem && isMatchLocked(jem)) {
+              processedJokersRef.current.add(`${je.gameweekId}_${je.userId}_extra`);
+              const nickname = profile?.nickname || user.uid;
+              await processJokerActivation(je, jem, nickname, true);
+              refreshFeedTop();
+            }
+          }
+        })();
 
         // Predicțiile proprii — au nevoie de ID-urile reale ale meciurilor,
         // disponibile abia aici (realtime). O singură dată e suficient
@@ -322,9 +368,14 @@ export default function WelcomeScreen({ user, profile, isAdmin, onOpenAdmin, onO
   // doar CITEȘTE cache-ul (niciun apel direct la API-Football de-aici)
   // și transformă noutățile în povești Feed. "Enhancement, nu
   // dependency" — dacă cache-ul lipsește/e vechi, nu se întâmplă nimic
-  // rău, Feed-ul intern continuă normal. Interval blând (2 min) cât
-  // timp aplicația e deschisă — suficient pentru "aproximativ 5-10
-  // minute", acceptat explicit. ──
+  // rău, Feed-ul intern continuă normal.
+  //
+  // Interval aliniat la cadența REALĂ a sincronizării server-side (10
+  // minute) — era 2 minute, adică 4-5 citiri client pentru fiecare
+  // scriere server, din care 3-4 citeau mereu ACELAȘI conținut
+  // neschimbat. Cu 10 minute, fiecare citire client are șanse reale să
+  // găsească ceva nou, fără nicio pierdere reală de prospețime (oricum
+  // nu poate fi mai proaspăt decât ultima sincronizare server). ──
   useEffect(() => {
     if (!gameweek || matches.length === 0) return;
     const mappedMatches = matches.filter((m) => m.externalFixtureId);
@@ -352,7 +403,7 @@ export default function WelcomeScreen({ user, profile, isAdmin, onOpenAdmin, onO
       }
     }
     pollExternal();
-    const intervalId = setInterval(pollExternal, 2 * 60 * 1000);
+    const intervalId = setInterval(pollExternal, 10 * 60 * 1000);
     return () => { cancelled = true; clearInterval(intervalId); };
   }, [gameweek, matches]);
 

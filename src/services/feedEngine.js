@@ -491,6 +491,58 @@ export function buildMatchFinalEvent(match, exactScorers = [], recentVariants = 
 // FAPT DE ORAȘ — card propriu, nu doar îngropat în preview-ul de meci.
 // Un singur fapt per meci, dedup pe etapă (nu se repetă), determinist
 // (pick pe id-ul meciului, nu pe conținut — stabil la refresh). ──
+// ══════════════════════════════════════════════════════════════════
+// FILLER ZILNIC — pentru zilele fără meciuri/activitate reală (între
+// etape), Feed-ul nu mai rămâne "înghețat" cu zile vechi. Un singur
+// card general (proverb/glumă), determinist pe DATA calendaristică
+// (nu pe conținut) — deci se schimbă natural în fiecare zi nouă, fără
+// să repete niciodată aceeași zi de două ori, fără Math.random. ──
+// ── CITAT — text/autor NESCHIMBATE (baza de date primită de la Lu).
+// Anti-repetiție (citat ȘI autor) gestionată de apelant (feedService.js
+// — recentQuotes, aceeași filozofie ca recentBanter). ──
+export function buildQuoteEvent(dateKey, slotIndex, quote) {
+  if (!quote) return null;
+  const id = `quote_${dateKey}_${slotIndex}`;
+  return {
+    id, type: TYPE.BANTER, subtype: "quote", ts: Date.now(),
+    importance: IMPORTANCE.FUN, actors: [], version: 2,
+    icon: "fun", important: false,
+    title: quote.text, subtitle: `— ${quote.author}`,
+    category: "fun", priority: IMPORTANCE.FUN,
+    detail: { source: "internal", origin: quote.origin },
+  };
+}
+
+export function buildDailyFillerEvent(dateKey, funItems) {
+  if (!funItems || funItems.length === 0) return null;
+  const id = `filler_${dateKey}`;
+  const item = funItems[hashSeed(id) % funItems.length];
+  return {
+    id, type: TYPE.BANTER, subtype: "daily_filler", ts: Date.now(),
+    importance: IMPORTANCE.FUN, actors: [], version: 2,
+    icon: "fun", important: false,
+    title: item.text, subtitle: item.label || null,
+    category: "fun", priority: IMPORTANCE.FUN,
+    detail: { source: "internal" },
+  };
+}
+
+// ── CLUB FACT — matchup (ambele echipe) sau individual (o echipă),
+// din baza structurată în clubFactsContent.js. ──
+export function buildClubFactEvent(match, fact, kind) {
+  if (!fact) return null;
+  const id = `clubfact_${match.id}_${fact.id}`;
+  const label = kind === "matchup" ? "MATCHUP" : fact.club?.toUpperCase() || "COMPETIȚIE";
+  return {
+    id, type: TYPE.FACT, subtype: "club", ts: Date.now(),
+    importance: kind === "matchup" ? 60 : 45, actors: [], version: 2,
+    icon: "city", important: false,
+    title: `${fact.title}`, subtitle: fact.text,
+    category: "fun", priority: kind === "matchup" ? 60 : 45,
+    detail: { matchId: match.id, factId: fact.id, kind, exclusiveGroup: fact.exclusiveGroup, source: "internal" },
+  };
+}
+
 export function buildCityFactEvent(match, cityFact) {
   if (!cityFact) return null;
   return {

@@ -6,7 +6,7 @@ import { db } from "../firebase";
 import {
   detectRankChangeEvents, aggregateRankStory, buildMatchFinalEvent, buildJokerEvent,
   buildUpcomingMatchEvent, buildLiveMatchEvent, buildExternalLiveEvent, attachBanter, mergeFeedEvents, TYPE,
-  buildCityFactEvent, buildSurpriseCreatedEvent, buildSurpriseMatchupEvent,
+  buildCityFactEvent, buildClubFactEvent, buildDailyFillerEvent, buildQuoteEvent, buildSurpriseCreatedEvent, buildSurpriseMatchupEvent,
   buildSurpriseProgressEvent, buildSurpriseResultEvent, buildSurpriseRewardEvent, pick,
   buildLineupEvent, buildH2HFact, buildFormFact, buildInjuryEvent, buildApiPredictionEvent,
 } from "./feedEngine";
@@ -28,6 +28,9 @@ import { listGeneralLeaderboard, listAllUsers, listActiveUserIds } from "./admin
 import { getAllSurpriseResults } from "./surprisesService";
 import { getUserPublicProfiles } from "./profilesService";
 import { EDITORIAL_ARTICLES } from "../feedContent/editorialContent";
+import { ALL_QUOTES } from "../feedContent/quotesContent";
+import { CLUB_FACTS } from "../feedContent/clubFactsContent";
+import { selectClubFactsForMatch, isClubFactWindowActive } from "./clubFactsEngine";
 import { FUN_ITEMS } from "../feedContent/funContent";
 import { CLUB_ALIASES } from "../assets/clubs/index.js";
 import { slugify } from "../utils/slugify";
@@ -648,6 +651,161 @@ export async function processExternalMatchDelta(match, cacheDoc) {
   }
 
   if (events.length > 0) await saveFeedEvents(events);
+  return events;
+}
+
+// ── Filler zilnic — apelat de client la fiecare deschidere de Home.
+// NU publică orbește: verifică întâi dacă a existat activitate REALĂ
+// (orice tip de eveniment, nu doar filler-e vechi) în ultimele ~6h —
+// prag mai mic decât înainte, ca să încapă 3 sloturi/zi cerute
+// explicit, fără să suprapună conținut real (dacă etapa-i vie, orice
+// eveniment real din ultimele 6h oprește complet filler-ul).
+//
+// Mix: ~20% citate (autor NEREPETAT în ultimele MAX_RECENT_AUTHORS),
+// ~25% fapte club/oraș (din editorialContent.js, deja existent),
+// restul proverbe/glume (funContent.js) — ponderi din cerința explicită,
+// nu matematic exacte, doar direcție de diversitate. ──
+const RECENT_QUOTE_AUTHORS_DOC = doc(db, "feedState", "recentQuoteAuthors");
+const MAX_RECENT_AUTHORS = 8;
+
+async function getRecentQuoteAuthors() {
+  const snap = await getDoc(RECENT_QUOTE_AUTHORS_DOC);
+  return snap.exists() ? snap.data().authors || [] : [];
+}
+async function markQuoteAuthorUsed(author, recentList) {
+  const next = [author, ...recentList.filter((a) => a !== author)].slice(0, MAX_RECENT_AUTHORS);
+  await setDoc(RECENT_QUOTE_AUTHORS_DOC, { authors: next, updatedAt: serverTimestamp() });
+}
+
+function pickQuoteAvoidingAuthors(seed, recentAuthors) {
+  const recentSet = new Set(recentAuthors);
+  const candidates = ALL_QUOTES.filter((q) => !recentSet.has(q.author));
+  const pool = candidates.length > 0 ? candidates : ALL_QUOTES; // dacă am epuizat autorii noi, reluăm din tot
+  return pool[hashSeedLocal(seed) % pool.length];
+}
+
+function pickEditorialFact(seed) {
+  const facts = EDITORIAL_ARTICLES.filter((a) => a.title === "Despre echipă" || a.title === "Despre oraș");
+  if (facts.length === 0) return null;
+  return facts[hashSeedLocal(seed) % facts.length];
+}
+
+const MAX_DAILY_SLOTS = 3;
+const MIN_GAP_BETWEEN_SLOTS_MS = 4 * 3600 * 1000; // spațiere minimă, ca 3/zi să nu vină îngrămădite
+
+export async function processDailyFillerIfQuiet() {
+  const recentSnap = await getDocs(query(collection(db, "feedEvents"), orderBy("ts", "desc"), fbLimit(1)));
+  const mostRecent = recentSnap.docs[0]?.data();
+  const QUIET_THRESHOLD_MS = 6 * 3600 * 1000;
+  if (mostRecent && Date.now() - mostRecent.ts < QUIET_THRESHOLD_MS && mostRecent.category !== "fun") return null;
+
+  const dateKey = new Date().toISOString().slice(0, 10);
+  const todaySnap = await getDocs(query(collection(db, "feedEvents"), where("detail.fillerDateKey", "==", dateKey)));
+  const slotsUsedToday = todaySnap.size;
+  if (slotsUsedToday >= MAX_DAILY_SLOTS) return null;
+
+  const lastFillerTs = todaySnap.docs.reduce((max, d) => Math.max(max, d.data().ts || 0), 0);
+  if (lastFillerTs > 0 && Date.now() - lastFillerTs < MIN_GAP_BETWEEN_SLOTS_MS) return null;
+
+  const slotIndex = slotsUsedToday;
+  const slotSeed = `${dateKey}_slot${slotIndex}`;
+  // Ponderi ~20% citat / ~25% fapt / ~55% glumă-proverb — determinist pe slot, nu Math.random.
+  const roll = hashSeedLocal(slotSeed) % 100;
+
+  let ev = null;
+  if (roll < 20) {
+    const recentAuthors = await getRecentQuoteAuthors();
+    const quote = pickQuoteAvoidingAuthors(slotSeed, recentAuthors);
+    ev = buildQuoteEvent(dateKey, slotIndex, quote);
+    if (ev) { ev.detail.fillerDateKey = dateKey; await markQuoteAuthorUsed(quote.author, recentAuthors); }
+  } else if (roll < 45) {
+    const fact = pickEditorialFact(slotSeed);
+    if (fact) {
+      ev = {
+        id: `dailyfact_${dateKey}_${slotIndex}`, type: "fact", subtype: "daily_club_fact", ts: Date.now(),
+        importance: 42, actors: [], version: 2, icon: "fun", important: false,
+        title: fact.subtitle || fact.title, subtitle: fact.body || null,
+        category: "fun", priority: 42, detail: { source: "internal", fillerDateKey: dateKey },
+      };
+    }
+  }
+  if (!ev) {
+    ev = buildDailyFillerEvent(`${dateKey}_${slotIndex}`, FUN_ITEMS);
+    if (ev) ev.detail.fillerDateKey = dateKey;
+  }
+
+  if (!ev) return null;
+  await saveFeedEvents([ev]);
+  return ev;
+}
+
+// ── CLUB FACTS — istoric PERSISTENT în Firestore (nu doar state
+// temporar în browser, cerut explicit — supraviețuiește refresh/
+// regenerare/redeschiderea aplicației). Un document per fapt folosit,
+// în feedState/clubFactHistory/{factId}. ──
+const CLUB_FACT_HISTORY_COLLECTION = "clubFactHistory";
+const EXCLUSIVE_GROUP_COOLDOWN_MS = 14 * 24 * 3600 * 1000; // ~2 săptămâni înainte să poată reveni ceva din același grup
+
+export async function processClubFactsForMatch(match, now = Date.now()) {
+  const kickoffMs = match.kickoffAt?.toMillis ? match.kickoffAt.toMillis() : null;
+  if (!kickoffMs || !isClubFactWindowActive(kickoffMs, now)) return [];
+
+  const historySnap = await getDocs(collection(db, "feedState", "clubFactHistory", "items"));
+  const history = {};
+  historySnap.docs.forEach((d) => {
+    const data = d.data();
+    history[d.id] = {
+      shownCount: data.shownCount || 0,
+      lastShownAt: data.lastShownAt || 0,
+      usedInThisWindow: data.lastMatchIdUsedFor === match.id,
+      exclusiveGroupRecentlyUsed: false,
+    };
+  });
+
+  // BUG REAL GĂSIT PRIN TESTARE (regenerare): dacă acest meci ANUME a
+  // avut deja o selecție publicată, o a doua rulare alegea fapte
+  // DIFERITE (fiindcă doar faptul exact folosit era exclus, nu tot
+  // meciul) — două informații diferite despre aceeași echipă pentru
+  // ACELAȘI meci, exact interzis explicit. Acum: dacă meciul a fost
+  // deja procesat, nu se mai reface selecția — idempotent per meci,
+  // nu doar per fapt individual.
+  const alreadyProcessedForThisMatch = Object.values(history).some((h) => h.usedInThisWindow);
+  if (alreadyProcessedForThisMatch) return [];
+
+  // Marcăm grupurile exclusive folosite recent (cooldown), pe TOATE faptele din acel grup.
+  const recentGroups = new Set();
+  historySnap.docs.forEach((d) => {
+    const data = d.data();
+    if (data.exclusiveGroup && now - (data.lastShownAt || 0) < EXCLUSIVE_GROUP_COOLDOWN_MS) recentGroups.add(data.exclusiveGroup);
+  });
+  CLUB_FACTS.forEach((f) => {
+    if (f.exclusiveGroup && recentGroups.has(f.exclusiveGroup)) {
+      history[f.id] = { ...(history[f.id] || { shownCount: 0 }), exclusiveGroupRecentlyUsed: true };
+    }
+  });
+
+  const { matchup, home, away } = selectClubFactsForMatch(CLUB_FACTS, match.homeTeam, match.awayTeam, history);
+  const events = [];
+  const usedFacts = [];
+
+  if (matchup) {
+    const ev = buildClubFactEvent(match, matchup, "matchup");
+    if (ev) { events.push(ev); usedFacts.push(matchup); }
+  } else {
+    if (home) { const ev = buildClubFactEvent(match, home, "team"); if (ev) { events.push(ev); usedFacts.push(home); } }
+    if (away) { const ev = buildClubFactEvent(match, away, "team"); if (ev) { events.push(ev); usedFacts.push(away); } }
+  }
+
+  if (events.length > 0) await saveFeedEvents(events);
+  // Persistăm istoricul — cardId, teamIds, matchupTags, lastShownAt, shownCount, lastMatchIdUsedFor.
+  for (const fact of usedFacts) {
+    const ref = doc(db, "feedState", "clubFactHistory", "items", fact.id);
+    const prevCount = history[fact.id]?.shownCount || 0;
+    await setDoc(ref, {
+      cardId: fact.id, teamIds: fact.club ? [fact.club] : fact.tags, matchupTags: fact.tags,
+      exclusiveGroup: fact.exclusiveGroup, lastShownAt: now, shownCount: prevCount + 1, lastMatchIdUsedFor: match.id,
+    }, { merge: true });
+  }
   return events;
 }
 

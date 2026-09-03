@@ -886,13 +886,31 @@ export async function deleteFunItem(id) {
 }
 
 export async function loadFullFeed() {
-  const [live, users, adminFun] = await Promise.all([listLiveFeedEvents(), listAllUsers(), listAdminFunItems()]);
+  const [live, users, adminFun] = await Promise.all([listLiveFeedEvents(), listAllUsers(), getCachedFunItems()]);
+  const fun = buildSampledFunEvents(adminFun);
+  return { merged: mergeFeedEvents(live, fun), users };
+}
 
-  // ── FUN filler — capat la câteva bucăți, NU tot poolul deodată.
-  // Cu tot poolul inclus mereu, orice etapă mai liniștită se termina
-  // cu un bloc lung, monoton, de proverbe/glume la coadă — exact
-  // "carduri similare consecutive" semnalat. Eșantion mic, rotativ
-  // determinist pe zi (stabil în aceeași zi, se schimbă a doua zi). ──
+// ── Fun items admin — se schimbă RAR (adminul adaugă unul din când în
+// când), deci nu are rost să-l recitim din Firestore la fiecare
+// reîmprospătare de Feed. Cache simplu, în memorie, cu TTL — un singur
+// refetch la 10 minute, indiferent de câte ori se cere Feed-ul. ──
+let funItemsCache = null;
+let funItemsCacheAt = 0;
+const FUN_CACHE_TTL_MS = 10 * 60 * 1000;
+async function getCachedFunItems() {
+  const now = Date.now();
+  if (funItemsCache && now - funItemsCacheAt < FUN_CACHE_TTL_MS) return funItemsCache;
+  funItemsCache = await listAdminFunItems();
+  funItemsCacheAt = now;
+  return funItemsCache;
+}
+
+// ── Eșantionul de FUN filler (3 din tot poolul, rotativ determinist pe
+// zi) — extras într-un helper comun, folosit ATÂT de loadFullFeed
+// (pagina Feed completă) CÂT ȘI de getHomeFeedTop (Home) — o singură
+// logică, nicio duplicare. ──
+function buildSampledFunEvents(adminFun) {
   const daySeed = new Date().toISOString().slice(0, 10);
   const allFun = [
     ...FUN_ITEMS.map((f) => ({ id: `fun_${f.id}`, label: f.label, text: f.text })),
@@ -902,13 +920,27 @@ export async function loadFullFeed() {
   const startIdx = hashSeedLocal(daySeed) % Math.max(allFun.length, 1);
   const sampledFun = allFun.length <= FUN_SAMPLE_SIZE ? allFun
     : Array.from({ length: FUN_SAMPLE_SIZE }, (_, i) => allFun[(startIdx + i) % allFun.length]);
-
-  const fun = sampledFun.map((f) => ({
+  return sampledFun.map((f) => ({
     id: f.id, type: TYPE.FACT, category: "fun", priority: 15, ts: Date.now(),
     icon: "fun", important: false, title: f.text, subtitle: f.label,
   }));
+}
 
-  return { merged: mergeFeedEvents(live, fun), users };
+// ── Home — versiune LIGHTWEIGHT, doar pentru cele 8 carduri afișate
+// efectiv acolo. Diferența față de loadFullFeed():
+//   • citește un buffer mic de evenimente (implicit 24, nu 150) —
+//     suficient ca algoritmul de merge/prioritate să aleagă corect
+//     primele `max`, fără să tragă tot istoricul;
+//   • NU mai citește `listAllUsers()` — verificat: Home ignora complet
+//     acel rezultat (`const { merged } = await loadFullFeed()`), deci
+//     era o citire 100% irosită pentru cazul ăsta;
+//   • fun items din cache (vezi mai sus), nu recitite de fiecare dată.
+// Feed-ul COMPLET (ecranul dedicat) rămâne pe loadFullFeed(), neschimbat.
+export async function getHomeFeedTop({ max = 8 } = {}) {
+  const buffer = Math.max(max * 3, 20);
+  const [live, adminFun] = await Promise.all([listLiveFeedEvents({ max: buffer }), getCachedFunItems()]);
+  const fun = buildSampledFunEvents(adminFun);
+  return { merged: mergeFeedEvents(live, fun).slice(0, max) };
 }
 
 export async function listRecentEventsForAdmin({ max = 50 } = {}) {

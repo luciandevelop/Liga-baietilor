@@ -1360,6 +1360,7 @@ export async function listAllUsersWithStatus() {
 // câmpuri pentru Admin).
 export async function approveUser(uid) {
   await updateDoc(doc(db, "users", uid), { status: "active" });
+  activeUserIdsCache = null; // forțează recitirea — un aprobat nou trebuie să apară imediat, nu după până la 2 min
 }
 
 // Respinge un cont "pending" -> "disabled". IMPORTANT — asta NU șterge
@@ -1370,16 +1371,19 @@ export async function approveUser(uid) {
 // ecranul dedicat pentru status "disabled").
 export async function rejectUser(uid) {
   await updateDoc(doc(db, "users", uid), { status: "disabled" });
+  activeUserIdsCache = null;
 }
 
 // Dezactivare — metoda NORMALĂ de scoatere din competiție. Istoricul
 // (predicții, scoruri) NU este atins, doar acest câmp.
 export async function deactivateUser(uid) {
   await updateDoc(doc(db, "users", uid), { status: "disabled" });
+  activeUserIdsCache = null;
 }
 
 export async function reactivateUser(uid) {
   await updateDoc(doc(db, "users", uid), { status: "active" });
+  activeUserIdsCache = null;
 }
 
 // ══════════════════════════════════════════════════════════════════
@@ -1417,10 +1421,23 @@ export async function removeMatchEvent(matchId, eventId) {
 // clasament (General, Sezon, Etapă, Live). Userii dezactivați/pending
 // dispar din clasamentele ACTIVE, dar rândurile lor istorice (gameweekScores
 // deja scrise) NU sunt șterse din Firestore — doar excluse la afișare. ──
+// ── Cache scurt — statusul activ/inactiv al userilor se schimbă RAR
+// (doar când Adminul aprobă/dezactivează pe cineva), dar funcția asta e
+// apelată des (Clasament la fiecare reîmprospătare, Home). TTL scurt
+// (2 min) — suficient să taie marea majoritate a recitirilor repetate,
+// fără să întârzie vizibil o aprobare nouă de Admin. ──
+let activeUserIdsCache = null;
+let activeUserIdsCacheAt = 0;
+const ACTIVE_UIDS_CACHE_TTL_MS = 2 * 60 * 1000;
+
 export async function listActiveUserIds() {
+  const now = Date.now();
+  if (activeUserIdsCache && now - activeUserIdsCacheAt < ACTIVE_UIDS_CACHE_TTL_MS) return activeUserIdsCache;
   const snap = await getDocs(collection(db, "users"));
   const active = new Set();
   snap.docs.forEach((d) => { if (getPlayerStatus(d.data()) === "active") active.add(d.id); });
+  activeUserIdsCache = active;
+  activeUserIdsCacheAt = now;
   return active;
 }
 

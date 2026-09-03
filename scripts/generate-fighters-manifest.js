@@ -14,6 +14,15 @@
 // zero. Manifestul generat e COMIS în git (nu doar generat la build) ca
 // Vercel să nu pornească "orb" la fiecare clonare de repo.
 //
+// CONVENȚIE DE DENUMIRE (oficială): {pachetJucător}.webp — ex.
+// public/fighters/kombat/utzy/utzy.webp — aleasă explicit ca fișierele
+// descărcate pe telefon să nu se suprascrie/redenumească accidental
+// unele pe altele (toate ar fi fost "1.webp" cu convenția veche). NU e
+// o cerință tehnică strictă — orice nume de fișier funcționează, e citit
+// din manifest, nu presupus în cod — dar generatorul avertizează (fără
+// să blocheze) dacă un fișier nu respectă convenția, ca greșelile să se
+// vadă imediat în log, nu abia când personajul nu apare.
+//
 // FALLBACK: dacă o temă sau un pachet nu are nicio imagine (încă),
 // manifestul pur și simplu nu conține acea cheie — getFighterUrl()
 // (src/assets/fighters.js) întoarce null pentru orice lookup eșuat, iar
@@ -102,6 +111,16 @@ async function main() {
       for (const filename of newFiles) {
         files[String(nextIndex)] = filename;
         additions.push(`  + "${theme}/${pack}/${nextIndex}" ← ${filename}`);
+        // Convenție oficială: fișierul ar trebui să se numească
+        // exact "{pachet}.webp" (ex: utzy/utzy.webp) — ales special
+        // ca fișierele descărcate pe telefon să nu se suprascrie
+        // între ele. NU e obligatoriu tehnic (orice nume funcționează,
+        // e citit din manifest, nu presupus în cod) — doar un
+        // avertisment, ca să prinzi din prima o greșeală de denumire.
+        const expectedName = `${pack}.webp`;
+        if (filename.toLowerCase() !== expectedName.toLowerCase()) {
+          warnings.push(`  ⚠️  "${theme}/${pack}/${filename}" — nume neconform convenției (așteptat "${expectedName}"). Funcționează oricum, dar verifică dacă nu e o confuzie.`);
+        }
         nextIndex += 1;
       }
 

@@ -1,11 +1,13 @@
 import PlayerAvatar from "./PlayerAvatar";
+import DuelFighterPortrait from "./DuelFighterPortrait";
 import { color, font, radius } from "../matchdayTheme";
 
 // ── Un rând compact per pereche — folosit pentru TOATE duelurile care NU
 // sunt al userului curent (acela are propria experiență mare, dramatică,
 // mai sus). Aceeași sursă de date (liveScores, resolved), doar prezentare
-// mult mai mică. ──
-export default function DuelMiniCard({ playerA, playerB, profiles, liveScores, resolved, results }) {
+// mult mai mică. Cu temă de Duel aleasă, avatarul rotund normal devine
+// un thumbnail dreptunghiular mic — fallback automat, ca peste tot. ──
+export default function DuelMiniCard({ playerA, playerB, profiles, liveScores, resolved, results, duelTheme }) {
   const profA = profiles[playerA] || {};
   const profB = profiles[playerB] || {};
   const scoreA = liveScores[playerA] ?? 0;
@@ -17,7 +19,11 @@ export default function DuelMiniCard({ playerA, playerB, profiles, liveScores, r
   return (
     <div style={s.row}>
       <div style={{ ...s.player, ...(leading === "a" ? s.playerLeading : {}) }}>
-        <PlayerAvatar avatarId={profA.avatarId} nickname={profA.nickname} size={28} />
+        {duelTheme ? (
+          <DuelFighterPortrait avatarId={profA.avatarId} nickname={profA.nickname} theme={duelTheme} width={22} height={28} fallbackSize={28} borderRadius={6} />
+        ) : (
+          <PlayerAvatar avatarId={profA.avatarId} nickname={profA.nickname} size={28} />
+        )}
         <span style={s.name}>{profA.nickname || playerA}</span>
         <span style={s.score}>{resolved ? `${pointsA ?? 0}p` : `${scoreA}p`}</span>
       </div>
@@ -25,7 +31,11 @@ export default function DuelMiniCard({ playerA, playerB, profiles, liveScores, r
       <div style={{ ...s.player, ...s.playerRight, ...(leading === "b" ? s.playerLeading : {}) }}>
         <span style={s.score}>{resolved ? `${pointsB ?? 0}p` : `${scoreB}p`}</span>
         <span style={s.name}>{profB.nickname || playerB}</span>
-        <PlayerAvatar avatarId={profB.avatarId} nickname={profB.nickname} size={28} />
+        {duelTheme ? (
+          <DuelFighterPortrait avatarId={profB.avatarId} nickname={profB.nickname} theme={duelTheme} width={22} height={28} fallbackSize={28} borderRadius={6} />
+        ) : (
+          <PlayerAvatar avatarId={profB.avatarId} nickname={profB.nickname} size={28} />
+        )}
       </div>
     </div>
   );

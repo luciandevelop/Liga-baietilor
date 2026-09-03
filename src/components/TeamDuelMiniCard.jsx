@@ -1,4 +1,5 @@
 import PlayerAvatar from "./PlayerAvatar";
+import DuelFighterPortrait from "./DuelFighterPortrait";
 import { color, font, radius } from "../matchdayTheme";
 
 function teamScore(members, liveScores) {
@@ -10,8 +11,9 @@ function teamScore(members, liveScores) {
 
 // ── Rând compact per confruntare de echipă — pentru grupurile care NU
 // sunt al userului curent. Suportă echipe de 2, 3 sau 4 (Duel de Echipe
-// nu mai are Bye/Duel separat, dar mărimea variază). ──
-export default function TeamDuelMiniCard({ teamA, teamB, profiles, liveScores, resolved, results }) {
+// nu mai are Bye/Duel separat, dar mărimea variază). Cu temă aleasă,
+// avatarul rotund normal devine thumbnail dreptunghiular mic. ──
+export default function TeamDuelMiniCard({ teamA, teamB, profiles, liveScores, resolved, results, duelTheme }) {
   const scoreA = teamScore(teamA, liveScores);
   const scoreB = teamScore(teamB, liveScores);
   const leading = resolved ? null : (scoreA > scoreB ? "a" : scoreA < scoreB ? "b" : "tie");
@@ -25,7 +27,11 @@ export default function TeamDuelMiniCard({ teamA, teamB, profiles, liveScores, r
     <div style={s.row}>
       <div style={{ ...s.team, ...(leading === "a" ? s.teamLeading : {}) }}>
         <div style={s.avatarsInline}>
-          {teamA.map((uid) => <PlayerAvatar key={uid} avatarId={profiles[uid]?.avatarId} nickname={profiles[uid]?.nickname} size={20} />)}
+          {teamA.map((uid) => duelTheme ? (
+            <DuelFighterPortrait key={uid} avatarId={profiles[uid]?.avatarId} nickname={profiles[uid]?.nickname} theme={duelTheme} width={16} height={20} fallbackSize={20} borderRadius={4} />
+          ) : (
+            <PlayerAvatar key={uid} avatarId={profiles[uid]?.avatarId} nickname={profiles[uid]?.nickname} size={20} />
+          ))}
         </div>
         <span style={s.names}>{namesA}</span>
         <span style={s.score}>{resolved ? `${pointsA ?? 0}p` : `${scoreA}p`}</span>
@@ -35,7 +41,11 @@ export default function TeamDuelMiniCard({ teamA, teamB, profiles, liveScores, r
         <span style={s.score}>{resolved ? `${pointsB ?? 0}p` : `${scoreB}p`}</span>
         <span style={s.names}>{namesB}</span>
         <div style={s.avatarsInline}>
-          {teamB.map((uid) => <PlayerAvatar key={uid} avatarId={profiles[uid]?.avatarId} nickname={profiles[uid]?.nickname} size={20} />)}
+          {teamB.map((uid) => duelTheme ? (
+            <DuelFighterPortrait key={uid} avatarId={profiles[uid]?.avatarId} nickname={profiles[uid]?.nickname} theme={duelTheme} width={16} height={20} fallbackSize={20} borderRadius={4} />
+          ) : (
+            <PlayerAvatar key={uid} avatarId={profiles[uid]?.avatarId} nickname={profiles[uid]?.nickname} size={20} />
+          ))}
         </div>
       </div>
     </div>

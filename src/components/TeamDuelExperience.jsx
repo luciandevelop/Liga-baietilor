@@ -1,4 +1,6 @@
 import PlayerAvatar from "./PlayerAvatar";
+import DuelFighterPortrait from "./DuelFighterPortrait";
+import { getFighterUrl } from "../assets/fighters";
 import { color, font, radius } from "../matchdayTheme";
 
 // ── Regula de scor a unei părți — identică cu ce se calculează la
@@ -18,16 +20,27 @@ function excludedUid(members, liveScores) {
   return sorted[Math.floor(members.length / 2) + 1 - 1];
 }
 
-function TeamCol({ members, excluded, leading, score, profiles }) {
+function TeamCol({ members, excluded, leading, score, profiles, duelTheme }) {
+  const fighterSize = members.length > 2 ? 42 : 54;
   return (
     <div style={{ ...s.side, ...(leading ? s.sideLeading : {}) }}>
       <div style={s.teamAvatars}>
-        {members.map((uid) => (
-          <div key={uid} style={s.avatarRing}>
-            <PlayerAvatar avatarId={profiles[uid]?.avatarId} nickname={profiles[uid]?.nickname} size={members.length > 2 ? 42 : 54} />
-            {excluded === uid && <span style={s.excludedCrown}>👑</span>}
-          </div>
-        ))}
+        {members.map((uid) => {
+          // Fallback per-membru — dacă tema e aleasă dar TOCMAI acest
+          // jucător nu are imagine, latura lui de inel rămâne rotundă,
+          // normală, nu un hibrid cu ramă de fighter goală pe dinafară.
+          const fighterUrl = duelTheme ? getFighterUrl(duelTheme, profiles[uid]?.avatarId) : null;
+          return (
+            <div key={uid} style={fighterUrl ? s.fighterRingSmall : s.avatarRing}>
+              {fighterUrl ? (
+                <DuelFighterPortrait avatarId={profiles[uid]?.avatarId} nickname={profiles[uid]?.nickname} theme={duelTheme} width={Math.round(fighterSize * 0.78)} height={Math.round(fighterSize * 1.12)} fallbackSize={fighterSize} borderRadius={7} />
+              ) : (
+                <PlayerAvatar avatarId={profiles[uid]?.avatarId} nickname={profiles[uid]?.nickname} size={fighterSize} />
+              )}
+              {excluded === uid && <span style={s.excludedCrown}>👑</span>}
+            </div>
+          );
+        })}
       </div>
       <div style={s.teamNames}>{members.map((uid) => profiles[uid]?.nickname || uid).join(" & ")}</div>
       <div style={s.score}>{score}<span style={s.scoreUnit}>p</span></div>
@@ -37,7 +50,7 @@ function TeamCol({ members, excluded, leading, score, profiles }) {
 }
 
 // ── Fallback pentru grupuri sub 4 jucători — Duel 1v1 clasic. ──
-function SingleVsSingle({ myUid, opponentUid, profiles, liveScores, resolved, myPoints }) {
+function SingleVsSingle({ myUid, opponentUid, profiles, liveScores, resolved, myPoints, duelTheme }) {
   const myProfile = profiles[myUid] || {};
   const oppProfile = profiles[opponentUid] || {};
   const myScore = liveScores[myUid] ?? 0;
@@ -48,13 +61,21 @@ function SingleVsSingle({ myUid, opponentUid, profiles, liveScores, resolved, my
     <>
       <div style={s.confrontation}>
         <div style={{ ...s.side, ...(leading === "me" ? s.sideLeading : {}) }}>
-          <PlayerAvatar avatarId={myProfile.avatarId} nickname={myProfile.nickname} size={66} />
+          {duelTheme ? (
+            <DuelFighterPortrait avatarId={myProfile.avatarId} nickname={myProfile.nickname} theme={duelTheme} width={82} height={110} fallbackSize={66} borderRadius={9} />
+          ) : (
+            <PlayerAvatar avatarId={myProfile.avatarId} nickname={myProfile.nickname} size={66} />
+          )}
           <div style={s.teamNames}>{myProfile.nickname || myUid} (tu)</div>
           <div style={s.score}>{myScore}p</div>
         </div>
         <div style={s.vsWrap}><div style={s.vsCircle}>VS</div></div>
         <div style={{ ...s.side, ...(leading === "opp" ? s.sideLeading : {}) }}>
-          <PlayerAvatar avatarId={oppProfile.avatarId} nickname={oppProfile.nickname} size={66} />
+          {duelTheme ? (
+            <DuelFighterPortrait avatarId={oppProfile.avatarId} nickname={oppProfile.nickname} theme={duelTheme} width={82} height={110} fallbackSize={66} borderRadius={9} />
+          ) : (
+            <PlayerAvatar avatarId={oppProfile.avatarId} nickname={oppProfile.nickname} size={66} />
+          )}
           <div style={s.teamNames}>{oppProfile.nickname || opponentUid}</div>
           <div style={s.score}>{oppScore}p</div>
         </div>
@@ -74,7 +95,7 @@ function SingleVsSingle({ myUid, opponentUid, profiles, liveScores, resolved, my
   );
 }
 
-export default function TeamDuelExperience({ myUid, myTeam, opponentTeam, isFallbackDuel, fallbackOpponent, isFallbackBye, profiles, liveScores, resolved, myPoints }) {
+export default function TeamDuelExperience({ myUid, myTeam, opponentTeam, isFallbackDuel, fallbackOpponent, isFallbackBye, profiles, liveScores, resolved, myPoints, duelTheme }) {
   if (isFallbackBye) {
     return (
       <div style={s.byeWrap}>
@@ -90,7 +111,7 @@ export default function TeamDuelExperience({ myUid, myTeam, opponentTeam, isFall
     return (
       <div style={s.wrap}>
         <div style={s.extraDuelNote}>Prea puțini jucători pentru echipe — Duel 1v1</div>
-        <SingleVsSingle myUid={myUid} opponentUid={fallbackOpponent} profiles={profiles} liveScores={liveScores} resolved={resolved} myPoints={myPoints} />
+        <SingleVsSingle myUid={myUid} opponentUid={fallbackOpponent} profiles={profiles} liveScores={liveScores} resolved={resolved} myPoints={myPoints} duelTheme={duelTheme} />
       </div>
     );
   }
@@ -101,6 +122,11 @@ export default function TeamDuelExperience({ myUid, myTeam, opponentTeam, isFall
   const myPreview = resolved ? myPoints : (leading === "me" ? 200 : leading === "opp" ? 0 : 100);
   const myExcluded = excludedUid(myTeam, liveScores);
   const oppExcluded = excludedUid(opponentTeam, liveScores);
+  // Banner-ul "MAIN EVENT" apare doar dacă există CEL PUȚIN un portret de
+  // luptă real de arătat — nu doar pentru că Adminul a ales o temă care
+  // încă n-are nicio imagine încărcată (ar arăta nepotrivit peste avatare
+  // normale rotunde).
+  const hasAnyFighter = duelTheme && [...myTeam, ...opponentTeam].some((uid) => !!getFighterUrl(duelTheme, profiles[uid]?.avatarId));
 
   return (
     <div style={s.wrap}>
@@ -109,11 +135,12 @@ export default function TeamDuelExperience({ myUid, myTeam, opponentTeam, isFall
         @keyframes tduGlowBg { 0%,100% { opacity: 0.5; } 50% { opacity: 0.9; } }
       `}</style>
       <div style={s.bgGlow} />
+      {hasAnyFighter && <div style={s.mainEventTag}>⚔️ MAIN EVENT</div>}
 
       <div style={s.confrontation}>
-        <TeamCol members={myTeam} excluded={myExcluded} leading={leading === "me"} score={myScore} profiles={profiles} />
+        <TeamCol members={myTeam} excluded={myExcluded} leading={leading === "me"} score={myScore} profiles={profiles} duelTheme={duelTheme} />
         <div style={s.vsWrap}><div style={s.vsCircle}><span style={s.vsShine} />VS</div></div>
-        <TeamCol members={opponentTeam} excluded={oppExcluded} leading={leading === "opp"} score={oppScore} profiles={profiles} />
+        <TeamCol members={opponentTeam} excluded={oppExcluded} leading={leading === "opp"} score={oppScore} profiles={profiles} duelTheme={duelTheme} />
       </div>
 
       {(myTeam.length > 2 || opponentTeam.length > 2) && (
@@ -155,6 +182,10 @@ const s = {
     pointerEvents: "none",
   },
   extraDuelNote: { fontSize: 10.5, color: color.textFaint, fontFamily: font.body, textAlign: "center", marginBottom: 12 },
+  mainEventTag: {
+    position: "relative", textAlign: "center", fontFamily: font.display, fontSize: 11, fontWeight: 800,
+    letterSpacing: "0.14em", color: "#FF6B70", marginBottom: 10, textShadow: "0 0 12px rgba(240,85,90,0.5)",
+  },
   confrontation: { position: "relative", display: "flex", alignItems: "flex-start", justifyContent: "center", gap: 2 },
   side: { display: "flex", flexDirection: "column", alignItems: "center", gap: 8, width: 150, padding: "10px 4px", borderRadius: radius.md, transition: "all 300ms" },
   sideLeading: { background: "rgba(139,217,87,0.09)", border: "1px solid rgba(139,217,87,0.35)", animation: "tduPulse 2s ease-in-out infinite" },
@@ -163,6 +194,13 @@ const s = {
     position: "relative", padding: 2, borderRadius: "50%",
     background: "linear-gradient(135deg, rgba(212,175,55,0.5), rgba(212,175,55,0.05))",
     marginLeft: -8, border: "2px solid rgba(10,11,16,0.9)",
+  },
+  // Variantă dreptunghiulară a inelului de mai sus — pentru portretele de
+  // luptă din echipă (MAIN EVENT 2v2), aceeași suprapunere vizuală.
+  fighterRingSmall: {
+    position: "relative", padding: 2, borderRadius: 8,
+    background: "linear-gradient(160deg, rgba(212,175,55,0.55), rgba(240,85,90,0.3))",
+    marginLeft: -6, border: "2px solid rgba(10,11,16,0.9)",
   },
   excludedCrown: { position: "absolute", top: -8, right: -4, fontSize: 13 },
   teamNames: {

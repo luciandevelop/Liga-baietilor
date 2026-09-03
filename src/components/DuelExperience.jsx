@@ -1,11 +1,20 @@
 import PlayerAvatar from "./PlayerAvatar";
+import DuelFighterPortrait from "./DuelFighterPortrait";
+import { getFighterUrl } from "../assets/fighters";
 import { color, font, radius } from "../matchdayTheme";
 
 // ── Experiența Duelului MEU — mare, sus, dramatică. Glow radial în spate,
 // avataruri mari, indicator pulsatoriu pe cel care conduce, VS cu shine.
 // Scorurile DIN ETAPĂ (nu seasonPoints), primite din afară — componenta
-// doar afișează, nu recalculează nimic. ──
-export default function DuelExperience({ myUid, opponentUid, isBye, profiles, liveScores, resolved, myPoints }) {
+// doar afișează, nu recalculează nimic.
+//
+// STAGE B — MAIN EVENT: dacă Adminul a ales o temă de Duel (`duelTheme`)
+// PENTRU etapa asta, avatarul rotund normal e înlocuit cu un portret de
+// personaj de luptă, mare (vezi DuelFighterPortrait) — panou dreptunghiular
+// cu ramă tematică, stil poster de fighting game. Fără temă (sau dacă
+// imaginea lipsește pentru cineva), arată EXACT ca înainte de Stage B —
+// avatarul rotund normal, aceeași dimensiune, același stil. ──
+export default function DuelExperience({ myUid, opponentUid, isBye, profiles, liveScores, resolved, myPoints, duelTheme }) {
   if (isBye) {
     return (
       <div style={s.byeWrap}>
@@ -23,6 +32,12 @@ export default function DuelExperience({ myUid, opponentUid, isBye, profiles, li
   const oppScore = liveScores[opponentUid] ?? 0;
   const leading = resolved ? null : (myScore > oppScore ? "me" : myScore < oppScore ? "opp" : "tie");
   const myPreview = resolved ? myPoints : (leading === "me" ? 200 : leading === "opp" ? 0 : 100);
+  // Fallback-ul e per-jucător, nu global — dacă tema e aleasă dar tocmai
+  // ACEST jucător nu are imagine (temă necompletă încă), latura lui arată
+  // 100% ca înainte de Stage B (ramă rotundă, avatar normal), nu ca un
+  // hibrid "avatar rotund într-o ramă dreptunghiulară de fighter".
+  const myFighterUrl = duelTheme ? getFighterUrl(duelTheme, myProfile.avatarId) : null;
+  const oppFighterUrl = duelTheme ? getFighterUrl(duelTheme, oppProfile.avatarId) : null;
 
   return (
     <div style={s.wrap}>
@@ -32,28 +47,41 @@ export default function DuelExperience({ myUid, opponentUid, isBye, profiles, li
         @keyframes duelGlowBg { 0%,100% { opacity: 0.5; } 50% { opacity: 0.9; } }
       `}</style>
       <div style={s.bgGlow} />
+      {(!!myFighterUrl || !!oppFighterUrl) && <div style={s.mainEventTag}>⚔️ MAIN EVENT</div>}
 
-      <div style={s.confrontation}>
-        <div style={{ ...s.side, ...(leading === "me" ? s.sideLeading : {}) }}>
-          <div style={s.avatarRing}>
-            <PlayerAvatar avatarId={myProfile.avatarId} nickname={myProfile.nickname} size={78} />
-          </div>
+      <div style={{ ...s.confrontation, ...(myFighterUrl || oppFighterUrl ? s.confrontationFighter : {}) }}>
+        <div style={{ ...s.side, ...(myFighterUrl ? s.sideFighter : {}), ...(leading === "me" ? s.sideLeading : {}) }}>
+          {myFighterUrl ? (
+            <div style={s.fighterFrame}>
+              <DuelFighterPortrait avatarId={myProfile.avatarId} nickname={myProfile.nickname} theme={duelTheme} width={104} height={148} fallbackSize={78} borderRadius={9} />
+            </div>
+          ) : (
+            <div style={s.avatarRing}>
+              <PlayerAvatar avatarId={myProfile.avatarId} nickname={myProfile.nickname} size={78} />
+            </div>
+          )}
           <div style={s.name}>{myProfile.nickname || myUid} (tu)</div>
           <div style={s.score}>{myScore}<span style={s.scoreUnit}>p</span></div>
           {leading === "me" && <div style={s.leadTag}>ÎN AVANTAJ</div>}
         </div>
 
         <div style={s.vsWrap}>
-          <div style={s.vsCircle}>
+          <div style={{ ...s.vsCircle, ...(myFighterUrl || oppFighterUrl ? s.vsCircleFighter : {}) }}>
             <span style={s.vsShine} />
             VS
           </div>
         </div>
 
-        <div style={{ ...s.side, ...(leading === "opp" ? s.sideLeading : {}) }}>
-          <div style={s.avatarRing}>
-            <PlayerAvatar avatarId={oppProfile.avatarId} nickname={oppProfile.nickname} size={78} />
-          </div>
+        <div style={{ ...s.side, ...(oppFighterUrl ? s.sideFighter : {}), ...(leading === "opp" ? s.sideLeading : {}) }}>
+          {oppFighterUrl ? (
+            <div style={s.fighterFrame}>
+              <DuelFighterPortrait avatarId={oppProfile.avatarId} nickname={oppProfile.nickname} theme={duelTheme} width={104} height={148} fallbackSize={78} borderRadius={9} />
+            </div>
+          ) : (
+            <div style={s.avatarRing}>
+              <PlayerAvatar avatarId={oppProfile.avatarId} nickname={oppProfile.nickname} size={78} />
+            </div>
+          )}
           <div style={s.name}>{oppProfile.nickname || opponentUid}</div>
           <div style={s.score}>{oppScore}<span style={s.scoreUnit}>p</span></div>
           {leading === "opp" && <div style={s.leadTag}>ÎN AVANTAJ</div>}
@@ -106,10 +134,24 @@ const s = {
     background: "radial-gradient(circle, rgba(240,85,90,0.18), transparent 70%)", animation: "duelGlowBg 3s ease-in-out infinite",
     pointerEvents: "none",
   },
+  mainEventTag: {
+    position: "relative", textAlign: "center", fontFamily: font.display, fontSize: 11, fontWeight: 800,
+    letterSpacing: "0.14em", color: "#FF6B70", marginBottom: 10, textShadow: "0 0 12px rgba(240,85,90,0.5)",
+  },
   confrontation: { position: "relative", display: "flex", alignItems: "flex-start", justifyContent: "center", gap: 2 },
+  confrontationFighter: { alignItems: "center" },
   side: { display: "flex", flexDirection: "column", alignItems: "center", gap: 8, width: 128, padding: "10px 4px", borderRadius: radius.md, transition: "all 300ms" },
+  sideFighter: { width: 130 },
   sideLeading: { background: "rgba(139,217,87,0.09)", border: "1px solid rgba(139,217,87,0.35)", animation: "duelPulse 2s ease-in-out infinite" },
   avatarRing: { padding: 3, borderRadius: "50%", background: "linear-gradient(135deg, rgba(212,175,55,0.5), rgba(212,175,55,0.05))" },
+  // Ramă dreptunghiulară, stil poster de fighting game — pentru portretul
+  // de personaj de luptă (MAIN EVENT). Glow auriu/roșiatic discret,
+  // colțuri tăiate ușor prin borderRadius mic, nu rotund ca avatarul.
+  fighterFrame: {
+    padding: 3, borderRadius: 11,
+    background: "linear-gradient(160deg, rgba(212,175,55,0.55), rgba(240,85,90,0.35))",
+    boxShadow: "0 8px 22px -8px rgba(0,0,0,0.6), 0 0 20px -4px rgba(212,175,55,0.35)",
+  },
   name: {
     fontSize: 12.5, fontWeight: 700, color: color.textPrimary, fontFamily: font.body, textAlign: "center",
     overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 118,
@@ -124,6 +166,7 @@ const s = {
     background: "radial-gradient(circle, rgba(240,85,90,0.3), rgba(240,85,90,0.08))", border: "1.5px solid rgba(240,85,90,0.55)",
     fontFamily: font.display, fontWeight: 800, fontSize: 13.5, color: "#FF6B70", boxShadow: "0 0 18px -2px rgba(240,85,90,0.6)",
   },
+  vsCircleFighter: { width: 50, height: 50, fontSize: 15.5, border: "2px solid rgba(240,85,90,0.7)" },
   vsShine: {
     position: "absolute", top: 0, left: 0, width: "40%", height: "200%", background: "rgba(255,255,255,0.35)",
     animation: "duelShine 2.6s ease-in-out infinite",

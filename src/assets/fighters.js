@@ -6,8 +6,14 @@
 // pachet ca la avatarul lui normal) → fișier.
 //
 // UN SINGUR personaj per jucător per temă (index "1") — nu variante
-// multiple ca la avataruri. Simplu de pregătit: o imagine per jucător,
-// per temă.
+// multiple ca la avataruri. Convenție oficială de denumire a fișierului:
+// {pachetJucător}.webp (ex: utzy/utzy.webp) — ales explicit ca fișierele
+// descărcate pe telefon să nu se suprascrie/redenumească accidental între
+// ele (toate ar fi fost "1.webp" altfel). Rezolvarea de mai jos NU
+// depinde de numele exact al fișierului — citește orice imagine găsită
+// în folder, indiferent cum se numește — dar convenția {pachet}.webp e
+// cea folosită și verificată de generator (vezi
+// scripts/generate-fighters-manifest.js).
 import manifest from "./fightersManifest.generated.js";
 import { parseAvatarId } from "./avatars.js";
 

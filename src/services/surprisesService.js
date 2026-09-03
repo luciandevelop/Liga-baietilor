@@ -32,26 +32,23 @@ export const BONUS_CATALOG = [
 // să nu fie lipite (cerut explicit).
 export const ROULETTE_SEGMENTS = [0, 0, 0, 0, 25, 25, 25, 25, 25, 50, 50, 50, 50, 75, 75, 100];
 
-// 40 de cutii (crescut de la 30, cerut explicit — grup de 16 jucători ×
-// 2 alegeri, era prea strâmt) — distribuție scalată proporțional față de
-// cea aprobată inițial (4×100,6×75,8×50,3×40,2×30,2×20,5×0 / 30 cutii),
-// păstrând EXACT aceeași medie (49p): 5×100, 8×75, 11×50, 4×40, 3×30,
-// 3×20, 6×0 (40 cutii, sumă 1960, medie 49p). Ordinea din array NU e
-// ordinea cutiilor pe grilă — se amestecă o singură dată, la Dezvăluire,
-// și rămâne înghețată (poziția cutiei = indexul din array-ul amestecat,
-// stabil tot timpul alegerii). IMPORTANT: acest array e citit DOAR la
-// crearea unui Mystery Box nou (revealBonus) — orice etapă deja
-// dezvăluită are propriile boxValues înghețate în Firestore
-// (weeklySurprises/{gw}/secret/bonus.config.boxValues) și NU e afectată
-// de nicio schimbare de-aici, indiferent când se face.
+// 40 de cutii — distribuția aprobată cu 2×JOKER EXTRA, înlocuind 2 cutii
+// de 50p (11→9), restul neschimbat: 5×100, 8×75, 9×50, 4×40, 3×30, 3×20,
+// 6×0, 2×JOKER EXTRA (40 cutii). Ordinea din array NU e ordinea cutiilor
+// pe grilă — se amestecă o singură dată, la Dezvăluire, și rămâne
+// înghețată. IMPORTANT: array-ul e citit DOAR la crearea unui Mystery Box
+// nou (revealBonus) — orice etapă deja dezvăluită are propriile boxValues
+// înghețate în Firestore și NU e afectată de nicio schimbare de-aici.
+export const JOKER_EXTRA_SENTINEL = "JOKER_EXTRA";
 export const MYSTERY_BOX_VALUES = [
   100, 100, 100, 100, 100,
   75, 75, 75, 75, 75, 75, 75, 75,
-  50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50,
+  50, 50, 50, 50, 50, 50, 50, 50, 50,
   40, 40, 40, 40,
   30, 30, 30,
   20, 20, 20,
   0, 0, 0, 0, 0, 0,
+  JOKER_EXTRA_SENTINEL, JOKER_EXTRA_SENTINEL,
 ];
 
 export function getSurpriseStatus(pub) {
@@ -967,7 +964,14 @@ export async function resolveBonus(gameweekId) {
     });
     resultsPerUser = activeUids.map((uid) => {
       const pick = finalPickByUid[uid];
-      const points = pick ? (boxValues[pick.boxIndex] ?? 0) : 0;
+      // Joker Extra NU e un premiu în puncte — dacă alegerea finală cade
+      // pe o cutie Joker Extra (sentinel string, nu număr), contribuția
+      // la scor e 0p. Eligibilitatea de folosire a Jokerului Extra se
+      // verifică separat, live, direct din board+picks (vezi
+      // checkJokerExtraEligibility mai jos) — NU depinde de rularea
+      // acestei funcții.
+      const rawValue = pick ? boxValues[pick.boxIndex] : 0;
+      const points = typeof rawValue === "number" ? rawValue : 0;
       return { uid, points };
     });
   } else if (bonusType === "penalty-pvp") {
@@ -1202,6 +1206,27 @@ export async function submitMysteryBoxPick(gameweekId, uid, boxIndex) {
 export async function revealRemainingMysteryBoxes(gameweekId) {
   const publicRef = doc(db, "weeklySurprises", gameweekId);
   await setDoc(publicRef, { mysteryBoxAllRevealed: true }, { merge: true });
+}
+
+// ── JOKER EXTRA — eligibilitate. Câștigat DOAR prin Mystery Box (cutii
+// speciale, vezi JOKER_EXTRA_SENTINEL mai sus), NU printr-o colecție
+// separată de "granturi" — se verifică live, direct din board + picks,
+// exact ca punctajul normal. Regula e identică cu cea de la puncte:
+// contează ALEGEREA FINALĂ (a doua cutie, dacă a rejucat, altfel prima).
+// Dacă cineva ia Joker Extra prima dată și apoi rejoacă, îl pierde —
+// exact cum ar pierde și punctele — comportament consecvent, nimic nou
+// de învățat pentru jucători. Fiind calculată live din datele ETAPEI
+// CURENTE, nu există nicio stocare separată care ar putea "rămâne" în
+// etapele viitoare — la o etapă nouă, fără picks noi, eligibilitatea e
+// automat false, deci Jokerul Extra nefolosit la deadline se pierde de
+// la sine, fără nicio curățenie de date necesară. ──
+export async function checkJokerExtraEligibility(gameweekId, uid) {
+  const [board, picks] = await Promise.all([getMysteryBoxBoard(gameweekId), getAllMysteryBoxPicks(gameweekId)]);
+  if (!board) return false;
+  const myPicks = picks.filter((p) => p.uid === uid).sort((a, b) => (a.pickNumber || 1) - (b.pickNumber || 1));
+  const finalPick = myPicks[myPicks.length - 1];
+  if (!finalPick) return false;
+  return board[finalPick.boxIndex] === JOKER_EXTRA_SENTINEL;
 }
 
 // ── Istoricul sezonului — o intrare per etapă, cu starea calculată. ──

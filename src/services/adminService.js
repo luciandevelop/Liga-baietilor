@@ -627,11 +627,22 @@ async function publishMatchPointsIfFinal(matchId) {
     const j = d.data();
     jokerMatchByUser[j.userId] = j.matchId;
   });
+  // Joker Extra — colecție SEPARATĂ, aditivă (vezi predictionsService).
+  // Combinat prin OR cu Jokerul normal: multiplicatorul rămâne x2 pe
+  // fiecare meci în parte, NICIODATĂ x4, indiferent câte tipuri de Joker
+  // ar cădea din greșeală pe același meci — computeMatchPoints nu vede
+  // decât un singur boolean isJoker.
+  const jokerExtraSnap = await getDocs(query(collection(db, "jokerExtra"), where("gameweekId", "==", match.gameweekId)));
+  const jokerExtraMatchByUser = {};
+  jokerExtraSnap.docs.forEach((d) => {
+    const j = d.data();
+    jokerExtraMatchByUser[j.userId] = j.matchId;
+  });
 
   const batch = writeBatch(db);
   predSnap.docs.forEach((d) => {
     const p = d.data();
-    const isJoker = jokerMatchByUser[p.userId] === matchId;
+    const isJoker = jokerMatchByUser[p.userId] === matchId || jokerExtraMatchByUser[p.userId] === matchId;
     const result = computeMatchPoints({ prediction: p, match, isFeatured, isJoker });
     const points = result ? result.total : 0;
     // Structură COMPLETĂ — nu doar totalul. Player Card afișează
@@ -715,6 +726,14 @@ async function computeGameweekResults(gameweekId) {
     const j = d.data();
     jokerMatchByUser[j.userId] = j.matchId;
   });
+  // Joker Extra — colecție SEPARATĂ, aditivă (vezi predictionsService și
+  // nota din bucla de resolve instant, mai sus). Combinat prin OR.
+  const jokerExtraSnap = await getDocs(query(collection(db, "jokerExtra"), where("gameweekId", "==", gameweekId)));
+  const jokerExtraMatchByUser = {};
+  jokerExtraSnap.docs.forEach((d) => {
+    const j = d.data();
+    jokerExtraMatchByUser[j.userId] = j.matchId;
+  });
 
   const predictionsByUser = {};
   allPredictions.forEach((p) => {
@@ -742,7 +761,7 @@ async function computeGameweekResults(gameweekId) {
     matches.forEach((match) => {
       const p = (predictionsByUser[uid] || []).find((pr) => pr.matchId === match.id) || null;
       const isFeatured = featuredMatchIds.includes(match.id);
-      const isJoker = jokerMatchByUser[uid] === match.id;
+      const isJoker = jokerMatchByUser[uid] === match.id || jokerExtraMatchByUser[uid] === match.id;
       const hasResult = isMatchFinal(match);
 
       const matchSnapshot = {

@@ -119,6 +119,28 @@ export async function deleteJoker(gameweekId, uid) {
   await deleteDoc(doc(db, "jokers", `${gameweekId}_${uid}`));
 }
 
+// ── Joker Extra ──────────────────────────────────────────────────────
+// Câștigat prin Mystery Box (cutii speciale), NU ales liber ca Jokerul
+// normal de mai sus — care rămâne complet neatins de tot ce urmează.
+// Colecție SEPARATĂ (`jokerExtra`), aceeași structură/convenție de ID
+// determinist (`{gameweekId}_{uid}`) ca Jokerul normal, dar independentă:
+// nimic din codul de mai sus nu știe că asta există. Eligibilitatea (a
+// găsit sau nu o cutie Joker Extra în etapa asta) NU se ține aici — se
+// verifică live din Mystery Box, vezi surprisesService.checkJokerExtraEligibility.
+export async function loadUserJokerExtra(gameweekId, uid) {
+  const snap = await getDoc(doc(db, "jokerExtra", `${gameweekId}_${uid}`));
+  return snap.exists() ? snap.data() : null;
+}
+
+export async function saveJokerExtra({ gameweekId, uid, matchId }) {
+  const ref = doc(db, "jokerExtra", `${gameweekId}_${uid}`);
+  await setDoc(ref, { userId: uid, gameweekId, matchId }, { merge: false });
+}
+
+export async function deleteJokerExtra(gameweekId, uid) {
+  await deleteDoc(doc(db, "jokerExtra", `${gameweekId}_${uid}`));
+}
+
 // Citire best-effort a pronosticului UNUI ALT user pentru UN meci —
 // folosită de Player Detail când documentul public gameweekLiveScores încă
 // arată `predictionHidden: true` (posibil pentru că adminul nu a republicat

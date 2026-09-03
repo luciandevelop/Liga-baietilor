@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { getCurrentSeason, getCurrentGameweek, loadUserPredictions, loadUserJoker, isMatchLocked } from "../services/predictionsService";
+import { getCurrentSeason, getCurrentGameweek, loadUserPredictions, loadUserJoker, loadUserJokerExtra, isMatchLocked } from "../services/predictionsService";
 import { listenMatches, listenLiveGameweekScores, listGameweekScores, getUserSeasonPoints } from "../services/adminService";
 import { getUserPublicProfiles } from "../services/profilesService";
 import { processRankChanges, processFinishedMatches, processJokerActivation, processUpcomingMatches, loadFullFeed, processSurpriseCreated, processSurpriseMatchup, processSurpriseResult, processExternalMatchDelta, processMatchIntelligence, processDailyFillerIfQuiet, processClubFactsForMatch } from "../services/feedService";
@@ -143,6 +143,22 @@ export default function WelcomeScreen({ user, profile, isAdmin, onOpenAdmin, onO
           await processJokerActivation(j, jm, nickname);
           refreshFeedTop();
         }).catch((err) => console.error("Eroare Feed joker propriu:", err));
+
+        // Joker Extra — EXACT același mecanism de auto-publicare ca mai
+        // sus (fiecare user citește DOAR propriul Joker Extra, id exact,
+        // publică abia după lock), doar cu cheia de dedup marcată
+        // "_extra" ca să nu se confunde cu Jokerul normal în același Set.
+        // Reutilizează processJokerActivation existent (isExtra=true) —
+        // niciun eveniment nou de Feed, doar textul diferă.
+        loadUserJokerExtra(gw.id, user.uid).then(async (je) => {
+          if (!je || processedJokersRef.current.has(`${je.gameweekId}_${je.userId}_extra`)) return;
+          const jem = m.find((x) => x.id === je.matchId);
+          if (!jem || !isMatchLocked(jem)) return;
+          processedJokersRef.current.add(`${je.gameweekId}_${je.userId}_extra`);
+          const nickname = profile?.nickname || user.uid;
+          await processJokerActivation(je, jem, nickname, true);
+          refreshFeedTop();
+        }).catch((err) => console.error("Eroare Feed joker extra propriu:", err));
 
         // Predicțiile proprii — au nevoie de ID-urile reale ale meciurilor,
         // disponibile abia aici (realtime). O singură dată e suficient

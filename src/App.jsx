@@ -15,6 +15,7 @@ import SurprisesScreen from "./screens/SurprisesScreen";
 import RulesScreen from "./screens/RulesScreen";
 import NicknameScreen from "./screens/NicknameScreen";
 import PendingApprovalScreen from "./screens/PendingApprovalScreen";
+import BottomTabBar from "./components/BottomTabBar";
 
 // profileState: "idle" | "checking" | "ready" | "needs-nickname" | "pending" | "disabled" | "error"
 // Stare centrală, unică — nimic altceva din aplicație nu mai apelează
@@ -58,6 +59,20 @@ export default function App() {
 
   function goBack() {
     window.history.back();
+  }
+
+  // Bara de jos e acum globală (randată din App, nu din fiecare ecran în
+  // parte) — de-asta rămâne vizibilă la navigare între Home/Pronosticuri/
+  // Clasament/Speciale/Surpriza, inclusiv pe subpagini ca Etapa 5. Fiind
+  // position:fixed, nu se mișcă la scroll. Nu apare pe ecrane secundare
+  // (Profil, Feed, Reguli, Admin) — Profilul rămâne accesibil doar din
+  // avatarul din header, ca înainte.
+  function handleBottomTabGlobal(id) {
+    if (id === "home") return navigateTo("welcome");
+    if (id === "pronosticuri") return navigateTo("predictions");
+    if (id === "clasament") return navigateTo("leaderboard");
+    if (id === "speciale") return navigateTo("specials");
+    if (id === "surpriza") return navigateTo("surprises");
   }
 
   useEffect(() => {
@@ -232,15 +247,30 @@ export default function App() {
   }
 
   if (view === "predictions") {
-    return <PredictionsScreen user={user} isAdmin={isAdmin} onBack={goBack} scrollToMatchId={predictionsTarget} />;
+    return (
+      <>
+        <PredictionsScreen user={user} isAdmin={isAdmin} onBack={goBack} scrollToMatchId={predictionsTarget} />
+        <BottomTabBar active="pronosticuri" onChange={handleBottomTabGlobal} />
+      </>
+    );
   }
 
   if (view === "leaderboard") {
-    return <LeaderboardScreen user={user} isAdmin={isAdmin} onBack={goBack} />;
+    return (
+      <>
+        <LeaderboardScreen user={user} isAdmin={isAdmin} onBack={goBack} />
+        <BottomTabBar active="clasament" onChange={handleBottomTabGlobal} />
+      </>
+    );
   }
 
   if (view === "specials") {
-    return <SpecialsScreen user={user} onBack={goBack} />;
+    return (
+      <>
+        <SpecialsScreen user={user} onBack={goBack} />
+        <BottomTabBar active="speciale" onChange={handleBottomTabGlobal} />
+      </>
+    );
   }
 
   if (view === "feed") {
@@ -248,7 +278,12 @@ export default function App() {
   }
 
   if (view === "surprises") {
-    return <SurprisesScreen user={user} onBack={goBack} />;
+    return (
+      <>
+        <SurprisesScreen user={user} onBack={goBack} />
+        <BottomTabBar active="surpriza" onChange={handleBottomTabGlobal} />
+      </>
+    );
   }
 
   if (view === "rules") {
@@ -270,18 +305,21 @@ export default function App() {
   }
 
   return (
-    <WelcomeScreen
-      user={user}
-      profile={profile}
-      isAdmin={isAdmin}
-      onOpenAdmin={() => navigateTo("admin")}
-      onOpenPredictions={(matchId) => navigateTo("predictions", { predictionsTarget: matchId || null })}
-      onOpenLeaderboard={() => navigateTo("leaderboard")}
-      onOpenSpecials={() => navigateTo("specials")}
-      onOpenFeed={() => navigateTo("feed")}
-      onOpenSurprises={() => navigateTo("surprises")}
-      onOpenProfile={() => navigateTo("profile")}
-    />
+    <>
+      <WelcomeScreen
+        user={user}
+        profile={profile}
+        isAdmin={isAdmin}
+        onOpenAdmin={() => navigateTo("admin")}
+        onOpenPredictions={(matchId) => navigateTo("predictions", { predictionsTarget: matchId || null })}
+        onOpenLeaderboard={() => navigateTo("leaderboard")}
+        onOpenSpecials={() => navigateTo("specials")}
+        onOpenFeed={() => navigateTo("feed")}
+        onOpenSurprises={() => navigateTo("surprises")}
+        onOpenProfile={() => navigateTo("profile")}
+      />
+      <BottomTabBar active="home" onChange={handleBottomTabGlobal} />
+    </>
   );
 }
 

@@ -168,6 +168,7 @@ export default function SurprisesScreen({ user, onBack }) {
                         liveScores={liveScores}
                         resolved={!!pub?.mainResolved}
                         myPoints={myResult?.mainPoints}
+                        duelTheme={secretMain?.duelTheme || null}
                       />
 
                       {otherPairings.length > 0 && (
@@ -183,6 +184,7 @@ export default function SurprisesScreen({ user, onBack }) {
                                 liveScores={liveScores}
                                 resolved={!!pub?.mainResolved}
                                 results={resultsByUid}
+                                duelTheme={secretMain?.duelTheme || null}
                               />
                             ))}
                           </div>
@@ -204,6 +206,7 @@ export default function SurprisesScreen({ user, onBack }) {
                         liveScores={liveScores}
                         resolved={!!pub?.mainResolved}
                         myPoints={myResult?.mainPoints}
+                        duelTheme={secretMain?.duelTheme || null}
                       />
 
                       {otherGroups.length > 0 && (
@@ -219,6 +222,7 @@ export default function SurprisesScreen({ user, onBack }) {
                                 liveScores={liveScores}
                                 resolved={!!pub?.mainResolved}
                                 results={resultsByUid}
+                                duelTheme={secretMain?.duelTheme || null}
                               />
                             ))}
                           </div>

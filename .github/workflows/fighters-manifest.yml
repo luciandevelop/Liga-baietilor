@@ -1,0 +1,32 @@
+name: Actualizeaza manifestul de personaje de lupta
+
+"on":
+  push:
+    branches:
+      - main
+    paths:
+      - public/fighters/**
+
+permissions:
+  contents: write
+
+jobs:
+  update-manifest:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Cloneaza repo-ul
+        uses: actions/checkout@v4
+
+      - name: Pregateste Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Regenereaza manifestul de personaje de lupta
+        run: node scripts/generate-fighters-manifest.js
+
+      - name: Comite manifestul daca s-a schimbat
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: "chore: actualizeaza manifestul de personaje de lupta"
+          file_pattern: src/assets/fightersManifest.generated.js

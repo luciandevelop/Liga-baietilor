@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { getCurrentSeason, getCurrentGameweek, loadUserPredictions, loadUserJoker, isMatchLocked } from "../services/predictionsService";
 import { listenMatches, listenLiveGameweekScores, listGameweekScores, getUserSeasonPoints } from "../services/adminService";
 import { getUserPublicProfiles } from "../services/profilesService";
-import { processRankChanges, processFinishedMatches, processJokerActivation, processUpcomingMatches, loadFullFeed, processSurpriseCreated, processSurpriseMatchup, processSurpriseResult, processExternalMatchDelta, processMatchIntelligence } from "../services/feedService";
+import { processRankChanges, processFinishedMatches, processJokerActivation, processUpcomingMatches, loadFullFeed, processSurpriseCreated, processSurpriseMatchup, processSurpriseResult, processExternalMatchDelta, processMatchIntelligence, processDailyFillerIfQuiet, processClubFactsForMatch } from "../services/feedService";
 import { doc, getDoc } from "firebase/firestore";
 import { db } from "../firebase";
 import useNow from "../hooks/useNow";
@@ -284,6 +284,22 @@ export default function WelcomeScreen({ user, profile, isAdmin, onOpenAdmin, onO
     processUpcomingMatches(matches, featuredIds, gameweek.id)
       .then((events) => { if (events.length > 0) refreshFeedTop(); })
       .catch((err) => console.error("Eroare Feed meciuri viitoare:", err));
+
+    // Filler zilnic — DOAR dacă etapa e genuin "tăcută" (nicio
+    // activitate reală în ultimele ~20h). Verificarea internă a
+    // funcției decide, nu publicăm orbește la fiecare deschidere.
+    processDailyFillerIfQuiet()
+      .then((ev) => { if (ev) refreshFeedTop(); })
+      .catch((err) => console.error("Eroare filler zilnic:", err));
+
+    // Fapte de club/oraș/competiție — DOAR pentru meciurile în
+    // fereastra 08:00→23:59 ziua următoare (verificată intern per
+    // meci); istoric persistent, deci refresh-ul nu repetă nimic.
+    matches.forEach((m) => {
+      processClubFactsForMatch(m)
+        .then((events) => { if (events.length > 0) refreshFeedTop(); })
+        .catch((err) => console.error(`Eroare fapte club (${m.homeTeam}-${m.awayTeam}):`, err));
+    });
   }, [gameweek, matches]);
 
   // ── Date live externe (API-Football) — server-side (Vercel + GitHub

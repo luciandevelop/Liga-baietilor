@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "node scripts/generate-avatar-manifest.js && vite build",
+    "build": "node scripts/generate-avatar-manifest.js && node scripts/generate-fighters-manifest.js && vite build",
     "preview": "vite preview"
   },
   "dependencies": {

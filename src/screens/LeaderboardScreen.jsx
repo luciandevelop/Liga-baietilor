@@ -290,7 +290,7 @@ export default function LeaderboardScreen({ onBack, user, isAdmin }) {
   const scoredCount = gwRows.length;
 
   return (
-    <div style={layout.page}>
+    <div style={{ ...layout.page, paddingBottom: 96 }}>
       <div style={layout.wrap}>
         {/* zIndex peste overlay-ul Player Card-ului (100) — Back trebuie
             să rămână complet vizibil și apăsabil chiar și cu modalul

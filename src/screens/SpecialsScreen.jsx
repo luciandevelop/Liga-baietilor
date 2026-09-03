@@ -355,7 +355,7 @@ function RevealList({ loading, data, phaseDef, phaseState }) {
 }
 
 const s = {
-  page: { minHeight: "100vh", background: color.bgBase, paddingBottom: 40 },
+  page: { minHeight: "100vh", background: color.bgBase, paddingBottom: 96 },
   wrap: { maxWidth: 480, margin: "0 auto", padding: "16px 16px 0" },
 
   centerBox: { textAlign: "center", color: color.textSecondary, fontSize: 13.5, padding: "40px 16px" },

@@ -417,7 +417,7 @@ function PageHead({ eyebrow, title, subtitle, onBack }) {
 }
 
 const s = {
-  page: { minHeight: "100vh", background: color.bgBase },
+  page: { minHeight: "100vh", background: color.bgBase, paddingBottom: 96 },
   wrap: { maxWidth: 480, margin: "0 auto", padding: "18px 16px 40px" },
 
   head: { display: "flex", alignItems: "center", gap: 12, marginBottom: 20 },

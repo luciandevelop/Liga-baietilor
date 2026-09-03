@@ -12,7 +12,6 @@ import { color, font, radius, shadow } from "../matchdayTheme";
 import CinematicBackdrop from "../components/CinematicBackdrop";
 import AppHeader from "../components/AppHeader";
 import TopTabNav from "../components/TopTabNav";
-import BottomTabBar from "../components/BottomTabBar";
 import PremiumButton from "../components/PremiumButton";
 import ClubLogo from "../components/ClubLogo";
 import CompetitionBadge from "../components/CompetitionBadge";
@@ -659,7 +658,6 @@ export default function WelcomeScreen({ user, profile, isAdmin, onOpenAdmin, onO
         </div>
       )}
 
-      <BottomTabBar active="home" onChange={handleBottomTab} />
       <FeedDetailModal event={selectedFeedEvent} onClose={() => setSelectedFeedEvent(null)} />
       {revealMatch && (
         <PredictionsRevealSheet

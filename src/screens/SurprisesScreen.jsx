@@ -411,7 +411,7 @@ function RouletteLiveList({ gameweekId, profiles, myUid, refreshKey }) {
 }
 
 const s = {
-  page: { minHeight: "100vh", background: color.bg },
+  page: { minHeight: "100vh", background: color.bg, paddingBottom: 96 },
   wrap: { maxWidth: 480, margin: "0 auto", padding: "0 16px 32px" },
   hint: { fontSize: 12.5, color: color.textFaint, fontFamily: font.body, padding: "16px 0", textAlign: "center" },
 

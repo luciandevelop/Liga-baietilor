@@ -41,6 +41,15 @@ export default function MysteryBoxExperience({ gameweekId, uid, allBoxesRevealed
   if (loading || !board) return <div style={s.centerNote}>Se încarcă…</div>;
 
   const picksByBox = Object.fromEntries(picks.map((p) => [p.boxIndex, p]));
+  // Grupate PUBLIC (toate alegerile tuturor, nu doar ale celui care se
+  // uită) — necesar ca să se vadă corect pentru TOȚI care cutie a fost
+  // rejucată de un jucător, nu doar pentru el însuși. Sursa e tot
+  // `picks` (deja public, din Firestore), doar reorganizată per uid.
+  const picksByUid = {};
+  for (const p of picks) {
+    if (!picksByUid[p.uid]) picksByUid[p.uid] = [];
+    picksByUid[p.uid].push(p);
+  }
   const myPicks = picks.filter((p) => p.uid === uid).sort((a, b) => a.pickNumber - b.pickNumber);
   const myPickCount = myPicks.length;
   const myFinalPick = myPicks[myPicks.length - 1];
@@ -99,6 +108,13 @@ export default function MysteryBoxExperience({ gameweekId, uid, allBoxesRevealed
           const isMine = pick?.uid === uid;
           const isClickable = !resolved && canPickMore && !pick;
           const showValue = !!pick || (allBoxesRevealed && !pick);
+          // Public, pentru ORICINE se uită — nu doar pentru proprietar:
+          // o cutie e "rejucată" dacă e prima alegere a lui `pick.uid`
+          // ȘI acel jucător are și o a doua. A doua alegere (pickNumber
+          // 2) e mereu cea finală, la fel de vizibil pentru toți.
+          const ownerPicks = pick ? (picksByUid[pick.uid] || []) : [];
+          const wasRerolled = !!pick && pick.pickNumber === 1 && ownerPicks.length > 1;
+          const isFinalPick = !!pick && pick.pickNumber === 2;
 
           return (
             <button
@@ -109,6 +125,7 @@ export default function MysteryBoxExperience({ gameweekId, uid, allBoxesRevealed
               style={{
                 ...s.box,
                 ...(pick ? (isMine ? s.boxMine : s.boxTaken) : {}),
+                ...(wasRerolled ? s.boxRefused : {}),
                 ...(allBoxesRevealed && !pick ? s.boxUnclaimedRevealed : {}),
                 ...(isClickable ? { animation: "boxWiggle 2.2s ease-in-out infinite" } : {}),
               }}
@@ -118,8 +135,9 @@ export default function MysteryBoxExperience({ gameweekId, uid, allBoxesRevealed
                 <>
                   <PlayerAvatar avatarId={profiles[pick.uid]?.avatarId} nickname={profiles[pick.uid]?.nickname} size={26} />
                   <span style={s.boxName}>{profiles[pick.uid]?.nickname || pick.uid}</span>
-                  <span style={{ ...s.boxValue, color: VALUE_COLOR[value] || "#fff" }}>{value}p</span>
-                  {pick.pickNumber === 1 && myPicks.length > 1 && pick.uid === uid && <span style={s.refusedTag}>rejucată</span>}
+                  <span style={{ ...s.boxValue, color: wasRerolled ? "#8A6A6A" : (VALUE_COLOR[value] || "#fff"), ...(wasRerolled ? s.boxValueRefused : {}) }}>{value}p</span>
+                  {wasRerolled && <span style={s.refusedTag}>rejucată</span>}
+                  {isFinalPick && <span style={s.finalTag}>finală</span>}
                 </>
               ) : showValue ? (
                 <span style={{ ...s.boxValue, color: VALUE_COLOR[value] || "#fff", opacity: 0.5 }}>{value}p</span>
@@ -202,12 +220,17 @@ const s = {
   boxMine: { background: "rgba(139,217,87,0.10)", border: "1px solid rgba(139,217,87,0.4)" },
   boxTaken: { background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.12)", cursor: "default" },
   boxUnclaimedRevealed: { background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.08)", cursor: "default" },
+  // Cutie rejucată — clar respinsă, ca să nu pară un al doilea premiu
+  // valabil: fundal/bordură estompate peste orice altă culoare de bază.
+  boxRefused: { background: "rgba(255,255,255,0.02)", border: "1px solid rgba(240,85,90,0.25)", opacity: 0.55 },
   boxName: {
     fontSize: 8, fontWeight: 700, color: color.textPrimary, fontFamily: font.body, textAlign: "center",
     overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: "100%",
   },
   boxValue: { fontSize: 11, fontWeight: 800, fontFamily: font.display },
-  refusedTag: { position: "absolute", bottom: 2, fontSize: 6.5, color: "#F0555A", fontFamily: font.body },
+  boxValueRefused: { textDecoration: "line-through" },
+  refusedTag: { position: "absolute", bottom: 2, fontSize: 6.5, fontWeight: 800, color: "#F0555A", fontFamily: font.body },
+  finalTag: { position: "absolute", bottom: 2, fontSize: 6.5, fontWeight: 800, color: "#8BD957", fontFamily: font.body },
 
   errorText: { fontSize: 11.5, color: "#F0555A", textAlign: "center", marginTop: 10, fontFamily: font.body },
 

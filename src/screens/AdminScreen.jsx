@@ -59,6 +59,7 @@ import {
   configureZaruriQuestions, markZaruriTarget, getZaruriSubmissionStatus,
   getSabotajPublicProgress, revealSabotajNetwork, undoLastSabotajChoice,
 } from "../services/surprisesService";
+import { DUEL_THEMES } from "../assets/fighters";
 import { color, font, layout, radius } from "../theme";
 
 // Ordonare operațională pentru secțiunea de Rezultate: meciurile FĂRĂ
@@ -347,7 +348,11 @@ export default function AdminScreen({ onBack }) {
         ...prev,
         [gameweekId]: {
           ...prev[gameweekId],
-          secretMain: field === "mainType" ? { ...prev[gameweekId]?.secretMain, type: value } : prev[gameweekId]?.secretMain,
+          secretMain: field === "mainType"
+          ? { ...prev[gameweekId]?.secretMain, type: value }
+          : field === "duelTheme"
+          ? { ...prev[gameweekId]?.secretMain, duelTheme: value || null }
+          : prev[gameweekId]?.secretMain,
           secretBonus: field === "bonusType" ? { ...prev[gameweekId]?.secretBonus, type: value } : prev[gameweekId]?.secretBonus,
         },
       }));
@@ -1596,6 +1601,8 @@ export default function AdminScreen({ onBack }) {
                   const statusLabel = status === "locked" ? "🔒 BLOCATĂ" : status === "active" ? "⚡ ACTIVĂ" : "✅ REZOLVATĂ";
                   const mainType = data.secretMain?.type || "";
                   const bonusType = data.secretBonus?.type || "";
+                  const duelTheme = data.secretMain?.duelTheme || "";
+                  const isDuelType = ["duel-random", "duel-extreme", "duel-rivali", "team-duel-random"].includes(mainType);
                   const mainRevealed = !!data.public?.mainRevealed;
                   const bonusRevealed = !!data.public?.bonusRevealed;
                   const mainResolved = !!data.public?.mainResolved;
@@ -1637,6 +1644,23 @@ export default function AdminScreen({ onBack }) {
                           <span style={s.doneTag}>✓ gata</span>
                         )}
                       </div>
+
+                      {isDuelType && (
+                        <div style={s.surpriseRow}>
+                          <label style={s.surpriseLabel}>🥋 TEMĂ DUEL</label>
+                          <select
+                            style={s.surpriseSelect}
+                            value={duelTheme}
+                            disabled={mainRevealed}
+                            onChange={(e) => handleConfigureSurprise(gw.id, "duelTheme", e.target.value)}
+                          >
+                            <option value="">— avatar normal (fără temă) —</option>
+                            {DUEL_THEMES.map((t) => (
+                              <option key={t.id} value={t.id}>{t.label}</option>
+                            ))}
+                          </select>
+                        </div>
+                      )}
 
                       {mainType === "sabotaj" && mainRevealed && (
                         <div style={s.triviaBox}>

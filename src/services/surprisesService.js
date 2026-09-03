@@ -32,19 +32,26 @@ export const BONUS_CATALOG = [
 // să nu fie lipite (cerut explicit).
 export const ROULETTE_SEGMENTS = [0, 0, 0, 0, 25, 25, 25, 25, 25, 50, 50, 50, 50, 75, 75, 100];
 
-// 30 de cutii, distribuția aprobată explicit de Lu: 4×100, 6×75, 8×50,
-// 3×40, 2×30, 2×20, 5×0 (30 cutii, sumă 1470, medie ~49p). Ordinea din
-// array NU e ordinea cutiilor pe grilă — se amestecă o singură dată, la
-// Dezvăluire, și rămâne înghețată (poziția cutiei = indexul din array-ul
-// amestecat, stabil tot timpul alegerii).
+// 40 de cutii (crescut de la 30, cerut explicit — grup de 16 jucători ×
+// 2 alegeri, era prea strâmt) — distribuție scalată proporțional față de
+// cea aprobată inițial (4×100,6×75,8×50,3×40,2×30,2×20,5×0 / 30 cutii),
+// păstrând EXACT aceeași medie (49p): 5×100, 8×75, 11×50, 4×40, 3×30,
+// 3×20, 6×0 (40 cutii, sumă 1960, medie 49p). Ordinea din array NU e
+// ordinea cutiilor pe grilă — se amestecă o singură dată, la Dezvăluire,
+// și rămâne înghețată (poziția cutiei = indexul din array-ul amestecat,
+// stabil tot timpul alegerii). IMPORTANT: acest array e citit DOAR la
+// crearea unui Mystery Box nou (revealBonus) — orice etapă deja
+// dezvăluită are propriile boxValues înghețate în Firestore
+// (weeklySurprises/{gw}/secret/bonus.config.boxValues) și NU e afectată
+// de nicio schimbare de-aici, indiferent când se face.
 export const MYSTERY_BOX_VALUES = [
-  100, 100, 100, 100,
-  75, 75, 75, 75, 75, 75,
-  50, 50, 50, 50, 50, 50, 50, 50,
-  40, 40, 40,
-  30, 30,
-  20, 20,
-  0, 0, 0, 0, 0,
+  100, 100, 100, 100, 100,
+  75, 75, 75, 75, 75, 75, 75, 75,
+  50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50,
+  40, 40, 40, 40,
+  30, 30, 30,
+  20, 20, 20,
+  0, 0, 0, 0, 0, 0,
 ];
 
 export function getSurpriseStatus(pub) {

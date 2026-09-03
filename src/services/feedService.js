@@ -399,8 +399,8 @@ export async function processLiveMatchEvent(match, event) {
   return feedEvent;
 }
 
-export async function processJokerActivation(joker, match, nickname) {
-  const event = buildJokerEvent(joker, match, nickname);
+export async function processJokerActivation(joker, match, nickname, isExtra = false) {
+  const event = buildJokerEvent(joker, match, nickname, isExtra);
   if (event) await saveFeedEvents([event]);
   return event;
 }

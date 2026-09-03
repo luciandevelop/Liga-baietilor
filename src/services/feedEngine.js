@@ -823,17 +823,24 @@ export function buildApiPredictionEvent(match, apiPrediction, ourConsensus) {
   };
 }
 
-export function buildJokerEvent(joker, match, nickname) {
+// Un singur generator de eveniment pentru AMBELE tipuri de Joker — nu
+// unul separat pentru Joker Extra (cerut explicit: nu un nou tip de
+// card, doar text distinct în cardul deja existent). `isExtra` schimbă
+// DOAR textul și id-ul (ca să nu se suprascrie unul pe altul în Feed,
+// dacă același user are ambele active în aceeași etapă) — restul
+// structurii (subtype, icon, categorie) rămâne identic.
+export function buildJokerEvent(joker, match, nickname, isExtra = false) {
   if (!match) return null;
+  const label = isExtra ? "Jokerul Extra" : "Jokerul";
   return {
-    id: `joker_${joker.gameweekId}_${joker.userId}`, type: TYPE.SURPRISE, subtype: "joker",
+    id: `joker_${joker.gameweekId}_${joker.userId}${isExtra ? "_extra" : ""}`, type: TYPE.SURPRISE, subtype: "joker",
     ts: Date.now(), importance: IMPORTANCE.JOKER, actors: [joker.userId],
     metadata: { matchId: match.id, homeTeam: match.homeTeam, awayTeam: match.awayTeam },
-    narrativeKey: `joker_${joker.gameweekId}_${joker.userId}`, version: 2,
+    narrativeKey: `joker_${joker.gameweekId}_${joker.userId}${isExtra ? "_extra" : ""}`, version: 2,
     icon: "joker", important: false,
-    title: `${nickname} a activat Jokerul pe ${match.homeTeam} – ${match.awayTeam}`,
+    title: `${nickname} a activat ${label} pe ${match.homeTeam} – ${match.awayTeam}`,
     category: "jokeri", priority: IMPORTANCE.JOKER,
-    detail: { competitionName: match.competitionName, multiplier: "×2", matchStatus: match.status, matchId: match.id, gameweekId: joker.gameweekId },
+    detail: { competitionName: match.competitionName, multiplier: "×2", matchStatus: match.status, matchId: match.id, gameweekId: joker.gameweekId, isExtra },
   };
 }
 

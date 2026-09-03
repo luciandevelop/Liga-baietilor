@@ -12,4 +12,11 @@ jobs:
     steps:
       - name: Apel catre functia Vercel
         run: |
-          curl -sf -X POST "https://liga-baietilor.vercel.app/api/football-sync" -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}"
+          STATUS=$(curl -s -o response.txt -w "%{http_code}" -X POST "https://liga-baietilor.vercel.app/api/football-sync" -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}")
+          echo "HTTP status: $STATUS"
+          echo "--- Raspuns complet ---"
+          cat response.txt
+          if [ "$STATUS" -ge 400 ]; then
+            echo "Eroare HTTP $STATUS"
+            exit 1
+          fi

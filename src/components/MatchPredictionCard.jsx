@@ -30,6 +30,15 @@ export default function MatchPredictionCard({
   onToggleJoker,
   jokerDisabled,
   jokerUsedElsewhereNote,
+  // Joker Extra — câștigat prin Mystery Box, complet separat de Jokerul
+  // normal de mai sus. `jokerExtraEligible` e aproape mereu false (doar
+  // 2 din 40 de cutii îl dau) — când e false, tot ce urmează nu randează
+  // nimic, cardul arată identic cu înainte.
+  jokerExtraEligible,
+  isJokerExtra,
+  onToggleJokerExtra,
+  jokerExtraDisabled,
+  jokerExtraUsedElsewhereNote,
   currentUid,
 }) {
   const p = prediction || {};
@@ -50,6 +59,7 @@ export default function MatchPredictionCard({
           ? "0 0 26px rgba(212,175,55,0.3), 0 18px 32px -14px rgba(0,0,0,0.55)"
           : `0 0 20px -4px ${theme.glowColor}, 0 18px 32px -16px rgba(0,0,0,0.6)`,
         ...(isJoker ? s.cardJoker : {}),
+        ...(isJokerExtra ? s.cardJokerExtra : {}),
       }}
     >
       {isFeatured ? (
@@ -68,6 +78,7 @@ export default function MatchPredictionCard({
         <div style={s.headRow}>
           {isFeatured ? statusTag : <span />}
           {isJoker && <span style={s.jokerBadge}>🃏 ×2</span>}
+          {isJokerExtra && <span style={s.jokerExtraBadge}>🃏✨ ×2 EXTRA</span>}
         </div>
 
         <div style={s.matchRow}>
@@ -142,6 +153,24 @@ export default function MatchPredictionCard({
               <NumericStepper label="CARTONAȘE" value={p.cards} onChange={(v) => onChange({ cards: v })} disabled={saving} />
             </div>
 
+            {jokerExtraEligible && (
+              <div style={s.jokerExtraRow}>
+                <button
+                  type="button"
+                  style={{
+                    ...s.jokerExtraBtn,
+                    ...(isJokerExtra ? s.jokerExtraBtnActive : {}),
+                    ...(jokerExtraDisabled ? s.jokerBtnDisabled : {}),
+                  }}
+                  disabled={jokerExtraDisabled || saving}
+                  onClick={onToggleJokerExtra}
+                >
+                  {isJokerExtra ? "🃏✨ Renunță la Joker Extra" : jokerExtraUsedElsewhereNote ? "🃏✨ Joker Extra folosit" : "🃏✨ Folosește Joker Extra aici"}
+                </button>
+                {jokerExtraUsedElsewhereNote && <div style={s.jokerNote}>{jokerExtraUsedElsewhereNote}</div>}
+              </div>
+            )}
+
             <div style={s.actionsRow}>
               <button
                 type="button"
@@ -179,6 +208,9 @@ export default function MatchPredictionCard({
 const s = {
   card: { background: color.surface, borderRadius: radius.md, overflow: "hidden", boxShadow: shadow.sm },
   cardJoker: { border: "1px solid rgba(139,217,87,0.4)" },
+  // Auriu, distinct de verde-ul Jokerului normal — ca să nu se confunde
+  // vizual care Joker e activ pe care meci.
+  cardJokerExtra: { border: "1px solid rgba(212,175,55,0.55)", boxShadow: "0 0 18px -4px rgba(212,175,55,0.35)" },
   motwStrip: {
     padding: "13px 14px", display: "flex", alignItems: "center", gap: 10,
     background: "linear-gradient(90deg, rgba(212,175,55,0.4), rgba(212,175,55,0.14))",
@@ -195,6 +227,10 @@ const s = {
   jokerBadge: {
     fontSize: 9.5, fontWeight: 800, color: color.green, background: color.greenBg,
     border: `1px solid ${color.greenBorder}`, borderRadius: 999, padding: "2px 7px", whiteSpace: "nowrap",
+  },
+  jokerExtraBadge: {
+    fontSize: 9.5, fontWeight: 800, color: "#F0D060", background: "rgba(212,175,55,0.14)",
+    border: "1px solid rgba(212,175,55,0.5)", borderRadius: 999, padding: "2px 7px", whiteSpace: "nowrap",
   },
 
   matchRow: { display: "flex", alignItems: "flex-start", justifyContent: "center", gap: 16, marginBottom: 4 },
@@ -218,6 +254,14 @@ const s = {
   jokerBtnActive: { background: color.greenBg, border: `1px solid ${color.greenBorder}`, color: color.green },
   jokerBtnDisabled: { opacity: 0.4, cursor: "not-allowed" },
   jokerNote: { fontSize: 9.5, color: color.textFaint, textAlign: "center", marginTop: 6, fontFamily: font.body },
+  // Rând separat (nu în actionsRow) — apare doar la cei ~2 jucători/etapă
+  // eligibili, ca restul cardurilor să rămână identice vizual.
+  jokerExtraRow: { marginTop: 10 },
+  jokerExtraBtn: {
+    width: "100%", background: "rgba(212,175,55,0.08)", border: "1px solid rgba(212,175,55,0.4)", color: "#F0D060",
+    borderRadius: radius.sm, padding: "9px 0", fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: font.body,
+  },
+  jokerExtraBtnActive: { background: "rgba(212,175,55,0.22)", border: "1px solid rgba(212,175,55,0.7)", color: "#F0D060" },
   saveBtn: {
     flex: 1, background: color.goldGradient, color: color.goldOn, border: "none",
     borderRadius: radius.sm, padding: "9px 0", fontSize: 12, fontWeight: 800, cursor: "pointer", fontFamily: font.body,

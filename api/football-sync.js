@@ -11,6 +11,7 @@
 //   FIREBASE_PROJECT_ID        — id-ul proiectului Firebase
 // ══════════════════════════════════════════════════════════════════
 import { getAdminDb } from "./_lib/firebaseAdmin.js";
+import { Timestamp } from "firebase-admin/firestore";
 import { normalizeFixture, matchFixture, detectDelta, normalizeLineup, normalizeH2H, normalizeStandings, normalizePrediction, normalizeInjuries, leagueSupports } from "./_lib/footballLogic.js";
 
 const DAILY_LIMIT = 100;
@@ -39,21 +40,23 @@ export default async function handler(req, res) {
       quota = { date: todayKey, requestsUsed: 0, lastSync: null, lastSuccess: null, lastError: null };
     }
 
-    // ── 2. Etapa curentă — BUG REAL GĂSIT ȘI REPARAT: căutam un câmp
-    // gameweeks.status=="active" care NU există în structura reală a
-    // documentelor (verificat direct în predictionsService.js —
-    // resolveCurrentGameweek). Aplicația determină etapa curentă prin
-    // fereastra weekStart/weekEnd, nu printr-un status. Interogarea
-    // veche întorcea mereu gol, indiferent câte etape active existau
-    // real — de-aici "no_active_gameweek" fals, cu Etapa 5 activă.
+    // ── 2. Etapa curentă — OPTIMIZAT: nu mai citim TOATE etapele
+    // sezonului la fiecare rulare (asta însemna N citiri, la 10 minute,
+    // non-stop, 144×/zi — cost mare independent de orice meci live).
+    // Firestore poate găsi direct candidatul corect cu O SINGURĂ
+    // citire: cea mai recentă etapă al cărei weekStart <= acum. Dacă
+    // și weekEnd-ul ei acoperă momentul curent, e etapa activă — exact
+    // aceeași regulă ca înainte (fereastra weekStart/weekEnd), doar
+    // găsită eficient, nu prin scanarea completă a colecției.
     const now = Date.now();
-    const gwCandidatesSnap = await db.collection("gameweeks").get();
-    const gwCandidates = gwCandidatesSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
-    const currentGw = gwCandidates.find((g) => {
-      const start = g.weekStart?.toMillis ? g.weekStart.toMillis() : null;
-      const end = g.weekEnd?.toMillis ? g.weekEnd.toMillis() : null;
-      return start !== null && end !== null && now >= start && now <= end;
-    });
+    const nowTs = Timestamp.fromMillis(now);
+    const gwQuerySnap = await db.collection("gameweeks")
+      .where("weekStart", "<=", nowTs)
+      .orderBy("weekStart", "desc")
+      .limit(1)
+      .get();
+    const candidate = gwQuerySnap.empty ? null : { id: gwQuerySnap.docs[0].id, ...gwQuerySnap.docs[0].data() };
+    const currentGw = candidate && candidate.weekEnd?.toMillis && candidate.weekEnd.toMillis() >= now ? candidate : null;
     if (!currentGw) {
       return res.status(200).json({ skipped: true, reason: "no_gameweek_in_current_week_window", requestsUsedToday: quota.requestsUsed });
     }

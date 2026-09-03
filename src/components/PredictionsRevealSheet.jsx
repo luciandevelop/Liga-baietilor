@@ -1,9 +1,10 @@
 import { useEffect, useState } from "react";
-import { doc, onSnapshot } from "firebase/firestore";
+import { collection, doc, getDocs, onSnapshot, query, where } from "firebase/firestore";
 import { db } from "../firebase";
 import { listPredictionsForMatch } from "../services/predictionsService";
 import { getUserPublicProfiles } from "../services/profilesService";
 import { computeMainScore, computeMatchPoints } from "../services/scoringEngine";
+import { listJokersForGameweek } from "../services/adminService";
 import PlayerAvatar from "./PlayerAvatar";
 import ClubLogo from "./ClubLogo";
 import { color, font, radius } from "../matchdayTheme";
@@ -17,11 +18,18 @@ import { color, font, radius } from "../matchdayTheme";
 // Date încărcate STRICT la deschidere (lazy) — niciodată la Home sau la
 // lista de meciuri. onSnapshot pe matches/{id} DOAR cât panoul e deschis,
 // dezabonare curată la închidere — exact strategia aprobată.
-export default function PredictionsRevealSheet({ match, isFeatured, isJoker: isJokerMatch, currentUserId, isAdmin, onClose, inline = false }) {
+export default function PredictionsRevealSheet({ match, isFeatured, currentUserId, isAdmin, onClose, inline = false }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [rows, setRows] = useState([]); // { uid, nickname, avatarId, scoreA, scoreB, corners, cards }
   const [liveMatch, setLiveMatch] = useState(match); // se actualizează realtime dacă e LIVE
+  // Cine are Joker/Joker Extra pe ACEST meci — seturi de uid, calculate
+  // din interogări pe etapă, filtrate local la matchId. NU modifică
+  // Jokerul normal (doar citire, funcție deja existentă, neapelată de
+  // nicăieri până acum) — Joker Extra citit inline, aceeași formă de
+  // interogare, nicio funcție nouă adăugată.
+  const [jokerUids, setJokerUids] = useState(new Set());
+  const [jokerExtraUids, setJokerExtraUids] = useState(new Set());
 
   useEffect(() => {
     let cancelled = false;
@@ -49,8 +57,30 @@ export default function PredictionsRevealSheet({ match, isFeatured, isJoker: isJ
       }
     })();
 
+    // Cine are Jokerul (normal/Extra) pe acest meci — best-effort, separat
+    // de eroarea de mai sus. Dacă eșuează (ex. meci nedezvăluit încă),
+    // seturile rămân goale — comportamentul e identic cu "nimeni nu are
+    // Joker aici", nu o eroare vizibilă în plus.
+    (async () => {
+      try {
+        const jokers = await listJokersForGameweek(match.gameweekId);
+        if (cancelled) return;
+        setJokerUids(new Set(jokers.filter((j) => j.matchId === match.id).map((j) => j.userId)));
+      } catch (err) {
+        console.error("Eroare la încărcarea Jokerelor etapei:", err);
+      }
+      try {
+        const jokerExtraSnap = await getDocs(query(collection(db, "jokerExtra"), where("gameweekId", "==", match.gameweekId)));
+        if (cancelled) return;
+        const jokersExtra = jokerExtraSnap.docs.map((d) => d.data());
+        setJokerExtraUids(new Set(jokersExtra.filter((j) => j.matchId === match.id).map((j) => j.userId)));
+      } catch (err) {
+        console.error("Eroare la încărcarea Jokerelor Extra ale etapei:", err);
+      }
+    })();
+
     return () => { cancelled = true; };
-  }, [match.id]);
+  }, [match.id, match.gameweekId]);
 
   // Realtime STRICT cât panoul e deschis — doar pentru meciuri LIVE (un
   // meci FINISHED nu-și mai schimbă scorul; SCHEDULED n-are sens aici).
@@ -82,6 +112,8 @@ export default function PredictionsRevealSheet({ match, isFeatured, isJoker: isJ
     ...r,
     tier: tierFor(r),
     sameAsMine: ownPrediction ? (r.scoreA === ownPrediction.scoreA && r.scoreB === ownPrediction.scoreB) : false,
+    hasJoker: jokerUids.has(r.uid),
+    hasJokerExtra: jokerExtraUids.has(r.uid),
     finishedResult: isFinished ? computeMainScore(r.scoreA, r.scoreB, liveA, liveB) : null,
     finishedPoints: isFinished ? computeMatchPoints({
       prediction: { scoreA: r.scoreA, scoreB: r.scoreB }, match: liveMatch, isFeatured, isJoker: false,
@@ -167,6 +199,8 @@ function PredictionRow({ row, isLive, isFinished, isMe }) {
         <div style={s.rowNameLine}>
           <span style={s.rowName}>{row.nickname}{isMe ? " (tu)" : ""}</span>
           {row.sameAsMine && !isMe && <span style={s.starBadge}>⭐</span>}
+          {row.hasJoker && <span style={s.jokerBadge}>🃏</span>}
+          {row.hasJokerExtra && <span style={s.jokerExtraBadge}>🃏✨ JOKER EXTRA</span>}
         </div>
         {isLive && row.tier === "exact" && <div style={s.tierLabelExact}>ACUM EXACT</div>}
         {isLive && row.tier === "alive" && <div style={s.tierLabelAlive}>Încă în joc</div>}
@@ -232,6 +266,14 @@ const s = {
   rowNameLine: { display: "flex", alignItems: "center", gap: 5 },
   rowName: { fontSize: 12.5, fontWeight: 700, color: color.textPrimary, fontFamily: font.body, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
   starBadge: { fontSize: 11 },
+  jokerBadge: {
+    fontSize: 9.5, fontWeight: 800, color: color.green, background: color.greenBg,
+    border: `1px solid ${color.greenBorder}`, borderRadius: 999, padding: "1px 5px", whiteSpace: "nowrap",
+  },
+  jokerExtraBadge: {
+    fontSize: 9, fontWeight: 800, color: "#F0D060", background: "rgba(212,175,55,0.14)",
+    border: "1px solid rgba(212,175,55,0.5)", borderRadius: 999, padding: "1px 6px", whiteSpace: "nowrap",
+  },
   tierLabelExact: { fontSize: 9.5, fontWeight: 800, color: color.goldLight, letterSpacing: "0.03em", marginTop: 1 },
   tierLabelAlive: { fontSize: 9.5, fontWeight: 700, color: color.textSecondary, marginTop: 1 },
   tierLabelDead: { fontSize: 9.5, color: color.textFaint, marginTop: 1 },

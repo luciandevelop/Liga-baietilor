@@ -164,13 +164,19 @@ export async function getAllSurpriseResults(gameweekId) {
 // ══════════════════════════════════════════════════════════════════
 // ADMIN — configurare (doar tipul, fără pairing — acela vine la Reveal)
 // ══════════════════════════════════════════════════════════════════
-export async function configureSurprise(gameweekId, { mainType, bonusType } = {}) {
+export async function configureSurprise(gameweekId, { mainType, bonusType, duelTheme } = {}) {
   await setDoc(doc(db, "weeklySurprises", gameweekId), { gameweekId }, { merge: true });
   if (mainType) {
     await setDoc(doc(db, "weeklySurprises", gameweekId, "secret", "main"), { type: mainType }, { merge: true });
   }
   if (bonusType) {
     await setDoc(doc(db, "weeklySurprises", gameweekId, "secret", "bonus"), { type: bonusType }, { merge: true });
+  }
+  // Tema de Duel — câmp soră lui `type`, pe același document. Independentă
+  // de bibliotecă (poate fi aleasă chiar dacă tema n-are încă nicio
+  // imagine — fallback automat la avatarul normal, vezi fighters.js).
+  if (duelTheme !== undefined) {
+    await setDoc(doc(db, "weeklySurprises", gameweekId, "secret", "main"), { duelTheme: duelTheme || null }, { merge: true });
   }
 }
 

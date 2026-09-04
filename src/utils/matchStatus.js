@@ -42,3 +42,52 @@ export function getMatchStatus(match, now = Date.now()) {
   if (kickoffMs !== null && now >= kickoffMs) return "live";
   return "scheduled";
 }
+
+// ══════════════════════════════════════════════════════════════════
+// LIVE (automat, din API-Football) vs OFICIAL (validat de Admin) —
+// separare cerută explicit. `match.status`/`realScoreA/B`/`liveMinute`/
+// `matchEvents` rămân STRICT manuale (scrise doar de Admin, singurele
+// care declanșează scoring-ul). `liveApiStatus`/`liveApiScoreA/B`/
+// `liveApiMinute`/`liveApiEvents` sunt scrise automat de
+// api/football-sync.js — DOAR pentru afișare, niciodată pentru scoring.
+//
+// Această funcție e SINGURUL loc care decide ce arată o componentă de
+// UI: dacă Adminul a validat deja (Final oficial cu scor), ăla e
+// adevărul, punct — nu ne uităm deloc la datele live (pot diferi, ex.
+// Adminul a corectat ceva). Altfel, dacă există date live/API în
+// desfășurare sau terminate, le arătăm CU eticheta corespunzătoare
+// (`isLiveUnofficial`/`isFinalUnofficial`), ca userul să știe clar că
+// nu e încă rezultatul oficial. Altfel, starea oficială normală
+// (Programat/Amânat/Anulat/Pauză, orice a setat Adminul explicit). ──
+const LIVE_API_IN_PROGRESS = ["1H", "2H", "HT", "ET", "BT", "P"];
+const LIVE_API_FINISHED = ["FT", "AET", "PEN"];
+
+export function getDisplayMatchState(match, now = Date.now()) {
+  const officialStatus = getMatchStatus(match, now);
+  const hasOfficialResult = officialStatus === "finished" && match.realScoreA !== null && match.realScoreA !== undefined;
+
+  if (hasOfficialResult) {
+    return {
+      status: officialStatus, scoreA: match.realScoreA, scoreB: match.realScoreB,
+      minute: match.liveMinute ?? null, events: match.matchEvents || [],
+      isLiveUnofficial: false, isFinalUnofficial: false,
+    };
+  }
+
+  const liveStatus = match.liveApiStatus;
+  if (LIVE_API_IN_PROGRESS.includes(liveStatus) || LIVE_API_FINISHED.includes(liveStatus)) {
+    const finished = LIVE_API_FINISHED.includes(liveStatus);
+    return {
+      status: finished ? "finished" : "live",
+      scoreA: match.liveApiScoreA ?? 0, scoreB: match.liveApiScoreB ?? 0,
+      minute: match.liveApiMinute ?? null, events: match.liveApiEvents || [],
+      isLiveUnofficial: !finished, isFinalUnofficial: finished,
+    };
+  }
+
+  return {
+    status: officialStatus, scoreA: match.realScoreA ?? null, scoreB: match.realScoreB ?? null,
+    minute: match.liveMinute ?? null, events: match.matchEvents || [],
+    isLiveUnofficial: false, isFinalUnofficial: false,
+  };
+}

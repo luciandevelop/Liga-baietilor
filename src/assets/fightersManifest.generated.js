@@ -94,6 +94,12 @@ export default {
       "files": {
         "1": "fighter_skinny_elastico_300x420.png"
       }
+    },
+    "vladinhuu": {
+      "nextIndex": 2,
+      "files": {
+        "1": "file_00000000fea4821188ec96fda839bf0c.png"
+      }
     }
   }
 };

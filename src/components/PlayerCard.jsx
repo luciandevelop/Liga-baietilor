@@ -320,6 +320,14 @@ function sideStatTierLabel(points) {
   if (points === 2) return "diferență de 3";
   return "fără reușită";
 }
+// 0 e o valoare validă (userul a pronosticat/real a fost chiar 0) — se
+// afișează "0". DOAR lipsa reală (null/undefined — predicție incompletă,
+// sau date vechi dinainte de acest fix) devine "—". Nu folosim `?? "—"`
+// simplu în JSX pentru asta, ca să nu fie loc de greșeală (0 ?? "—" e 0,
+// corect, dar un `||` în loc de `??` undeva ar fi stricat exact asta).
+function fmtSideVal(v) {
+  return (v === null || v === undefined) ? "—" : String(v);
+}
 
 function MatchBreakdownRow({ m }) {
   const predText = m.prediction ? `${m.prediction.scoreA}-${m.prediction.scoreB}` : null;
@@ -367,17 +375,25 @@ function MatchBreakdownRow({ m }) {
       </div>
 
       {/* defalcare pe surse de puncte, CU eticheta pragului — nu doar
-          cifra, ca să nu existe loc de discuție despre "de ce atâtea puncte" */}
+          cifra, ca să nu existe loc de discuție despre "de ce atâtea puncte".
+          Cornere/Cartonașe includ acum și predicție vs real, EXPLICIT — cerut
+          direct: userul trebuie să poată verifica singur "am pus 8, au fost
+          11, diferența e 3, am primit 2p", fără presupuneri. 0 e o valoare
+          validă (afișată ca "0"), doar lipsa reală (null/undefined) devine
+          "—" — regulă aplicată de fmtSideVal, nu de operatorul ?? simplu
+          (care ar fi tratat greșit 0 la fel ca lipsă). */}
       <div style={s.breakdownGrid}>
         <div style={s.breakdownCell}>
           <span style={s.breakdownHead}>Scor <b style={s.breakdownVal}>+{m.scorePoints ?? 0}</b></span>
           <span style={s.breakdownTier}>{scoreTierLabel(m.scorePoints ?? 0)}</span>
         </div>
         <div style={s.breakdownCell}>
+          <span style={s.breakdownSub}>Predicție {fmtSideVal(m.prediction?.corners)} · Real {fmtSideVal(m.real?.corners)}</span>
           <span style={s.breakdownHead}>Cornere <b style={s.breakdownVal}>+{m.cornersPoints ?? 0}</b></span>
           <span style={s.breakdownTier}>{sideStatTierLabel(m.cornersPoints ?? 0)}</span>
         </div>
         <div style={s.breakdownCell}>
+          <span style={s.breakdownSub}>Predicție {fmtSideVal(m.prediction?.cards)} · Real {fmtSideVal(m.real?.cards)}</span>
           <span style={s.breakdownHead}>Cartonașe <b style={s.breakdownVal}>+{m.cardsPoints ?? 0}</b></span>
           <span style={s.breakdownTier}>{sideStatTierLabel(m.cardsPoints ?? 0)}</span>
         </div>
@@ -587,6 +603,7 @@ const s = {
   },
   breakdownCell: { display: "flex", flexDirection: "column", gap: 2 },
   breakdownVal: { color: color.textSecondary, fontWeight: 700 },
+  breakdownSub: { fontSize: 9, color: color.textFaint, fontFamily: font.body },
   breakdownHead: { fontSize: 10.5, color: color.textMuted, fontFamily: font.body },
   breakdownTier: { fontSize: 8.5, color: color.textFaint, fontStyle: "italic", fontFamily: font.body },
 };

@@ -1629,6 +1629,21 @@ export async function getLiveGameweekPointsDiagnostic(gameweekId) {
     return { pointsByUid, breakdownByUid, diagnostic: diag };
   }
 
+  // ── Cornere/cartonașe BRUTE (predicție + real) — matchPoints NU le
+  // stochează (doar scoreA/scoreB + punctele deja calculate), deci le
+  // completăm aici, din predicții, EXACT ca în computeGameweekResults
+  // (aceeași sursă, același pattern — un query per meci Final, nu per
+  // meci al etapei). STRICT pentru afișare/transparență în PlayerCard —
+  // nu afectează punctele, scoring-ul sau matchPoints în vreun fel.
+  // `real.corners/cards` vin gratis, direct din `match` (deja încărcat
+  // mai sus), fără citire suplimentară. ──
+  const predictionsByMatch = {};
+  for (const match of completedMatches) {
+    const predSnap = await getDocs(query(collection(db, "predictions"), where("matchId", "==", match.id)));
+    predictionsByMatch[match.id] = {};
+    predSnap.docs.forEach((d) => { predictionsByMatch[match.id][d.data().userId] = d.data(); });
+  }
+
   // Verificare explicită de nepotrivire — dacă avem documente matchPoints,
   // dar NICIUNUL nu corespunde vreunui meci Final din LISTA curentă de
   // meciuri a acestei etape, e semn de gameweekId nepotrivit undeva.
@@ -1644,6 +1659,7 @@ export async function getLiveGameweekPointsDiagnostic(gameweekId) {
     pointsByUid[mp.uid] += mp.points || 0;
     const match = completedMatches.find((m) => m.id === mp.matchId);
     if (match) {
+      const rawPrediction = predictionsByMatch[mp.matchId]?.[mp.uid] || null;
       breakdownByUid[mp.uid][mp.matchId] = {
         matchId: mp.matchId, homeTeam: match.homeTeam, awayTeam: match.awayTeam, kickoffAt: match.kickoffAt,
         status: "scored", total: mp.points, finalMatchPoints: mp.points,
@@ -1651,8 +1667,14 @@ export async function getLiveGameweekPointsDiagnostic(gameweekId) {
         // pentru documente PUBLICATE ÎNAINTE de acest fix (fără ele),
         // fallback-uri sigure (null/0), nu undefined care ar crăpa la
         // randare (regresia găsită și reparată acum, permanent).
-        prediction: mp.prediction || null,
-        real: mp.real || { scoreA: match.realScoreA, scoreB: match.realScoreB },
+        // corners/cards completate din predicția brută (mai sus) și din
+        // match — DOAR pentru afișare, nu ating mp.prediction/mp.real.
+        prediction: mp.prediction
+          ? { ...mp.prediction, corners: rawPrediction?.corners, cards: rawPrediction?.cards }
+          : null,
+        real: mp.real
+          ? { ...mp.real, corners: match.realCorners, cards: match.realCards }
+          : { scoreA: match.realScoreA, scoreB: match.realScoreB, corners: match.realCorners, cards: match.realCards },
         scorePoints: mp.scorePoints ?? 0,
         cornersPoints: mp.cornersPoints ?? 0,
         cardsPoints: mp.cardsPoints ?? 0,

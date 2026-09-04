@@ -849,6 +849,53 @@ export function buildJokerEvent(joker, match, nickname, isExtra = false) {
   };
 }
 
+// ── Rezolvare oraș per club — pentru "Despre oraș" (city facts), unde
+// informația relevantă e ORAȘUL, nu clubul. Listă mică, statică (47 de
+// echipe din baza editorială curentă) — actualizată manual dacă se
+// adaugă un club nou fără oraș asociat aici (fallback: textul rămâne
+// neschimbat, nu se rupe nimic, doar nu se dezambiguizează).
+const TEAM_CITY = {
+  arsenal: "Londra", "as-monaco": "Monaco", "aston-villa": "Birmingham", "athletic-club": "Bilbao",
+  "atletico-madrid": "Madrid", barcelona: "Barcelona", "bayern-munchen": "München", "borussia-dortmund": "Dortmund",
+  bournemouth: "Bournemouth", brighton: "Brighton", "celta-vigo": "Vigo", "cfr-cluj": "Cluj-Napoca",
+  chelsea: "Londra", "club-brugge": "Bruges", "como-1907": "Como", "crystal-palace": "Londra",
+  "dinamo-bucuresti": "București", "fc-porto": "Porto", fcsb: "București", feyenoord: "Rotterdam",
+  galatasaray: "Istanbul", getafe: "Madrid", inter: "Milano", juventus: "Torino",
+  lens: "Lens", lille: "Lille", liverpool: "Liverpool", "manchester-city": "Manchester",
+  "manchester-united": "Manchester", marseille: "Marsilia", milan: "Milano", napoli: "Napoli",
+  "paris-saint-germain": "Paris", psv: "Eindhoven", "rapid-bucuresti": "București", "rb-leipzig": "Leipzig",
+  "real-betis": "Sevilla", "real-madrid": "Madrid", "real-sociedad": "San Sebastián", roma: "Roma",
+  shakhtar: "Donețk", "slavia-prague": "Praga", "sporting-cp": "Lisabona", sunderland: "Sunderland",
+  tottenham: "Londra", "u-cluj": "Cluj-Napoca", "u-craiova": "Craiova", "vfb-stuttgart": "Stuttgart", villarreal: "Villarreal",
+};
+
+// ── Dezambiguizare — folosește TIPUL faptului + metadata deja
+// disponibilă (nu un prefix universal): faptele de oraș primesc orașul
+// clubului, restul (club/antrenor/jucător) primesc numele echipei reale
+// din meci (home/away, deja cunoscut la selecție — vezi
+// getEditorialSnippetsForMatch). Dacă numele relevant apare deja în
+// text (multe articole îl au), nu se schimbă nimic — minimum de text
+// suplimentar, cerut explicit. ──
+function clarifySnippetText(snippet) {
+  const raw = snippet.subtitle || snippet.body;
+  if (!raw) return raw;
+  const isCity = snippet.title === "Despre oraș";
+
+  if (isCity) {
+    const city = TEAM_CITY[snippet.teamId];
+    if (!city || raw.toLowerCase().includes(city.toLowerCase())) return raw;
+    const dashIdx = raw.indexOf("—");
+    if (dashIdx > 0) {
+      return `${raw.slice(0, dashIdx).trim()} din ${city} ${raw.slice(dashIdx)}`;
+    }
+    return `${city}: ${raw}`;
+  }
+
+  const team = snippet.teamName;
+  if (!team || raw.toLowerCase().includes(team.toLowerCase())) return raw;
+  return `${team}: ${raw}`;
+}
+
 export function buildUpcomingMatchEvent(match, editorialSnippets, isImportant) {
   // ── Faptele de oraș/echipă existau deja, calculate corect, dar
   // rămâneau îngropate în `detail.editorialSnippets` — pe care
@@ -856,10 +903,16 @@ export function buildUpcomingMatchEvent(match, editorialSnippets, isImportant) {
   // fapt (determinist, ales din cele calculate) apare direct în
   // subtitlul cardului, vizibil. Restul rămân disponibile în detail
   // pentru "Vezi tot"/ecranul complet, dacă vrem să le arătăm pe
-  // toate acolo mai târziu. ──
+  // toate acolo mai târziu.
+  //
+  // AMBIGUITATE REPARATĂ: `pick` alege acum snippet-ul ÎNTREG (obiect,
+  // cu teamId/teamName atașate la selecție), nu doar textul lui brut —
+  // `clarifySnippetText` adaugă orașul/echipa relevantă dacă textul,
+  // luat separat de titlul cardului, ar fi ambiguu. ──
   const snippet = editorialSnippets && editorialSnippets.length > 0
-    ? pick(editorialSnippets.map((s) => s.subtitle || s.body), `upcoming_${match.id}`)
+    ? pick(editorialSnippets, `upcoming_${match.id}`)
     : null;
+  const snippetText = snippet ? clarifySnippetText(snippet) : null;
   return {
     id: `upcoming_${match.id}`, type: TYPE.MATCH, subtype: isImportant ? "upcoming_important" : "upcoming",
     ts: Date.now(), importance: isImportant ? IMPORTANCE.UPCOMING_IMPORTANT : IMPORTANCE.PREVIEW,
@@ -867,7 +920,7 @@ export function buildUpcomingMatchEvent(match, editorialSnippets, isImportant) {
     narrativeKey: `upcoming_${match.id}`, version: 2,
     icon: isImportant ? "star" : "whistle", important: isImportant,
     title: isImportant ? `${match.homeTeam} – ${match.awayTeam}: Meciul Săptămânii (Punctaj Dublu)` : `${match.homeTeam} – ${match.awayTeam}`,
-    subtitle: snippet || match.competitionName || null,
+    subtitle: snippetText || match.competitionName || null,
     category: "meciuri", priority: isImportant ? IMPORTANCE.UPCOMING_IMPORTANT : IMPORTANCE.PREVIEW,
     detail: {
       competitionName: match.competitionName, matchId: match.id,
@@ -1063,15 +1116,6 @@ export function attachBanter(event, recentKeys = new Set()) {
 // 5. DEDUPLICATION / ANTI-SPAM
 // ══════════════════════════════════════════════════════════════════
 export function mergeFeedEvents(matchesById, ...groups) {
-  // Compat — apeluri vechi (înainte de boost-ul pe dată) treceau direct
-  // grupurile de evenimente, fără harta de meciuri. Dacă primul argument
-  // nu arată a hartă (are .flat, deci e un array de evenimente), tratăm
-  // apelul ca fiind în formatul vechi — fără boost, comportament identic
-  // cu înainte.
-  if (Array.isArray(matchesById)) {
-    groups = [matchesById, ...groups];
-    matchesById = {};
-  }
   const all = groups.flat().filter(Boolean);
   const seen = new Set();
   const deduped = all.filter((e) => (seen.has(e.id) ? false : (seen.add(e.id), true)));
@@ -1159,10 +1203,5 @@ function editorialMix(sortedEvents) {
   }
   return result;
 }
-
-// Compat cu apelurile vechi din feedService.js care importă FEED_CATEGORIES/PRIORITY —
-// păstrate ca alias-uri, ca să nu fie nevoie să rescriu TOATE punctele de-apel deodată.
-export const FEED_CATEGORIES = { CLASAMENT: "clasament", MECIURI: "meciuri", JOKERI: "jokeri", FUN: "fun" };
-export const PRIORITY = IMPORTANCE;
 
 export { hashSeed, pick, pickAvoiding, pickIndexAvoiding };

@@ -24,7 +24,7 @@ import {
   detectLeaderStory, detectPodiumStory, detectBottomStory, detectMomentumAndStreaks, detectRivalry,
   detectConsensusStory, applyEditorialBudget, buildRecap, buildMatchPreviewCard,
 } from "./feedStoryEngine";
-import { listGeneralLeaderboard, listAllUsers, listActiveUserIds } from "./adminService";
+import { listGeneralLeaderboard, listActiveUserIds } from "./adminService";
 import { getAllSurpriseResults } from "./surprisesService";
 import { getUserPublicProfiles } from "./profilesService";
 import { EDITORIAL_ARTICLES } from "../feedContent/editorialContent";
@@ -425,22 +425,38 @@ function pickRotating(arr, count, seed) {
 function getEditorialSnippetsForMatch(match) {
   const homeId = resolveTeamId(match.homeTeam);
   const awayId = resolveTeamId(match.awayTeam);
-  const forTeam = (teamId) => {
+  const forTeam = (teamId, teamName) => {
     const all = EDITORIAL_ARTICLES.filter((a) => a.teamId === teamId);
     const football = all.filter((a) => a.title !== "Despre oraș");
     const city = all.filter((a) => a.title === "Despre oraș");
     const seed = hashSeedLocal(match.id + teamId);
-    return [...pickRotating(football, 2, seed), ...pickRotating(city, 2, seed)];
+    // `teamName` atașat AICI, la selecție — echipa reală din meciul curent
+    // (home/away), nu doar id-ul intern — folosit mai jos, în
+    // clarifySnippetText, ca să dezambiguizeze textul fără presupuneri.
+    return [...pickRotating(football, 2, seed), ...pickRotating(city, 2, seed)].map((a) => ({ ...a, teamName }));
   };
-  return [...forTeam(homeId), ...forTeam(awayId)];
+  return [...forTeam(homeId, match.homeTeam), ...forTeam(awayId, match.awayTeam)];
 }
 
 export async function processUpcomingMatches(matches, featuredMatchIds = [], gameweekId = null) {
   const now = Date.now();
+  // ── Fereastră editorială — SEPARATĂ de fereastra tehnică de sync
+  // (aceea rămâne 48h/relevance în football-sync.js, pentru cache).
+  // Un meci NORMAL (nu Meciul Săptămânii) devine eligibil pentru Feed
+  // DOAR în ziua lui, nu "azi+mâine" și nici cu 7 zile înainte — cerut
+  // explicit, ca un meci de mâine să nu concureze deloc cu cele de azi.
+  // Meciul Săptămânii, ales manual de Admin, păstrează fereastra largă
+  // (UPCOMING_WINDOW_MS, 7 zile) — are o funcție editorială specială,
+  // anunțată din timp, intenționat. ──
+  const startOfToday = new Date(now); startOfToday.setHours(0, 0, 0, 0);
+  const startOfTomorrow = new Date(startOfToday); startOfTomorrow.setDate(startOfTomorrow.getDate() + 1);
+
   const upcoming = matches.filter((m) => {
     if (m.status !== "scheduled") return false;
     const kickoffMs = m.kickoffAt?.toMillis ? m.kickoffAt.toMillis() : null;
-    return kickoffMs && kickoffMs > now && kickoffMs - now < UPCOMING_WINDOW_MS;
+    if (!kickoffMs || kickoffMs <= now) return false;
+    if (featuredMatchIds.includes(m.id)) return kickoffMs - now < UPCOMING_WINDOW_MS;
+    return kickoffMs < startOfTomorrow.getTime(); // strict, în ziua curentă
   });
 
   const events = upcoming.map((m) => {
@@ -847,13 +863,6 @@ export async function deleteFunItem(id) {
   await deleteDoc(doc(db, "feedFunItems", id));
 }
 
-export async function loadFullFeed(matches = []) {
-  const [live, users, adminFun] = await Promise.all([listLiveFeedEvents(), listAllUsers(), getCachedFunItems()]);
-  const fun = buildSampledFunEvents(adminFun);
-  const matchesById = Object.fromEntries(matches.map((m) => [m.id, m]));
-  return { merged: mergeFeedEvents(matchesById, live, fun), users };
-}
-
 // ── Fun items admin — se schimbă RAR (adminul adaugă unul din când în
 // când), deci nu are rost să-l recitim din Firestore la fiecare
 // reîmprospătare de Feed. Cache simplu, în memorie, cu TTL — un singur
@@ -869,36 +878,63 @@ async function getCachedFunItems() {
   return funItemsCache;
 }
 
-// ── Eșantionul de FUN filler (3 din tot poolul, rotativ determinist pe
-// zi) — extras într-un helper comun, folosit ATÂT de loadFullFeed
-// (pagina Feed completă) CÂT ȘI de getHomeFeedTop (Home) — o singură
-// logică, nicio duplicare. ──
+// ── Eșantionul zilnic de conținut "relaxat" — DOUĂ pool-uri separate,
+// nu unul singur amestecat. Motiv: cu un singur pool mare (citate +
+// glume/proverbe împreună), rotația poate exclude ușor citatele într-o
+// zi anume, mai ales dacă poolul de glume e mai mare — exact problema
+// semnalată ("citatele dispar"). Acum fiecare categorie are un număr
+// GARANTAT de sloturi (nu strict fix ca proporție, dar niciodată zero
+// cât timp există citate eligibile), rotative determinist pe zi —
+// folosit ATÂT de FeedScreen (Vezi tot) CÂT ȘI de getHomeFeedTop
+// (Home) — o singură logică, nicio duplicare. ──
+const QUOTE_SAMPLE_SIZE = 2;
+const OTHER_FUN_SAMPLE_SIZE = 2;
+
+// Citate — rotație proprie, fără autor repetat în ACELAȘI eșantion.
+// Determinist pe zi (nu Firestore) — cost zero suplimentar, spre
+// deosebire de anti-repetiția pe MAI MULTE zile (vezi
+// processDailyFillerIfQuiet, rămasă neatinsă, cu propriul ei mecanism
+// bazat pe Firestore, pentru cazul de filler pe zile chiar liniștite).
+function pickDailyQuotes(daySeed, count) {
+  if (!ALL_QUOTES || ALL_QUOTES.length === 0) return [];
+  const startIdx = hashSeedLocal(`${daySeed}_quotes`) % ALL_QUOTES.length;
+  const picked = [];
+  const usedAuthors = new Set();
+  for (let i = 0; i < ALL_QUOTES.length && picked.length < count; i++) {
+    const q = ALL_QUOTES[(startIdx + i) % ALL_QUOTES.length];
+    if (!usedAuthors.has(q.author)) { picked.push(q); usedAuthors.add(q.author); }
+  }
+  return picked;
+}
+
 function buildSampledFunEvents(adminFun) {
   const daySeed = new Date().toISOString().slice(0, 10);
-  const allFun = [
+
+  const quotes = pickDailyQuotes(daySeed, QUOTE_SAMPLE_SIZE);
+  const quoteEvents = quotes.map((q, i) => buildQuoteEvent(daySeed, i, q)).filter(Boolean);
+
+  const allOtherFun = [
     ...FUN_ITEMS.map((f) => ({ id: `fun_${f.id}`, label: f.label, text: f.text })),
     ...adminFun.map((f) => ({ id: `fun_${f.id}`, label: f.label, text: f.text })),
   ];
-  const FUN_SAMPLE_SIZE = 3;
-  const startIdx = hashSeedLocal(daySeed) % Math.max(allFun.length, 1);
-  const sampledFun = allFun.length <= FUN_SAMPLE_SIZE ? allFun
-    : Array.from({ length: FUN_SAMPLE_SIZE }, (_, i) => allFun[(startIdx + i) % allFun.length]);
-  return sampledFun.map((f) => ({
+  const startIdx = hashSeedLocal(`${daySeed}_otherfun`) % Math.max(allOtherFun.length, 1);
+  const sampledOtherFun = allOtherFun.length <= OTHER_FUN_SAMPLE_SIZE ? allOtherFun
+    : Array.from({ length: OTHER_FUN_SAMPLE_SIZE }, (_, i) => allOtherFun[(startIdx + i) % allOtherFun.length]);
+  const otherFunEvents = sampledOtherFun.map((f) => ({
     id: f.id, type: TYPE.FACT, category: "fun", priority: 15, ts: Date.now(),
     icon: "fun", important: false, title: f.text, subtitle: f.label,
   }));
+
+  return [...quoteEvents, ...otherFunEvents];
 }
 
-// ── Home — versiune LIGHTWEIGHT, doar pentru cele 8 carduri afișate
-// efectiv acolo. Diferența față de loadFullFeed():
-//   • citește un buffer mic de evenimente (implicit 24, nu 150) —
-//     suficient ca algoritmul de merge/prioritate să aleagă corect
-//     primele `max`, fără să tragă tot istoricul;
-//   • NU mai citește `listAllUsers()` — verificat: Home ignora complet
-//     acel rezultat (`const { merged } = await loadFullFeed()`), deci
-//     era o citire 100% irosită pentru cazul ăsta;
-//   • fun items din cache (vezi mai sus), nu recitite de fiecare dată.
-// Feed-ul COMPLET (ecranul dedicat) rămâne pe loadFullFeed(), neschimbat.
+// ── Sursă unică pentru Home ȘI "Vezi tot" — AMBELE folosesc funcția
+// asta, cu doar `max` diferit (Home: 8, Vezi tot: ~13) — aceeași
+// logică editorială, aceeași ordine, niciodată două Feed-uri diferite.
+// Citește un buffer mic de evenimente (implicit 24-39, nu 150) —
+// suficient ca algoritmul de merge/prioritate să aleagă corect primele
+// `max`, fără să tragă tot istoricul. Fun items din cache (vezi mai
+// sus), nu recitite de fiecare dată.
 export async function getHomeFeedTop(matches = [], { max = 8 } = {}) {
   const buffer = Math.max(max * 3, 20);
   const [live, adminFun] = await Promise.all([listLiveFeedEvents({ max: buffer }), getCachedFunItems()]);

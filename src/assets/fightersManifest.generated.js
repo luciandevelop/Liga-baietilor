@@ -58,6 +58,18 @@ export default {
       "files": {
         "1": "oooo_mircea.webp"
       }
+    },
+    "pannnnn": {
+      "nextIndex": 2,
+      "files": {
+        "1": "pannnn.webp"
+      }
+    },
+    "rzvn": {
+      "nextIndex": 2,
+      "files": {
+        "1": "raiden_300x420.webp"
+      }
     }
   }
 };

@@ -5,6 +5,24 @@
 // schimbă niciodată. Structură: { tema: { pachetJucător: { nextIndex, files } } }.
 export default {
   "kombat": {
+    "adireal": {
+      "nextIndex": 2,
+      "files": {
+        "1": "adireal.webp"
+      }
+    },
+    "alex-nicoara": {
+      "nextIndex": 2,
+      "files": {
+        "1": "chimera_300x420.webp"
+      }
+    },
+    "andreis": {
+      "nextIndex": 2,
+      "files": {
+        "1": "fighter_cage_kano_300x420.png"
+      }
+    },
     "bogdanb": {
       "nextIndex": 2,
       "files": {

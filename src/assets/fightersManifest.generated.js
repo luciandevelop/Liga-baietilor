@@ -34,6 +34,12 @@ export default {
       "files": {
         "1": "lazy_fighter_300x420.webp"
       }
+    },
+    "cristian": {
+      "nextIndex": 2,
+      "files": {
+        "1": "johnny_cage_300x420.png"
+      }
     }
   }
 };

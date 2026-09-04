@@ -12,7 +12,7 @@
 // ══════════════════════════════════════════════════════════════════
 import { getAdminDb } from "./_lib/firebaseAdmin.js";
 import { Timestamp } from "firebase-admin/firestore";
-import { normalizeFixture, matchFixture, detectDelta, normalizeLineup, normalizeH2H, normalizeStandings, normalizePrediction, normalizeInjuries, leagueSupports } from "./_lib/footballLogic.js";
+import { normalizeFixture, matchFixture, detectDelta, normalizeLineup, leagueSupports } from "./_lib/footballLogic.js";
 
 const DAILY_LIMIT = 100;
 const SAFETY_MARGIN = 85; // pentru matching (o singură dată/meci, nu urgent)
@@ -204,7 +204,28 @@ export default async function handler(req, res) {
               lastDeltaEvents: delta.newEvents,
               lastStatusChange: delta.statusChanged ? { from: oldSnapshot?.status || null, to: newSnapshot.status } : null,
               lastScoreChange: delta.scoreChanged ? { before: delta.oldScore || { home: 0, away: 0 }, after: delta.newScore || { home: newSnapshot.homeScore, away: newSnapshot.awayScore } } : null,
-            }, { merge: true }); // merge:true — PĂSTREAZĂ lineup/h2h/form/injuries/apiPrediction scrise de secțiunea Match Intelligence la sincronizări anterioare. lastDeltaEvents etc. tot se suprascriu corect (sunt incluse explicit în fiecare scriere).
+            }, { merge: true }); // merge:true — PĂSTREAZĂ lineup scris de secțiunea Match Intelligence la sincronizări anterioare. lastDeltaEvents etc. tot se suprascriu corect (sunt incluse explicit în fiecare scriere).
+
+            // ── SCRIERE DIRECTĂ pe documentul MECIULUI — câmpuri NOI,
+            // separate ("liveApi*"), NICIODATĂ prin updateMatchStatus/
+            // saveMatchResult (acelea rămân STRICT manuale, ale Adminului,
+            // și sunt singurele care declanșează scoring —
+            // publishMatchPointsIfFinal e apelată DOAR din
+            // updateMatchStatus, niciodată de-aici). Asta e afișare live
+            // automată, NU rezultat oficial. Validarea rămâne 100% a
+            // Adminului, ca înainte — automatizarea doar elimină nevoia
+            // lui de a actualiza manual scorul/minutul/evenimentele CÂT
+            // TIMP meciul e în desfășurare.
+            if (ourMatch?.id) {
+              await db.collection("matches").doc(ourMatch.id).set({
+                liveApiStatus: newSnapshot.status,
+                liveApiScoreA: newSnapshot.homeScore,
+                liveApiScoreB: newSnapshot.awayScore,
+                liveApiMinute: newSnapshot.minute,
+                liveApiEvents: newSnapshot.events,
+                liveApiUpdatedAt: now,
+              }, { merge: true });
+            }
 
             if (["1H", "2H", "HT", "ET"].includes(newSnapshot.status)) results.live++;
           }
@@ -216,37 +237,22 @@ export default async function handler(req, res) {
       }
     }
 
-    // ── 5. MATCH INTELLIGENCE — lineups → H2H → form/standings →
-    // predictions → injuries, EXACT ordinea de prioritate cerută.
-    // Fiecare verifică bugetul ÎNAINTE de apel, sare peste dacă lipsă.
-    // Fiecare, o dată/fixture (sau /ligă la standings), cache PERMANENT
-    // (nu se reia dacă avem deja — H2H/formă/predicții nu se schimbă
-    // în timpul etapei). ──
-    //
-    // PRAGURI GRADUALE — nu mai folosim UN singur SAFETY_MARGIN pentru
-    // toate. Ordinea de tăiere cerută explicit, de jos în sus:
-    // injuries → predictions → form → h2h. LINEUP e aproape la fel de
-    // protejat ca LIVE (mai ales aproape de kickoff). BUG REPARAT: toate
-    // foloseau ACELAȘI prag (85), deci nu exista nicio prioritate reală
-    // între ele — se tăiau toate deodată, nu în ordine. ──
+    // ── 5. MATCH INTELLIGENCE — REDUS explicit, la cerere: doar LINEUP
+    // rămâne automat (prioritate #2 după LIVE). H2H/formă/predicții/
+    // accidentări NU se mai cer — consumau request-uri API pentru
+    // conținut de Feed pe care Adminul nu-l mai vrea generat automat.
+    // Feed-ul se bazează acum pe meciuri + scor live + clasament +
+    // citate + fapte de club, nu pe aceste 4 categorii. ──
     const MARGIN_LINEUP = 95;
-    const MARGIN_H2H = 88;
-    const MARGIN_FORM = 84;
-    const MARGIN_PREDICTIONS = 80;
-    const MARGIN_INJURIES = 75; // primul tăiat
 
     // LINEUP — MAXIM 3 încercări per fixture, în 3 ferestre fixe, ca
     // să nu consume request-uri la infinit dacă lineup-ul întârzie.
-    // BUG REPARAT: varianta veche încerca la FIECARE sincronizare cât
-    // timp eram în fereastra de 45 min (până la 4-5 încercări reale,
-    // nu 1 cum raportasem inițial — găsit corect de tine).
     const LINEUP_WINDOWS = [
       [38, 50],  // încercarea 1 — 38 până la 50 min ÎNAINTE de kickoff
       [18, 30],  // încercarea 2
       [3, 15],   // încercarea 3, ultima șansă
     ];
 
-    const standingsCache = {}; // per leagueId, evită re-fetch pt meciuri din aceeași ligă
     for (const m of relevant.filter((mm) => mm.externalFixtureId)) {
       const cacheRef = db.collection("externalFootballCache").doc(String(m.externalFixtureId));
       const cacheSnap = await cacheRef.get();
@@ -275,54 +281,6 @@ export default async function handler(req, res) {
           results.errors.push(`lineup ${m.id}: ${String(err)}`);
           await cacheRef.set({ lineupAttempts: attempts + 1 }, { merge: true }).catch(() => {});
         }
-      }
-
-      // H2H — o singură dată, cache permanent.
-      if (!existing.h2h && quota.requestsUsed + apiCallsThisRun < MARGIN_H2H) {
-        try {
-          const r = await fetch(`https://v3.football.api-sports.io/fixtures/headtohead?h2h=${m.externalFixtureId}`, { headers: { "x-apisports-key": API_KEY } });
-          apiCallsThisRun++;
-          if (r.ok) {
-            const d = await r.json();
-            const h2h = normalizeH2H(d.response, m.homeTeam);
-            if (h2h) await cacheRef.set({ h2h }, { merge: true });
-          }
-        } catch (err) { results.errors.push(`h2h ${m.id}: ${String(err)}`); }
-      }
-
-      // FORM/STANDINGS — o dată per LIGĂ (reutilizat pt orice alt meci din aceeași ligă azi).
-      if (m.externalLeagueId && !existing.form && leagueSupports(coverage, "standings") && quota.requestsUsed + apiCallsThisRun < MARGIN_FORM) {
-        try {
-          if (!standingsCache[m.externalLeagueId]) {
-            const r = await fetch(`https://v3.football.api-sports.io/standings?league=${m.externalLeagueId}&season=${m.externalSeason}`, { headers: { "x-apisports-key": API_KEY } });
-            apiCallsThisRun++;
-            if (r.ok) { const d = await r.json(); standingsCache[m.externalLeagueId] = normalizeStandings(d.response); }
-          }
-          const table = standingsCache[m.externalLeagueId];
-          if (table) await cacheRef.set({ form: { home: table[m.homeTeam] || null, away: table[m.awayTeam] || null } }, { merge: true });
-        } catch (err) { results.errors.push(`standings ${m.id}: ${String(err)}`); }
-      }
-
-      // PREDICTIONS API — o singură dată, cache permanent.
-      if (!existing.apiPrediction && leagueSupports(coverage, "predictions") && quota.requestsUsed + apiCallsThisRun < MARGIN_PREDICTIONS) {
-        try {
-          const r = await fetch(`https://v3.football.api-sports.io/predictions?fixture=${m.externalFixtureId}`, { headers: { "x-apisports-key": API_KEY } });
-          apiCallsThisRun++;
-          if (r.ok) {
-            const d = await r.json();
-            const pred = normalizePrediction(d.response);
-            if (pred) await cacheRef.set({ apiPrediction: pred }, { merge: true });
-          }
-        } catch (err) { results.errors.push(`predictions ${m.id}: ${String(err)}`); }
-      }
-
-      // INJURIES — ultima prioritate, prima tăiată dacă bugetul e strâns.
-      if (!existing.injuries && leagueSupports(coverage, "injuries") && quota.requestsUsed + apiCallsThisRun < MARGIN_INJURIES) {
-        try {
-          const r = await fetch(`https://v3.football.api-sports.io/injuries?fixture=${m.externalFixtureId}`, { headers: { "x-apisports-key": API_KEY } });
-          apiCallsThisRun++;
-          if (r.ok) { const d = await r.json(); await cacheRef.set({ injuries: normalizeInjuries(d.response) }, { merge: true }); }
-        } catch (err) { results.errors.push(`injuries ${m.id}: ${String(err)}`); }
       }
     }
 

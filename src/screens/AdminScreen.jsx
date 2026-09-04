@@ -1123,7 +1123,7 @@ export default function AdminScreen({ onBack }) {
 
   async function handleReset() {
     const typed = window.prompt(
-      'ATENȚIE — instrument doar de TEST. Șterge TOATE sezoanele, etapele și meciurile, ireversibil.\n\nScrie exact "RESET" ca să confirmi:'
+      'ATENȚIE — instrument doar de TEST. Șterge TOATE sezoanele, etapele, meciurile, predicțiile, jokerii, Feed-ul, toate Surprizele (Mystery Box/Duel/Sabotaj/Ruletă/Trivia/Zaruri/Penalty) ȘI RESETEAZĂ CLASAMENTUL (punctele fiecărui cont la 0) — ireversibil. Conturile userilor (nickname/avatar/status) și Specialele (Câștigătoare CL/Golgheter/etc.) NU se șterg.\n\nScrie exact "RESET" ca să confirmi:'
     );
     if (typed !== "RESET") {
       if (typed !== null) setMessage('Resetare anulată — trebuia scris exact "RESET".');

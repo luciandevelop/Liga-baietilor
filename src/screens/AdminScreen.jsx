@@ -59,7 +59,9 @@ import {
   configureZaruriQuestions, markZaruriTarget, getZaruriSubmissionStatus,
   getSabotajPublicProgress, revealSabotajNetwork, undoLastSabotajChoice,
 } from "../services/surprisesService";
-import { DUEL_THEMES } from "../assets/fighters";
+import { DUEL_THEMES, getFighterUrl } from "../assets/fighters";
+import DuelExperience from "../components/DuelExperience";
+import TeamDuelExperience from "../components/TeamDuelExperience";
 import { color, font, layout, radius } from "../theme";
 
 // Ordonare operațională pentru secțiunea de Rezultate: meciurile FĂRĂ
@@ -151,6 +153,12 @@ export default function AdminScreen({ onBack }) {
 
   // ── Avatar utilizator (config) ──
   const [allUsers, setAllUsers] = useState([]);
+  // ── Preview Duel (Surprize) — 100% local, nu scrie NIMIC în Firestore,
+  // nu atinge duelul activ/etapa curentă. Reutilizează `allUsers` (deja
+  // încărcat mai sus), nicio citire suplimentară. ──
+  const [previewDuelTheme, setPreviewDuelTheme] = useState(DUEL_THEMES[0]?.id || "");
+  const [previewDuelMode, setPreviewDuelMode] = useState("1v1"); // "1v1" | "2v2"
+  const [previewDuelPlayers, setPreviewDuelPlayers] = useState(["", "", "", ""]); // [mine1, opp1, mine2, opp2]
   // ── Speciale (config) ──
   const now = useNow(60000); // "se închide peste 3 zile" nu are nevoie de secunde live, doar Home/SpecialsScreen
   const [specialCompId, setSpecialCompId] = useState("");
@@ -961,7 +969,10 @@ export default function AdminScreen({ onBack }) {
   }
 
   useEffect(() => {
-    if (tab !== "config") return;
+    if (tab !== "config" && tab !== "surprises") return;
+    // Reutilizată dacă a fost deja încărcată (ex. Admin a vizitat "Config"
+    // în aceeași sesiune) — nicio citire suplimentară în cazul ăla.
+    if (allUsers.length > 0) return;
     listAllUsers()
       .then(setAllUsers)
       .catch((err) => console.error("Eroare la încărcarea listei de utilizatori:", err));
@@ -1587,6 +1598,7 @@ export default function AdminScreen({ onBack }) {
 
             {/* ── Surprizele Săptămânii ── */}
             {tab === "surprises" && (
+              <>
               <SectionCard title="🎭 Surprizele Săptămânii — configurare pe tot sezonul">
                 <p style={s.hint}>
                   Alege tipul pentru fiecare etapă din timp — userii NU văd tipul până apeși Dezvăluie.
@@ -1913,6 +1925,117 @@ export default function AdminScreen({ onBack }) {
                   );
                 })}
               </SectionCard>
+
+              <SectionCard title="🥋 Preview Duel — doar în Admin, 100% local">
+                <p style={s.hint}>
+                  Verifică grafica temelor de Duel fără să atingi etapa curentă — nimic de-aici nu se scrie
+                  în Firestore, nu schimbă perechi/rezultate/scoring/reveal. Randează exact componentele
+                  reale (DuelExperience/TeamDuelExperience) — ce vezi aici e ce vor vedea jucătorii.
+                </p>
+
+                <div style={s.surpriseRow}>
+                  <label style={s.surpriseLabel}>Temă</label>
+                  <select style={s.surpriseSelect} value={previewDuelTheme} onChange={(e) => setPreviewDuelTheme(e.target.value)}>
+                    <option value="">— fără temă (avatar normal) —</option>
+                    {DUEL_THEMES.map((t) => (
+                      <option key={t.id} value={t.id}>{t.label}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div style={s.surpriseRow}>
+                  <label style={s.surpriseLabel}>Mod</label>
+                  <select
+                    style={s.surpriseSelect}
+                    value={previewDuelMode}
+                    onChange={(e) => { setPreviewDuelMode(e.target.value); setPreviewDuelPlayers(["", "", "", ""]); }}
+                  >
+                    <option value="1v1">Duel 1v1</option>
+                    <option value="2v2">Duel de Echipe 2v2</option>
+                  </select>
+                </div>
+
+                {(previewDuelMode === "1v1"
+                  ? [["Jucătorul tău", 0], ["Adversar", 1]]
+                  : [["Echipa ta — jucător 1", 0], ["Echipa ta — jucător 2", 2], ["Echipa adversă — jucător 1", 1], ["Echipa adversă — jucător 2", 3]]
+                ).map(([label, slot]) => (
+                  <div key={slot} style={s.surpriseRow}>
+                    <label style={s.surpriseLabel}>{label}</label>
+                    <select
+                      style={s.surpriseSelect}
+                      value={previewDuelPlayers[slot]}
+                      onChange={(e) => setPreviewDuelPlayers((prev) => { const next = [...prev]; next[slot] = e.target.value; return next; })}
+                    >
+                      <option value="">— alege —</option>
+                      {allUsers.map((u) => (
+                        <option key={u.uid} value={u.uid}>{u.nickname || u.uid}</option>
+                      ))}
+                    </select>
+                  </div>
+                ))}
+
+                {(() => {
+                  const mineSlots = previewDuelMode === "1v1" ? [0] : [0, 2];
+                  const oppSlots = previewDuelMode === "1v1" ? [1] : [1, 3];
+                  const allSlots = [...mineSlots, ...oppSlots];
+                  const filled = allSlots.every((i) => previewDuelPlayers[i]);
+                  if (!filled) return <p style={s.hint}>Alege toți jucătorii de mai sus ca să vezi preview-ul.</p>;
+
+                  const byUid = Object.fromEntries(allUsers.map((u) => [u.uid, u]));
+                  const profiles = {};
+                  const liveScores = {};
+                  allSlots.forEach((i) => {
+                    const uid = previewDuelPlayers[i];
+                    profiles[uid] = { nickname: byUid[uid]?.nickname || uid, avatarId: byUid[uid]?.avatarId ?? null };
+                    liveScores[uid] = 0;
+                  });
+
+                  // "Fighter lipsă" — verificat cu exact aceeași funcție folosită
+                  // de componentele reale (getFighterUrl) — dacă întoarce null,
+                  // acel jucător cade pe avatarul normal (fallback deja existent,
+                  // neatins) — aici doar semnalăm discret, în Admin, cine anume.
+                  const missing = previewDuelTheme
+                    ? allSlots
+                      .map((i) => previewDuelPlayers[i])
+                      .filter((uid) => !getFighterUrl(previewDuelTheme, byUid[uid]?.avatarId))
+                      .map((uid) => byUid[uid]?.nickname || uid)
+                    : [];
+
+                  return (
+                    <div style={s.previewDuelBox}>
+                      {previewDuelMode === "1v1" ? (
+                        <DuelExperience
+                          myUid={previewDuelPlayers[0]}
+                          opponentUid={previewDuelPlayers[1]}
+                          isBye={false}
+                          profiles={profiles}
+                          liveScores={liveScores}
+                          resolved={false}
+                          myPoints={null}
+                          duelTheme={previewDuelTheme || null}
+                        />
+                      ) : (
+                        <TeamDuelExperience
+                          myUid={previewDuelPlayers[0]}
+                          myTeam={[previewDuelPlayers[0], previewDuelPlayers[2]]}
+                          opponentTeam={[previewDuelPlayers[1], previewDuelPlayers[3]]}
+                          isFallbackDuel={false}
+                          isFallbackBye={false}
+                          profiles={profiles}
+                          liveScores={liveScores}
+                          resolved={false}
+                          myPoints={null}
+                          duelTheme={previewDuelTheme || null}
+                        />
+                      )}
+                      {missing.length > 0 && (
+                        <p style={s.previewDuelMissing}>⚠️ Fighter lipsă pentru „{previewDuelTheme}": {missing.join(", ")} — cad pe avatarul normal.</p>
+                      )}
+                    </div>
+                  );
+                })()}
+              </SectionCard>
+              </>
             )}
 
             {/* ── Feed — evenimente automate, articole editoriale, FUN ── */}
@@ -2250,6 +2373,10 @@ const s = {
     padding: "8px 6px", fontSize: 11, color: "#fff",
   },
   doneTag: { fontSize: 10.5, fontWeight: 700, color: "#8BD957", flexShrink: 0 },
+
+  // ── Preview Duel (Admin) ──
+  previewDuelBox: { marginTop: 12, paddingTop: 12, borderTop: "1px dashed rgba(255,255,255,0.12)" },
+  previewDuelMissing: { marginTop: 8, fontSize: 10.5, color: "#F0930C", fontFamily: "inherit" },
 
   triviaBox: { marginTop: 4, marginBottom: 8, paddingTop: 8, borderTop: "1px dashed rgba(255,255,255,0.1)" },
   triviaEditor: { marginTop: 8, display: "flex", flexDirection: "column", gap: 8 },

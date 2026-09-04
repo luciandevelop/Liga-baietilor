@@ -490,16 +490,73 @@ export async function bulkCreateMatches(gameweekId, text) {
 
 // Șterge TOT (sezoane, etape, meciuri) — folosit doar pentru curățarea
 // datelor de test înainte de lansarea reală. Ireversibil.
+// ══════════════════════════════════════════════════════════════════
+// RESET COMPLET DE TEST — verificat exhaustiv (grep pe tot codul) ce
+// colecții Firestore scrie efectiv aplicația. Varianta veche ștergea
+// DOAR 4 colecții (matches/gameweeks/seasons/gameweekLiveScores) — nu
+// atingea NICIODATĂ predicții, jokeri, matchPoints, Feed, Surprize
+// (Mystery Box/Duel/Sabotaj/Ruletă/Trivia/Zaruri/Penalty — toate au
+// subcolecții proprii sub weeklySurprises/{gw}/, pe care Firestore NU
+// le șterge automat odată cu documentul părinte), și — cel mai
+// important — NICIODATĂ clasamentul (users.seasonPoints/
+// gameweeksPlayed), care se acumulează DIRECT pe contul userului, nu
+// într-o colecție separată ștearsă mai sus. O resetare "completă" care
+// nu atingea asta ar fi lăsat clasamentul cu punctele din etapele de
+// test, la pornirea competiției reale.
+//
+// NU șterge conturile userilor (nickname/avatar/status rămân) — doar
+// scorul lor. NU șterge `admins` sau `feedFunItems` (bibliotecă
+// persistentă de glume, nu date de test). NU șterge NICI Specialele
+// (specialPhases/specialPicks/specialScores) — cerut explicit, sunt
+// configurate manual (opțiuni convenite cu grupul) și costă mult să
+// fie refăcute; rămân intacte, redeschise manual din Admin pentru
+// sezonul nou, când vine momentul.
+// ══════════════════════════════════════════════════════════════════
 export async function resetAllTestData() {
-  const collections = ["matches", "gameweeks", "seasons", "gameweekLiveScores"];
   let deleted = 0;
-  for (const name of collections) {
+
+  const simpleCollections = [
+    "matches", "gameweeks", "seasons", "gameweekLiveScores", "gameweekScores",
+    "predictions", "jokers", "jokerExtra", "matchPoints", "feedEvents", "feedState",
+  ];
+  for (const name of simpleCollections) {
     const snap = await getDocs(collection(db, name));
     for (const d of snap.docs) {
       await deleteDoc(doc(db, name, d.id));
       deleted++;
     }
   }
+
+  // weeklySurprises — subcolecțiile, per etapă, ÎNAINTE de documentul
+  // părinte (altfel rămân orfane, invizibile la o simplă listare a
+  // colecției weeklySurprises, dar tot ocupă spațiu/apar la interogări
+  // directe pe subcolecție).
+  const WS_SUBCOLLECTIONS = [
+    "secret", "results", "mysteryBoxPicks", "penaltyChoices", "penaltySubmitted",
+    "diceRolls", "diceStops", "sabotajChoices", "sabotajPicked", "sabotajTaken",
+    "rouletteSpins", "triviaAnswers",
+  ];
+  const wsSnap = await getDocs(collection(db, "weeklySurprises"));
+  for (const gwDoc of wsSnap.docs) {
+    for (const sub of WS_SUBCOLLECTIONS) {
+      const subSnap = await getDocs(collection(db, "weeklySurprises", gwDoc.id, sub));
+      for (const d of subSnap.docs) {
+        await deleteDoc(doc(db, "weeklySurprises", gwDoc.id, sub, d.id));
+        deleted++;
+      }
+    }
+    await deleteDoc(doc(db, "weeklySurprises", gwDoc.id));
+    deleted++;
+  }
+
+  // Clasamentul — la 0, pe fiecare cont existent. Contul în sine
+  // (nickname/avatar/status) rămâne neatins.
+  const usersSnap = await getDocs(collection(db, "users"));
+  for (const u of usersSnap.docs) {
+    await updateDoc(doc(db, "users", u.id), { seasonPoints: 0, gameweeksPlayed: 0 });
+    deleted++;
+  }
+
   return deleted;
 }
 
@@ -1311,6 +1368,29 @@ export async function getUserSeasonPoints(uid) {
 // citește pentru afișare).
 export async function listJokersForGameweek(gameweekId) {
   const snap = await getDocs(query(collection(db, "jokers"), where("gameweekId", "==", gameweekId)));
+  return snap.docs.map((d) => d.data());
+}
+
+// ── Jokerii DOAR pentru UN meci — folosită STRICT de reveal-ul de
+// pronosticuri (PredictionsRevealSheet), NICĂIERI altundeva. Motiv:
+// regula Firestore pentru citirea unui joker de către alt user
+// (non-proprietar) verifică blocarea EXACT pe meciul acelui joker
+// (isAfterLock(resource.data.matchId)) — o interogare filtrată pe
+// gameweekId (ca listJokersForGameweek de mai sus) nu se potrivește cu
+// acel câmp, deci Firestore respinge interogarea întreagă pentru un
+// user normal până se blochează TOATE meciurile etapei, nu doar
+// acesta. Filtrând direct pe matchId, interogarea se potrivește exact
+// cu ce verifică regula — la fel cum funcționează deja predictions.
+// NU modifică deloc listJokersForGameweek — aceea rămâne exact cum
+// era, folosită doar de calculul de puncte (Admin, cu isAdmin(), nu
+// are nevoie de fix). ──
+export async function listJokersForMatch(matchId) {
+  const snap = await getDocs(query(collection(db, "jokers"), where("matchId", "==", matchId)));
+  return snap.docs.map((d) => d.data());
+}
+
+export async function listJokerExtraForMatch(matchId) {
+  const snap = await getDocs(query(collection(db, "jokerExtra"), where("matchId", "==", matchId)));
   return snap.docs.map((d) => d.data());
 }
 

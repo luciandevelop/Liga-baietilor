@@ -28,6 +28,12 @@ export default {
       "files": {
         "1": "fighter_shang_tsung_pinocchio.webp"
       }
+    },
+    "bona": {
+      "nextIndex": 2,
+      "files": {
+        "1": "lazy_fighter_300x420.webp"
+      }
     }
   }
 };

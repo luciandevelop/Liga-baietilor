@@ -8,7 +8,7 @@ import {
   buildUpcomingMatchEvent, buildLiveMatchEvent, buildExternalLiveEvent, attachBanter, mergeFeedEvents, TYPE,
   buildCityFactEvent, buildClubFactEvent, buildDailyFillerEvent, buildQuoteEvent, buildSurpriseCreatedEvent, buildSurpriseMatchupEvent,
   buildSurpriseProgressEvent, buildSurpriseResultEvent, buildSurpriseRewardEvent, pick,
-  buildLineupEvent, buildH2HFact, buildFormFact, buildInjuryEvent, buildApiPredictionEvent,
+  buildLineupEvent,
 } from "./feedEngine";
 import { canRevealPredictions } from "./matchLockRule";
 // Logică pură, PARTAJATĂ cu api/football-sync.js (sursă unică de
@@ -538,65 +538,27 @@ export async function processSurpriseMatchup(gameweekId, kind, type, config) {
 // meciul e deja blocat (dublă verificare: aici ȘI în interiorul
 // buildExternalLiveEvent, defense in depth, ca la restul faptelor).
 // ══════════════════════════════════════════════════════════════════
-// ══════════════════════════════════════════════════════════════════
-// MATCH INTELLIGENCE — citește cache-ul (lineup/H2H/form/predicții
-// API/accidentări), publică STRICT ce merită (max câteva per meci —
-// "aceste date sunt RAW MATERIAL, nu fiecare informație devine
-// automat card", cerut explicit). Fiecare funcție de construcție
-// (buildH2HFact etc.) DEJA întoarce null dacă datele nu susțin o
-// afirmație clară — aici doar le colectăm și publicăm o dată, idempotent
-// (ID-uri deterministe pe matchId, deci fără duplicate la reprocesare).
+// MATCH INTELLIGENCE — citește cache-ul, publică STRICT lineup (H2H/
+// formă/predicții API/accidentări au fost eliminate explicit — vezi
+// mai jos). buildLineupEvent întoarce null dacă datele nu susțin o
+// afirmație clară — aici doar colectăm și publicăm o dată, idempotent
+// (ID determinist pe matchId, deci fără duplicate la reprocesare).
 // ══════════════════════════════════════════════════════════════════
 export async function processMatchIntelligence(match, cacheDoc) {
   if (!cacheDoc) return [];
 
-  // BUG REPARAT: fiecare informație disponibilă (lineup/H2H/formă/
-  // predicție) se publica necondiționat — un meci cu toate datele
-  // disponibile producea 4 carduri deodată, exact "log tehnic" nu
-  // "editorial" semnalat explicit. Acum construim TOATE candidatele,
-  // apoi alegem STRICT primele 3, în ordinea de prioritate cerută:
-  // lineup > H2H > formă > predicție API. Injuries rămân separat
-  // (compact, nu intră în acest cap — deja tratate ca prioritate cea
-  // mai joasă la nivel de buget, nu doar editorial).
-  const MAX_INTELLIGENCE_STORIES = 3;
-  const candidates = [];
-
+  // ── H2H/formă/predicții API/accidentări — ELIMINATE explicit, nu mai
+  // sunt generate NICIODATĂ ca și carduri de Feed, indiferent ce mai
+  // există în cache (date vechi, de dinainte de această schimbare).
+  // football-sync.js nu mai populează aceste câmpuri de la zero, dar un
+  // meci mai vechi le putea avea deja cache-uite — fără verificarea
+  // asta, tot ar fi reapărut ca "nou" (ts proaspăt) la fiecare poll.
+  // Cache-ul rămâne neatins (nu ștergem nimic) — doar nu se mai
+  // transformă în conținut de Feed. Rămâne DOAR lineup, singura
+  // categorie pre-match cerută. ──
+  const events = [];
   if (cacheDoc.lineup) {
     const ev = buildLineupEvent(match, cacheDoc.lineup);
-    if (ev) candidates.push(ev);
-  }
-  if (cacheDoc.h2h) {
-    const ev = buildH2HFact(match, cacheDoc.h2h);
-    if (ev) candidates.push(ev);
-  }
-  if (cacheDoc.form?.home && cacheDoc.form?.away) {
-    const ev = buildFormFact(match, cacheDoc.form.home, cacheDoc.form.away);
-    if (ev) candidates.push(ev);
-  }
-  if (cacheDoc.apiPrediction) {
-    let ourConsensus = null;
-    if (canRevealPredictions(match)) {
-      try {
-        const predsSnap = await getDocs(query(collection(db, "predictions"), where("matchId", "==", match.id)));
-        const rows = predsSnap.docs.map((d) => d.data());
-        ourConsensus = { homeCount: rows.filter((p) => p.scoreA > p.scoreB).length, awayCount: rows.filter((p) => p.scoreA < p.scoreB).length };
-      } catch { ourConsensus = null; }
-    }
-    const ev = buildApiPredictionEvent(match, cacheDoc.apiPrediction, ourConsensus);
-    if (ev) candidates.push(ev);
-  }
-
-  // `candidates` e deja în ordinea de prioritate cerută (push-uite în
-  // ordinea lineup→h2h→form→prediction) — tăiem doar la coadă, nu
-  // re-sortăm (lineup rămâne mereu primul dacă există).
-  const events = candidates.slice(0, MAX_INTELLIGENCE_STORIES);
-
-  // Injuries — SEPARAT de cap-ul editorial (deja e prioritatea cea mai
-  // joasă la buget; dacă a ajuns să existe în cache, tot merită
-  // spusă, dar nu concurează cu lineup/H2H/formă/predicție pentru cele
-  // 3 sloturi).
-  if (cacheDoc.injuries?.length > 0) {
-    const ev = buildInjuryEvent(match, cacheDoc.injuries);
     if (ev) events.push(ev);
   }
 
@@ -885,10 +847,11 @@ export async function deleteFunItem(id) {
   await deleteDoc(doc(db, "feedFunItems", id));
 }
 
-export async function loadFullFeed() {
+export async function loadFullFeed(matches = []) {
   const [live, users, adminFun] = await Promise.all([listLiveFeedEvents(), listAllUsers(), getCachedFunItems()]);
   const fun = buildSampledFunEvents(adminFun);
-  return { merged: mergeFeedEvents(live, fun), users };
+  const matchesById = Object.fromEntries(matches.map((m) => [m.id, m]));
+  return { merged: mergeFeedEvents(matchesById, live, fun), users };
 }
 
 // ── Fun items admin — se schimbă RAR (adminul adaugă unul din când în
@@ -936,11 +899,12 @@ function buildSampledFunEvents(adminFun) {
 //     era o citire 100% irosită pentru cazul ăsta;
 //   • fun items din cache (vezi mai sus), nu recitite de fiecare dată.
 // Feed-ul COMPLET (ecranul dedicat) rămâne pe loadFullFeed(), neschimbat.
-export async function getHomeFeedTop({ max = 8 } = {}) {
+export async function getHomeFeedTop(matches = [], { max = 8 } = {}) {
   const buffer = Math.max(max * 3, 20);
   const [live, adminFun] = await Promise.all([listLiveFeedEvents({ max: buffer }), getCachedFunItems()]);
   const fun = buildSampledFunEvents(adminFun);
-  return { merged: mergeFeedEvents(live, fun).slice(0, max) };
+  const matchesById = Object.fromEntries(matches.map((m) => [m.id, m]));
+  return { merged: mergeFeedEvents(matchesById, live, fun).slice(0, max) };
 }
 
 export async function listRecentEventsForAdmin({ max = 50 } = {}) {

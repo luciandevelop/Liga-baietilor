@@ -763,6 +763,7 @@ export function buildH2HFact(match, h2h) {
 }
 
 // Formă — publică doar dacă diferența e reală, nu "amândouă la fel".
+// CONTEXT COMPLET — include mereu adversarul, nu doar echipa în formă.
 export function buildFormFact(match, homeForm, awayForm) {
   if (!homeForm?.form || !awayForm?.form) return null;
   const score = (f) => f.split("").reduce((s, c) => s + (c === "W" ? 1 : c === "D" ? 0 : -1), 0);
@@ -770,11 +771,12 @@ export function buildFormFact(match, homeForm, awayForm) {
   if (Math.abs(homeScore - awayScore) < 3) return null; // prea apropiat, nu-i o poveste
   const id = `form_${match.id}`;
   const better = homeScore > awayScore ? match.homeTeam : match.awayTeam;
+  const opponent = better === match.homeTeam ? match.awayTeam : match.homeTeam;
   const betterForm = homeScore > awayScore ? homeForm.form : awayForm.form;
   return {
     id, type: TYPE.FACT, subtype: "form", ts: Date.now(), importance: IMPORTANCE.FORM_FACT,
     actors: [], version: 2, icon: "fire", important: false,
-    title: pick([`🔥 ${better} vine în formă bună: ${betterForm}.`], id), subtitle: null,
+    title: pick([`🔥 ${better} vine în formă bună (${betterForm}) înaintea meciului cu ${opponent}.`], id), subtitle: null,
     category: "fun", priority: IMPORTANCE.FORM_FACT, detail: { matchId: match.id, homeForm, awayForm },
   };
 }
@@ -796,10 +798,13 @@ export function buildInjuryEvent(match, injuries) {
 // Predicții API — comparate cu consensul NOSTRU DOAR după reveal
 // (privacy guard intern, defense in depth). Înainte de reveal, arată
 // doar procentele API-ului, fără nicio referire la ce cred băieții.
+// CONTEXT COMPLET pe titlu — cerut explicit: „Inter e favorită (45%)”
+// izolat nu spune nimic despre meci; acum include mereu adversarul.
 export function buildApiPredictionEvent(match, apiPrediction, ourConsensus) {
   if (!apiPrediction) return null;
   const id = `apipred_${match.id}`;
   const favorite = apiPrediction.homePct > apiPrediction.awayPct ? match.homeTeam : match.awayTeam;
+  const opponent = favorite === match.homeTeam ? match.awayTeam : match.homeTeam;
   const favoritePct = Math.max(apiPrediction.homePct, apiPrediction.awayPct);
 
   const canCompare = canRevealPredictions(match) && ourConsensus;
@@ -810,15 +815,15 @@ export function buildApiPredictionEvent(match, apiPrediction, ourConsensus) {
       id, type: TYPE.FACT, subtype: "api_prediction", ts: Date.now(), importance: IMPORTANCE.API_PREDICTION,
       actors: [], version: 2, icon: "chart", important: false,
       title: agree
-        ? pick([`🧠 Băieții sunt de acord cu datele: ambii văd ${favorite} favorit.`], id)
-        : pick([`😈 Liga merge contra curentului: datele văd ${favorite} favorit (${favoritePct}%), băieții merg pe ${ourFavorite}.`], id),
+        ? pick([`🧠 Băieții sunt de acord cu datele: ambii văd ${favorite} favorit în meciul cu ${opponent}.`], id)
+        : pick([`😈 Liga merge contra curentului: datele văd ${favorite} favorit (${favoritePct}%) în meciul cu ${opponent}, băieții merg pe ${ourFavorite}.`], id),
       subtitle: null, category: "fun", priority: IMPORTANCE.API_PREDICTION, detail: { matchId: match.id },
     };
   }
   return {
     id, type: TYPE.FACT, subtype: "api_prediction", ts: Date.now(), importance: IMPORTANCE.API_PREDICTION,
     actors: [], version: 2, icon: "chart", important: false,
-    title: pick([`🤖 Datele îl văd favorit pe ${favorite} (${favoritePct}%).`], id),
+    title: pick([`🤖 Datele îl văd favorit pe ${favorite} în meciul cu ${opponent} (${favoritePct}% șanse de victorie).`], id),
     subtitle: null, category: "fun", priority: IMPORTANCE.API_PREDICTION, detail: { matchId: match.id },
   };
 }
@@ -1057,11 +1062,48 @@ export function attachBanter(event, recentKeys = new Set()) {
 // ══════════════════════════════════════════════════════════════════
 // 5. DEDUPLICATION / ANTI-SPAM
 // ══════════════════════════════════════════════════════════════════
-export function mergeFeedEvents(...groups) {
+export function mergeFeedEvents(matchesById, ...groups) {
+  // Compat — apeluri vechi (înainte de boost-ul pe dată) treceau direct
+  // grupurile de evenimente, fără harta de meciuri. Dacă primul argument
+  // nu arată a hartă (are .flat, deci e un array de evenimente), tratăm
+  // apelul ca fiind în formatul vechi — fără boost, comportament identic
+  // cu înainte.
+  if (Array.isArray(matchesById)) {
+    groups = [matchesById, ...groups];
+    matchesById = {};
+  }
   const all = groups.flat().filter(Boolean);
   const seen = new Set();
   const deduped = all.filter((e) => (seen.has(e.id) ? false : (seen.add(e.id), true)));
-  const sorted = deduped.sort((a, b) => (b.priority - a.priority) || (b.ts - a.ts));
+
+  // ── BOOST DE RELEVANȚĂ PE DATĂ — cerut explicit: un meci de azi
+  // trebuie să fie mereu deasupra oricărui conținut din altă zi,
+  // INDIFERENT de tipul lui de card (chiar și Meciul Săptămânii, dacă
+  // se joacă peste 2-3 zile). Calculat la sortare, din kickoff-ul
+  // REAL al meciului (nu stocat pe eveniment — se recalculează
+  // automat la fiecare afișare, deci "azi" rămâne mereu corect, fără
+  // nicio curățenie necesară a doua zi). 200 e mult peste orice
+  // IMPORTANCE existent (max 100) — azi bate mereu orice altceva;
+  // mâine (60) rămâne sub azi, dar peste conținutul obișnuit. ──
+  function dateRelevanceBoost(ev) {
+    const matchId = ev.detail?.matchId || ev.metadata?.matchId;
+    if (!matchId) return 0;
+    const match = matchesById[matchId];
+    const kickoffMs = match?.kickoffAt?.toMillis ? match.kickoffAt.toMillis() : (ev.detail?.kickoffAt ?? null);
+    if (kickoffMs == null) return 0;
+    const now = Date.now();
+    const d0 = new Date(now); d0.setHours(0, 0, 0, 0);
+    const d1 = new Date(d0); d1.setDate(d1.getDate() + 1);
+    const d2 = new Date(d1); d2.setDate(d2.getDate() + 1);
+    if (kickoffMs < d1.getTime()) return 200; // azi
+    if (kickoffMs < d2.getTime()) return 60; // mâine
+    return 0;
+  }
+
+  const sorted = deduped
+    .map((e) => ({ e, effectivePriority: e.priority + dateRelevanceBoost(e) }))
+    .sort((a, b) => (b.effectivePriority - a.effectivePriority) || (b.e.ts - a.e.ts))
+    .map((x) => x.e);
 
   const routineGoalCountByMatch = {};
   const filtered = [];
@@ -1078,22 +1120,35 @@ export function mergeFeedEvents(...groups) {
 }
 
 // ── Mixer editorial — DETERMINIST (nu Math.random), reordonează doar
-// cât să evite 3+ carduri consecutive din ACEEAȘI categorie, când
-// există o alternativă mai jos în listă care poate "sări" mai devreme
-// fără să strice ierarhia de importanță prea mult (doar în interiorul
-// unei ferestre mici — nu amestecă tot, nu scoate un card important
-// de sus doar ca să alterneze culori). Nu schimbă CE se publică, doar
-// ORDINEA — cerut explicit: "MATCH FACT SURPRISE PREDICTION RANKING",
-// nu "RANKING RANKING RANKING RANKING". ──
+// cât să evite bloc-uri lungi din ACEEAȘI categorie, când există o
+// alternativă mai jos în listă care poate "sări" mai devreme fără să
+// strice ierarhia de importanță prea mult (doar în interiorul unei
+// ferestre mici — nu amestecă tot, nu scoate un card important de sus
+// doar ca să alterneze culori). Nu schimbă CE se publică, doar ORDINEA
+// — cerut explicit: "MATCH FACT SURPRISE PREDICTION RANKING", nu
+// "RANKING RANKING RANKING RANKING".
+//
+// Regulă întărită (fără cifre fixe/proporții hardcodate): pe lângă
+// "2 la rând" (ca înainte), verificăm și o FEREASTRĂ RECENTĂ (ultimele
+// RECENT_WINDOW carduri plasate) — dacă aceeași categorie a apărut deja
+// de prea multe ori acolo (peste jumătate din fereastră), căutăm o
+// alternativă, exact ca la 2-la-rând. Meciurile zilei tot pot domina
+// legitim (asta chiar vrem) — regula doar împiedică 8-10 carduri
+// LA RÂND din aceeași categorie (ex. toate predicții/H2H), nu limitează
+// câte carduri de "meciuri" apar în total. ──
 function editorialMix(sortedEvents) {
   const result = [];
   const pool = [...sortedEvents];
   const WINDOW = 15; // suficient de larg cât să găsească alternativă chiar și după un bloc mare de aceeași categorie (ex. 6-8 fapte de oraș, câte unul per meci)
+  const RECENT_WINDOW = 6;
   while (pool.length > 0) {
     const lastCat = result.length > 0 ? result[result.length - 1].category : null;
     const prevCat = result.length > 1 ? result[result.length - 2].category : null;
-    // 2 la rând din aceeași categorie — caută o alternativă în fereastră
-    if (lastCat && lastCat === prevCat) {
+    const recentSlice = result.slice(-RECENT_WINDOW);
+    const recentSameCat = lastCat ? recentSlice.filter((e) => e.category === lastCat).length : 0;
+    const tooManyRecent = lastCat && recentSlice.length >= RECENT_WINDOW && recentSameCat > Math.ceil(RECENT_WINDOW / 2);
+
+    if ((lastCat && lastCat === prevCat) || tooManyRecent) {
       const altIndex = pool.findIndex((e, i) => i < WINDOW && e.category !== lastCat);
       if (altIndex > 0) {
         result.push(pool.splice(altIndex, 1)[0]);

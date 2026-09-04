@@ -39,10 +39,20 @@ export function normalizeFixture(f) {
 function slugTeam(name) {
   return (name || "").toLowerCase().trim().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]/g, "");
 }
+// Inițialele cuvintelor dintr-un nume — "Paris Saint Germain" → "psg".
+// Fallback pentru acronime pe care substring-ul simplu nu le prinde
+// (bug găsit concret: "PSG" nu apare ca subșir continuu în
+// "parissaintgermain", deci potrivirea eșua deși meciul chiar exista).
+function nameInitials(name) {
+  return (name || "").trim().split(/\s+/).filter(Boolean).map((w) => w[0]).join("").toLowerCase();
+}
 function teamsLooselyMatch(ourName, apiName) {
   const a = slugTeam(ourName), b = slugTeam(apiName);
   if (!a || !b) return false;
-  return a === b || a.includes(b) || b.includes(a);
+  if (a === b || a.includes(b) || b.includes(a)) return true;
+  // Fallback pe acronim — în oricare direcție (numele nostru scurt
+  // faţă de inițialele celui lung de la API, sau invers).
+  return a === nameInitials(apiName) || b === nameInitials(ourName);
 }
 
 // candidates = răspunsul API pentru o dată (f.fixture, f.teams etc.)

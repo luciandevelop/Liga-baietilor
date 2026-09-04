@@ -40,6 +40,24 @@ export default {
       "files": {
         "1": "johnny_cage_300x420.png"
       }
+    },
+    "doctoru": {
+      "nextIndex": 2,
+      "files": {
+        "1": "file_0000000023e081f4aa7adda15cf39939.png"
+      }
+    },
+    "luck87": {
+      "nextIndex": 2,
+      "files": {
+        "1": "final_fight.webp"
+      }
+    },
+    "ooo-micea": {
+      "nextIndex": 2,
+      "files": {
+        "1": "oooo_mircea.webp"
+      }
     }
   }
 };

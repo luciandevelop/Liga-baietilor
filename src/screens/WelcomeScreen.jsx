@@ -247,7 +247,7 @@ export default function WelcomeScreen({ user, profile, isAdmin, onOpenAdmin, onO
       // decide singur ce merită raportat (lider nou, podium, top 10,
       // salturi mari), nu textul de aici. Rezultatul se scrie o dată în
       // Firestore (ID determinist -> fără duplicate), apoi Feed-ul se
-      // reîmprospătează din sursa unică (loadFullFeed).
+      // reîmprospătează din sursa unică (getHomeFeedTop).
       try {
         const { events } = await processRankChanges();
         if (events.length > 0) await refreshFeedTop();

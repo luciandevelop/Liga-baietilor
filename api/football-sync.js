@@ -144,8 +144,22 @@ export default async function handler(req, res) {
         if (!resp.ok) { results.errors.push(`fixtures?date=${date}: HTTP ${resp.status}`); continue; }
         const data = await resp.json();
         const candidatesForDate = data.response || [];
+        // ── DIAGNOSTIC TEMPORAR — nu schimbă comportamentul, doar
+        // raportează exact ce a primit API-ul, ca să vedem clar dacă
+        // problema e data (0 fixture-uri primite deloc) sau potrivirea
+        // numelor de echipe (fixture-uri primite, dar niciunul nu se
+        // potrivește). Se poate scoate după ce identificăm cauza. ──
+        results.diagnostic = results.diagnostic || [];
+        results.diagnostic.push({ date, fixturesReceived: candidatesForDate.length });
         for (const m of unmapped.filter((mm) => new Date(mm.kickoffAt.toMillis()).toISOString().slice(0, 10) === date)) {
           const matchResult = matchFixture({ homeTeam: m.homeTeam, awayTeam: m.awayTeam, kickoffAtMs: m.kickoffAt.toMillis() }, candidatesForDate);
+          if (matchResult.status === "unmatched") {
+            // Primele 5 nume de echipe primite de la API în ziua asta —
+            // ca să vedem exact cum le scrie API-Football, comparat cu
+            // ce avem noi stocat (m.homeTeam/m.awayTeam).
+            const sampleNames = candidatesForDate.slice(0, 5).map((f) => `${f.teams.home.name} vs ${f.teams.away.name}`);
+            results.diagnostic.push({ unmatchedOurNames: `${m.homeTeam} vs ${m.awayTeam}`, ourKickoff: new Date(m.kickoffAt.toMillis()).toISOString(), sampleApiNames: sampleNames });
+          }
           if (matchResult.status === "matched") {
             const matchedFixture = candidatesForDate.find((c) => c.fixture.id === matchResult.fixtureId);
             await db.collection("matches").doc(m.id).set({

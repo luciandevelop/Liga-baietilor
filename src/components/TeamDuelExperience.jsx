@@ -2,6 +2,13 @@ import PlayerAvatar from "./PlayerAvatar";
 import DuelFighterPortrait from "./DuelFighterPortrait";
 import { getFighterUrl } from "../assets/fighters";
 import { color, font, radius } from "../matchdayTheme";
+import { usePrefersReducedMotion, EASING } from "../motion";
+
+// ── Aceeași secvență de intrare ca la Duel 1v1 (DuelExperience.jsx) —
+// vezi comentariul de-acolo pentru detalii. Nume de keyframes proprii
+// (prefix "tdu") ca să nu se suprapună dacă ambele tipuri de Duel ar
+// ajunge randate pe același ecran (ex. Preview Duel din Admin). ──
+const ENTRANCE = { vs: 0.5, leftDelay: 0.5, leftDur: 0.6, rightDelay: 0.7, rightDur: 0.6, vsPulseDelay: 1.3, vsPulseDur: 0.35 };
 
 // ── Regula de scor a unei părți — identică cu ce se calculează la
 // Resolve (surprisesService.js): sub 3 membri, suma tuturor; 3+, se
@@ -20,10 +27,10 @@ function excludedUid(members, liveScores) {
   return sorted[Math.floor(members.length / 2) + 1 - 1];
 }
 
-function TeamCol({ members, excluded, leading, score, profiles, duelTheme }) {
+function TeamCol({ members, excluded, leading, score, profiles, duelTheme, entranceStyle }) {
   const fighterSize = members.length > 2 ? 42 : 54;
   return (
-    <div style={{ ...s.side, ...(leading ? s.sideLeading : {}) }}>
+    <div style={{ ...s.side, ...(leading ? s.sideLeading : {}), ...entranceStyle }}>
       <div style={s.teamAvatars}>
         {members.map((uid) => {
           // Fallback per-membru — dacă tema e aleasă dar TOCMAI acest
@@ -50,17 +57,30 @@ function TeamCol({ members, excluded, leading, score, profiles, duelTheme }) {
 }
 
 // ── Fallback pentru grupuri sub 4 jucători — Duel 1v1 clasic. ──
-function SingleVsSingle({ myUid, opponentUid, profiles, liveScores, resolved, myPoints, duelTheme }) {
+function SingleVsSingle({ myUid, opponentUid, profiles, liveScores, resolved, myPoints, duelTheme, reducedMotion }) {
   const myProfile = profiles[myUid] || {};
   const oppProfile = profiles[opponentUid] || {};
   const myScore = liveScores[myUid] ?? 0;
   const oppScore = liveScores[opponentUid] ?? 0;
   const leading = resolved ? null : (myScore > oppScore ? "me" : myScore < oppScore ? "opp" : "tie");
+  const vsEntranceStyle = reducedMotion ? {} : { animation: `tduVsFlash ${ENTRANCE.vs}s ${EASING.overshoot} both, tduVsFinalPulse ${ENTRANCE.vsPulseDur}s ${EASING.inOut} ${ENTRANCE.vsPulseDelay}s both` };
+  const leftEntranceStyle = reducedMotion ? {} : { animation: `tduSideLeftIntro ${ENTRANCE.leftDur}s ${EASING.out} ${ENTRANCE.leftDelay}s both` };
+  const rightEntranceStyle = reducedMotion ? {} : { animation: `tduSideRightIntro ${ENTRANCE.rightDur}s ${EASING.out} ${ENTRANCE.rightDelay}s both` };
 
   return (
     <>
+      <style>{`
+        @keyframes tduVsFlash {
+          0% { opacity: 0; transform: scale(0.4); box-shadow: 0 0 0px 0px rgba(240,85,90,0); }
+          55% { opacity: 1; transform: scale(1.22); box-shadow: 0 0 30px 6px rgba(240,85,90,0.8); }
+          100% { opacity: 1; transform: scale(1); box-shadow: 0 0 18px -2px rgba(240,85,90,0.6); }
+        }
+        @keyframes tduVsFinalPulse { 0% { transform: scale(1); } 50% { transform: scale(1.1); } 100% { transform: scale(1); } }
+        @keyframes tduSideLeftIntro { 0% { opacity: 0; transform: translateX(-42px) scale(0.94); } 100% { opacity: 1; transform: translateX(0) scale(1); } }
+        @keyframes tduSideRightIntro { 0% { opacity: 0; transform: translateX(42px) scale(0.94); } 100% { opacity: 1; transform: translateX(0) scale(1); } }
+      `}</style>
       <div style={s.confrontation}>
-        <div style={{ ...s.side, ...(leading === "me" ? s.sideLeading : {}) }}>
+        <div style={{ ...s.side, ...(leading === "me" ? s.sideLeading : {}), ...leftEntranceStyle }}>
           {duelTheme ? (
             <DuelFighterPortrait avatarId={myProfile.avatarId} nickname={myProfile.nickname} theme={duelTheme} width={82} height={110} fallbackSize={66} borderRadius={9} />
           ) : (
@@ -69,8 +89,8 @@ function SingleVsSingle({ myUid, opponentUid, profiles, liveScores, resolved, my
           <div style={s.teamNames}>{myProfile.nickname || myUid} (tu)</div>
           <div style={s.score}>{myScore}p</div>
         </div>
-        <div style={s.vsWrap}><div style={s.vsCircle}>VS</div></div>
-        <div style={{ ...s.side, ...(leading === "opp" ? s.sideLeading : {}) }}>
+        <div style={s.vsWrap}><div style={{ ...s.vsCircle, ...vsEntranceStyle }}>VS</div></div>
+        <div style={{ ...s.side, ...(leading === "opp" ? s.sideLeading : {}), ...rightEntranceStyle }}>
           {duelTheme ? (
             <DuelFighterPortrait avatarId={oppProfile.avatarId} nickname={oppProfile.nickname} theme={duelTheme} width={82} height={110} fallbackSize={66} borderRadius={9} />
           ) : (
@@ -96,6 +116,8 @@ function SingleVsSingle({ myUid, opponentUid, profiles, liveScores, resolved, my
 }
 
 export default function TeamDuelExperience({ myUid, myTeam, opponentTeam, isFallbackDuel, fallbackOpponent, isFallbackBye, profiles, liveScores, resolved, myPoints, duelTheme }) {
+  const reducedMotion = usePrefersReducedMotion();
+
   if (isFallbackBye) {
     return (
       <div style={s.byeWrap}>
@@ -111,7 +133,7 @@ export default function TeamDuelExperience({ myUid, myTeam, opponentTeam, isFall
     return (
       <div style={s.wrap}>
         <div style={s.extraDuelNote}>Prea puțini jucători pentru echipe — Duel 1v1</div>
-        <SingleVsSingle myUid={myUid} opponentUid={fallbackOpponent} profiles={profiles} liveScores={liveScores} resolved={resolved} myPoints={myPoints} duelTheme={duelTheme} />
+        <SingleVsSingle myUid={myUid} opponentUid={fallbackOpponent} profiles={profiles} liveScores={liveScores} resolved={resolved} myPoints={myPoints} duelTheme={duelTheme} reducedMotion={reducedMotion} />
       </div>
     );
   }
@@ -128,19 +150,31 @@ export default function TeamDuelExperience({ myUid, myTeam, opponentTeam, isFall
   // normale rotunde).
   const hasAnyFighter = duelTheme && [...myTeam, ...opponentTeam].some((uid) => !!getFighterUrl(duelTheme, profiles[uid]?.avatarId));
 
+  const vsEntranceStyle = reducedMotion ? {} : { animation: `tduVsFlash ${ENTRANCE.vs}s ${EASING.overshoot} both, tduVsFinalPulse ${ENTRANCE.vsPulseDur}s ${EASING.inOut} ${ENTRANCE.vsPulseDelay}s both` };
+  const leftEntranceStyle = reducedMotion ? {} : { animation: `tduSideLeftIntro ${ENTRANCE.leftDur}s ${EASING.out} ${ENTRANCE.leftDelay}s both` };
+  const rightEntranceStyle = reducedMotion ? {} : { animation: `tduSideRightIntro ${ENTRANCE.rightDur}s ${EASING.out} ${ENTRANCE.rightDelay}s both` };
+
   return (
     <div style={s.wrap}>
       <style>{`
         @keyframes tduPulse { 0%,100% { box-shadow: 0 0 0px 0px rgba(139,217,87,0.4); } 50% { box-shadow: 0 0 24px 4px rgba(139,217,87,0.35); } }
         @keyframes tduGlowBg { 0%,100% { opacity: 0.5; } 50% { opacity: 0.9; } }
+        @keyframes tduVsFlash {
+          0% { opacity: 0; transform: scale(0.4); box-shadow: 0 0 0px 0px rgba(240,85,90,0); }
+          55% { opacity: 1; transform: scale(1.22); box-shadow: 0 0 30px 6px rgba(240,85,90,0.8); }
+          100% { opacity: 1; transform: scale(1); box-shadow: 0 0 18px -2px rgba(240,85,90,0.6); }
+        }
+        @keyframes tduVsFinalPulse { 0% { transform: scale(1); } 50% { transform: scale(1.1); } 100% { transform: scale(1); } }
+        @keyframes tduSideLeftIntro { 0% { opacity: 0; transform: translateX(-42px) scale(0.94); } 100% { opacity: 1; transform: translateX(0) scale(1); } }
+        @keyframes tduSideRightIntro { 0% { opacity: 0; transform: translateX(42px) scale(0.94); } 100% { opacity: 1; transform: translateX(0) scale(1); } }
       `}</style>
       <div style={s.bgGlow} />
       {hasAnyFighter && <div style={s.mainEventTag}>⚔️ MAIN EVENT</div>}
 
       <div style={s.confrontation}>
-        <TeamCol members={myTeam} excluded={myExcluded} leading={leading === "me"} score={myScore} profiles={profiles} duelTheme={duelTheme} />
-        <div style={s.vsWrap}><div style={s.vsCircle}><span style={s.vsShine} />VS</div></div>
-        <TeamCol members={opponentTeam} excluded={oppExcluded} leading={leading === "opp"} score={oppScore} profiles={profiles} duelTheme={duelTheme} />
+        <TeamCol members={myTeam} excluded={myExcluded} leading={leading === "me"} score={myScore} profiles={profiles} duelTheme={duelTheme} entranceStyle={leftEntranceStyle} />
+        <div style={s.vsWrap}><div style={{ ...s.vsCircle, ...vsEntranceStyle }}><span style={s.vsShine} />VS</div></div>
+        <TeamCol members={opponentTeam} excluded={oppExcluded} leading={leading === "opp"} score={oppScore} profiles={profiles} duelTheme={duelTheme} entranceStyle={rightEntranceStyle} />
       </div>
 
       {(myTeam.length > 2 || opponentTeam.length > 2) && (

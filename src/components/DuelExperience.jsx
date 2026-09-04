@@ -2,6 +2,21 @@ import PlayerAvatar from "./PlayerAvatar";
 import DuelFighterPortrait from "./DuelFighterPortrait";
 import { getFighterUrl } from "../assets/fighters";
 import { color, font, radius } from "../matchdayTheme";
+import { usePrefersReducedMotion, EASING } from "../motion";
+
+// ── Animația de intrare — RULEAZĂ O SINGURĂ DATĂ, la montare (nu în
+// buclă — spre deosebire de duelPulse/duelShine/duelGlowBg de mai jos,
+// care sunt efecte continue existente, neatinse). Secvență cerută
+// explicit: VS apare primul (flash scurt) → fighterul din stânga intră
+// din stânga → cel din dreapta, puțin decalat → VS face un ultim puls
+// subtil. Durate proprii acestei secvențe compuse (nu din DURATION,
+// care acoperă tranziții atomice reutilizabile) — dar respectă restul
+// regulilor din motion.js: doar transform/opacity (+ box-shadow o
+// singură dată, explicit permis), EASING din sursa unică,
+// prefers-reduced-motion sare direct la starea finală (fără
+// `animation` deloc — elementele rămân pur și simplu la starea lor
+// normală, fără fade/slide). ──
+const ENTRANCE = { vs: 0.5, leftDelay: 0.5, leftDur: 0.6, rightDelay: 0.7, rightDur: 0.6, vsPulseDelay: 1.3, vsPulseDur: 0.35 };
 
 // ── Experiența Duelului MEU — mare, sus, dramatică. Glow radial în spate,
 // avataruri mari, indicator pulsatoriu pe cel care conduce, VS cu shine.
@@ -15,6 +30,8 @@ import { color, font, radius } from "../matchdayTheme";
 // imaginea lipsește pentru cineva), arată EXACT ca înainte de Stage B —
 // avatarul rotund normal, aceeași dimensiune, același stil. ──
 export default function DuelExperience({ myUid, opponentUid, isBye, profiles, liveScores, resolved, myPoints, duelTheme }) {
+  const reducedMotion = usePrefersReducedMotion();
+
   if (isBye) {
     return (
       <div style={s.byeWrap}>
@@ -39,18 +56,36 @@ export default function DuelExperience({ myUid, opponentUid, isBye, profiles, li
   const myFighterUrl = duelTheme ? getFighterUrl(duelTheme, myProfile.avatarId) : null;
   const oppFighterUrl = duelTheme ? getFighterUrl(duelTheme, oppProfile.avatarId) : null;
 
+  const vsEntranceStyle = reducedMotion ? {} : {
+    animation: `duelVsFlash ${ENTRANCE.vs}s ${EASING.overshoot} both, duelVsFinalPulse ${ENTRANCE.vsPulseDur}s ${EASING.inOut} ${ENTRANCE.vsPulseDelay}s both`,
+  };
+  const leftEntranceStyle = reducedMotion ? {} : {
+    animation: `duelSideLeftIntro ${ENTRANCE.leftDur}s ${EASING.out} ${ENTRANCE.leftDelay}s both`,
+  };
+  const rightEntranceStyle = reducedMotion ? {} : {
+    animation: `duelSideRightIntro ${ENTRANCE.rightDur}s ${EASING.out} ${ENTRANCE.rightDelay}s both`,
+  };
+
   return (
     <div style={s.wrap}>
       <style>{`
         @keyframes duelPulse { 0%,100% { box-shadow: 0 0 0px 0px rgba(139,217,87,0.4); } 50% { box-shadow: 0 0 24px 4px rgba(139,217,87,0.35); } }
         @keyframes duelShine { 0% { transform: translateX(-120%) rotate(20deg); } 100% { transform: translateX(220%) rotate(20deg); } }
         @keyframes duelGlowBg { 0%,100% { opacity: 0.5; } 50% { opacity: 0.9; } }
+        @keyframes duelVsFlash {
+          0% { opacity: 0; transform: scale(0.4); box-shadow: 0 0 0px 0px rgba(240,85,90,0); }
+          55% { opacity: 1; transform: scale(1.22); box-shadow: 0 0 30px 6px rgba(240,85,90,0.8); }
+          100% { opacity: 1; transform: scale(1); box-shadow: 0 0 18px -2px rgba(240,85,90,0.6); }
+        }
+        @keyframes duelVsFinalPulse { 0% { transform: scale(1); } 50% { transform: scale(1.1); } 100% { transform: scale(1); } }
+        @keyframes duelSideLeftIntro { 0% { opacity: 0; transform: translateX(-42px) scale(0.94); } 100% { opacity: 1; transform: translateX(0) scale(1); } }
+        @keyframes duelSideRightIntro { 0% { opacity: 0; transform: translateX(42px) scale(0.94); } 100% { opacity: 1; transform: translateX(0) scale(1); } }
       `}</style>
       <div style={s.bgGlow} />
       {(!!myFighterUrl || !!oppFighterUrl) && <div style={s.mainEventTag}>⚔️ MAIN EVENT</div>}
 
       <div style={{ ...s.confrontation, ...(myFighterUrl || oppFighterUrl ? s.confrontationFighter : {}) }}>
-        <div style={{ ...s.side, ...(myFighterUrl ? s.sideFighter : {}), ...(leading === "me" ? s.sideLeading : {}) }}>
+        <div style={{ ...s.side, ...(myFighterUrl ? s.sideFighter : {}), ...(leading === "me" ? s.sideLeading : {}), ...leftEntranceStyle }}>
           {myFighterUrl ? (
             <div style={s.fighterFrame}>
               <DuelFighterPortrait avatarId={myProfile.avatarId} nickname={myProfile.nickname} theme={duelTheme} width={104} height={148} fallbackSize={78} borderRadius={9} />
@@ -66,13 +101,13 @@ export default function DuelExperience({ myUid, opponentUid, isBye, profiles, li
         </div>
 
         <div style={s.vsWrap}>
-          <div style={{ ...s.vsCircle, ...(myFighterUrl || oppFighterUrl ? s.vsCircleFighter : {}) }}>
+          <div style={{ ...s.vsCircle, ...(myFighterUrl || oppFighterUrl ? s.vsCircleFighter : {}), ...vsEntranceStyle }}>
             <span style={s.vsShine} />
             VS
           </div>
         </div>
 
-        <div style={{ ...s.side, ...(oppFighterUrl ? s.sideFighter : {}), ...(leading === "opp" ? s.sideLeading : {}) }}>
+        <div style={{ ...s.side, ...(oppFighterUrl ? s.sideFighter : {}), ...(leading === "opp" ? s.sideLeading : {}), ...rightEntranceStyle }}>
           {oppFighterUrl ? (
             <div style={s.fighterFrame}>
               <DuelFighterPortrait avatarId={oppProfile.avatarId} nickname={oppProfile.nickname} theme={duelTheme} width={104} height={148} fallbackSize={78} borderRadius={9} />

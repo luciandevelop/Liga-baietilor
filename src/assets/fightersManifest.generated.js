@@ -3,4 +3,13 @@
 // .github/workflows/fighters-manifest.yml după fiecare push care
 // atinge public/fighters/**. Indexurile o dată alocate NU se mai
 // schimbă niciodată. Structură: { tema: { pachetJucător: { nextIndex, files } } }.
-export default {};
+export default {
+  "kombat": {
+    "bogdanb": {
+      "nextIndex": 2,
+      "files": {
+        "1": "fighter_shang_tsung_pinocchio.webp"
+      }
+    }
+  }
+};

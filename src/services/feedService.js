@@ -935,12 +935,43 @@ function buildSampledFunEvents(adminFun) {
 // suficient ca algoritmul de merge/prioritate să aleagă corect primele
 // `max`, fără să tragă tot istoricul. Fun items din cache (vezi mai
 // sus), nu recitite de fiecare dată.
+// ── Garantează citate ÎN FEREASTRA VIZIBILĂ — cerut explicit: nu ajunge
+// să fie generate (asta se întâmplă deja, în buildSampledFunEvents),
+// trebuie să și SUPRAVIEȚUIASCĂ tăierii la `max`. Problema reală: un
+// citat are prioritate mică (FUN=15) și niciun boost de dată (nu ține
+// de un meci) — într-o zi cu 3 meciuri, fiecare cu propriul fapt de
+// oraș + previzualizare, boost-uite la +200, un citat nu are cum să
+// urce natural în primele `max` locuri, oricâte s-ar genera. Rezervăm
+// deci un număr mic de locuri GARANTATE (nu forțăm poziția 1 — le
+// inserăm după primele câteva carduri, ca meciurile zilei să rămână
+// vizibil în frunte), scoțând din fereastră doar cele mai slabe carduri
+// non-citat, nu cele de sus. ──
+function ensureQuotesInWindow(sorted, max, minQuotes = 2) {
+  const isQuote = (e) => e.id?.startsWith("quote_");
+  const availableQuotes = sorted.filter(isQuote);
+  const target = Math.min(minQuotes, availableQuotes.length);
+  if (target === 0) return sorted;
+
+  const alreadyInWindow = sorted.slice(0, max).filter(isQuote).length;
+  if (alreadyInWindow >= target) return sorted;
+
+  const nonQuotes = sorted.filter((e) => !isQuote(e));
+  const chosenQuotes = availableQuotes.slice(0, target);
+  const insertAt = Math.min(4, nonQuotes.length); // meciurile zilei rămân în frunte, neatinse
+  return [
+    ...nonQuotes.slice(0, insertAt),
+    ...chosenQuotes,
+    ...nonQuotes.slice(insertAt).filter((e) => !chosenQuotes.includes(e)),
+  ];
+}
+
 export async function getHomeFeedTop(matches = [], { max = 8 } = {}) {
   const buffer = Math.max(max * 3, 20);
   const [live, adminFun] = await Promise.all([listLiveFeedEvents({ max: buffer }), getCachedFunItems()]);
   const fun = buildSampledFunEvents(adminFun);
   const matchesById = Object.fromEntries(matches.map((m) => [m.id, m]));
-  return { merged: mergeFeedEvents(matchesById, live, fun).slice(0, max) };
+  const merged = mergeFeedEvents(matchesById, live, fun);
+  return { merged: ensureQuotesInWindow(merged, max).slice(0, max) };
 }
 
 export async function listRecentEventsForAdmin({ max = 50 } = {}) {

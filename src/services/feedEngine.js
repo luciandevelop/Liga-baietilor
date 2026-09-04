@@ -545,13 +545,14 @@ export function buildClubFactEvent(match, fact, kind) {
 
 export function buildCityFactEvent(match, cityFact) {
   if (!cityFact) return null;
+  const rawTitle = cityFact.subtitle || cityFact.title;
   return {
     id: `cityfact_${match.id}`, type: TYPE.FACT, subtype: "city",
     ts: Date.now(), importance: IMPORTANCE.CITY_FACT, actors: [],
     metadata: { matchId: match.id, homeTeam: match.homeTeam, awayTeam: match.awayTeam },
     narrativeKey: `cityfact_${match.id}`, version: 2,
     icon: "city", important: false,
-    title: cityFact.subtitle || cityFact.title,
+    title: injectCityName(rawTitle, cityFact.teamId),
     subtitle: cityFact.body || null,
     category: "city", priority: IMPORTANCE.CITY_FACT,
     detail: { matchId: match.id, source: cityFact.source || null },
@@ -869,6 +870,20 @@ const TEAM_CITY = {
   tottenham: "Londra", "u-cluj": "Cluj-Napoca", "u-craiova": "Craiova", "vfb-stuttgart": "Stuttgart", villarreal: "Villarreal",
 };
 
+// ── Injectează orașul într-un text de fapt de oraș, DOAR dacă nu e deja
+// clar — folosit atât de clarifySnippetText (fapte îmbinate în cardul
+// unui meci) CÂT ȘI de buildCityFactEvent (card propriu de oraș) —
+// aceeași regulă, un singur loc. ──
+function injectCityName(rawText, teamId) {
+  const city = TEAM_CITY[teamId];
+  if (!rawText || !city || rawText.toLowerCase().includes(city.toLowerCase())) return rawText;
+  const dashIdx = rawText.indexOf("—");
+  if (dashIdx > 0) {
+    return `${rawText.slice(0, dashIdx).trim()} din ${city} ${rawText.slice(dashIdx)}`;
+  }
+  return `${city}: ${rawText}`;
+}
+
 // ── Dezambiguizare — folosește TIPUL faptului + metadata deja
 // disponibilă (nu un prefix universal): faptele de oraș primesc orașul
 // clubului, restul (club/antrenor/jucător) primesc numele echipei reale
@@ -881,15 +896,7 @@ function clarifySnippetText(snippet) {
   if (!raw) return raw;
   const isCity = snippet.title === "Despre oraș";
 
-  if (isCity) {
-    const city = TEAM_CITY[snippet.teamId];
-    if (!city || raw.toLowerCase().includes(city.toLowerCase())) return raw;
-    const dashIdx = raw.indexOf("—");
-    if (dashIdx > 0) {
-      return `${raw.slice(0, dashIdx).trim()} din ${city} ${raw.slice(dashIdx)}`;
-    }
-    return `${city}: ${raw}`;
-  }
+  if (isCity) return injectCityName(raw, snippet.teamId);
 
   const team = snippet.teamName;
   if (!team || raw.toLowerCase().includes(team.toLowerCase())) return raw;

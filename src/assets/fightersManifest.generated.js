@@ -70,6 +70,30 @@ export default {
       "files": {
         "1": "raiden_300x420.webp"
       }
+    },
+    "sexu-ciobanu": {
+      "nextIndex": 2,
+      "files": {
+        "1": "file_0000000043b0820cb2c1e315033235c0.png"
+      }
+    },
+    "ursuleo": {
+      "nextIndex": 2,
+      "files": {
+        "1": "ursul_300x420.webp"
+      }
+    },
+    "utzy": {
+      "nextIndex": 2,
+      "files": {
+        "1": "avatar_reptila_300x420.webp"
+      }
+    },
+    "vikigbt": {
+      "nextIndex": 2,
+      "files": {
+        "1": "fighter_skinny_elastico_300x420.png"
+      }
     }
   }
 };

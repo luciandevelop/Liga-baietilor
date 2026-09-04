@@ -106,7 +106,7 @@ export default function WelcomeScreen({ user, profile, isAdmin, onOpenAdmin, onO
 
   async function doRefreshFeedTop() {
     try {
-      const { merged } = await getHomeFeedTop({ max: 8 });
+      const { merged } = await getHomeFeedTop(matches, { max: 8 });
       setFeedTop(merged);
     } catch (err) {
       console.error("Eroare la reîmprospătarea Feed-ului:", err);

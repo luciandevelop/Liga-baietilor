@@ -99,6 +99,23 @@ export default function MatchResultCard({ match, onSave, onChangeStatus, disable
       </div>
       {statusError && <div style={s.err}>{statusError}</div>}
 
+      {!hasResult && match.liveApiScoreA != null && match.liveApiScoreB != null && (
+        <div style={s.apiSuggestBox}>
+          <span style={s.apiSuggestText}>
+            API: {match.liveApiScoreA}–{match.liveApiScoreB}
+            {match.liveApiStatus ? ` (${match.liveApiStatus})` : ""}
+          </span>
+          <button
+            type="button"
+            style={s.apiSuggestBtn}
+            disabled={disabled || saving}
+            onClick={() => { setScoreA(match.liveApiScoreA); setScoreB(match.liveApiScoreB); }}
+          >
+            Preia scorul
+          </button>
+        </div>
+      )}
+
       <div style={s.inputsBox}>
         <div style={s.scoreRow}>
           <NumericStepper value={scoreA} onChange={(v) => setScoreA(v)} disabled={disabled || saving} />
@@ -128,6 +145,15 @@ const s = {
     border: `1px solid ${color.greenBorder}`, borderRadius: 999, padding: "3px 8px", whiteSpace: "nowrap",
   },
   inputsBox: { marginTop: 12, paddingTop: 12, borderTop: `1px solid ${color.borderSubtle}` },
+  apiSuggestBox: {
+    marginTop: 10, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8,
+    background: "rgba(139,217,87,0.08)", border: "1px solid rgba(139,217,87,0.3)", borderRadius: radius.sm, padding: "7px 10px",
+  },
+  apiSuggestText: { fontSize: 10.5, color: "#8BD957", fontFamily: font.body, fontWeight: 700 },
+  apiSuggestBtn: {
+    fontSize: 10, fontWeight: 800, color: "#0A0E1A", background: "#8BD957", border: "none",
+    borderRadius: 999, padding: "4px 10px", cursor: "pointer", fontFamily: font.body, whiteSpace: "nowrap",
+  },
   statusRow: { display: "flex", flexWrap: "wrap", gap: 5, marginTop: 10 },
   statusBtn: {
     fontSize: 9.5, fontWeight: 700, letterSpacing: "0.02em", borderRadius: 999, padding: "4px 9px",

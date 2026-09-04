@@ -1,7 +1,7 @@
 import { usePrefersReducedMotion } from "../motion";
 import CompetitionHeaderStrip from "./CompetitionHeaderStrip";
 import ClubLogo from "./ClubLogo";
-import { getMatchStatus, MATCH_STATUS_LABEL, MATCH_STATUS_TONE } from "../utils/matchStatus";
+import { getDisplayMatchState, MATCH_STATUS_LABEL, MATCH_STATUS_TONE } from "../utils/matchStatus";
 import { getCompetitionTheme } from "../competitionThemes";
 import { color, font, radius, shadow } from "../matchdayTheme";
 
@@ -22,13 +22,14 @@ function formatCountdown(ms) {
 // Dublu) — tratament vizual auriu distinct, imposibil de ratat.
 export default function MatchRailCard({ match, now, emphasizeCountdown = false, isFeatured = false, featuredIndex, onClick }) {
   const reduced = usePrefersReducedMotion();
-  const status = getMatchStatus(match, now);
+  const display = getDisplayMatchState(match, now);
+  const status = display.status;
   const tone = MATCH_STATUS_TONE[status];
   const theme = getCompetitionTheme(match.competitionId);
   const timeLabel = match.kickoffAt?.toDate
     ? match.kickoffAt.toDate().toLocaleTimeString("ro-RO", { hour: "2-digit", minute: "2-digit" })
     : "";
-  const showScore = status === "finished";
+  const showScore = display.scoreA != null && display.scoreB != null && (status === "finished" || status === "live" || status === "paused");
   const countdown = status === "scheduled" && now != null ? formatCountdown(match.kickoffAt.toMillis() - LOCK_MS - now) : null;
   const statusTag = <span style={{ ...s.tag, background: tone.bg, color: tone.fg }}>{MATCH_STATUS_LABEL[status]}</span>;
 
@@ -99,7 +100,8 @@ export default function MatchRailCard({ match, now, emphasizeCountdown = false, 
         )}
         {showScore && (
           <div style={s.bottomRow}>
-            <span style={s.score}>{match.realScoreA} – {match.realScoreB}</span>
+            <span style={s.score}>{display.scoreA} – {display.scoreB}</span>
+            {status === "live" && <span style={s.liveDot}>● {display.minute != null ? `${display.minute}'` : "LIVE"}</span>}
           </div>
         )}
       </div>
@@ -139,4 +141,5 @@ const s = {
     background: "rgba(240,85,90,0.13)", borderRadius: 999, padding: "3px 9px", fontFamily: font.body,
   },
   score: { fontSize: 17, color: color.textPrimary, fontWeight: 800, fontFamily: font.display },
+  liveDot: { fontSize: 10, color: "#8BD957", fontWeight: 800, fontFamily: font.body },
 };

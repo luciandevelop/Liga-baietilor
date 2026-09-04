@@ -3,7 +3,7 @@ import ClubLogo from "./ClubLogo";
 import CompetitionHeaderStrip from "./CompetitionHeaderStrip";
 import FriendsPredictions from "./FriendsPredictions";
 import LiveMatchDetails from "./LiveMatchDetails";
-import { getMatchStatus, MATCH_STATUS_LABEL, MATCH_STATUS_TONE } from "../utils/matchStatus";
+import { getDisplayMatchState, MATCH_STATUS_LABEL, MATCH_STATUS_TONE } from "../utils/matchStatus";
 import { getCompetitionTheme } from "../competitionThemes";
 import { color, font, radius, shadow } from "../matchdayTheme";
 
@@ -42,7 +42,8 @@ export default function MatchPredictionCard({
   currentUid,
 }) {
   const p = prediction || {};
-  const status = getMatchStatus(match);
+  const display = getDisplayMatchState(match);
+  const status = display.status;
   const tone = MATCH_STATUS_TONE[status];
   const theme = getCompetitionTheme(match.competitionId);
   const statusTag = <span style={{ ...s.statusBadge, background: tone.bg, color: tone.fg }}>{MATCH_STATUS_LABEL[status]}</span>;
@@ -97,13 +98,15 @@ export default function MatchPredictionCard({
 
         {locked ? (
           <div style={s.lockedBox}>
-            {(match.status === "finished" || match.status === "live" || match.status === "paused") && match.realScoreA != null && match.realScoreB != null ? (
+            {display.scoreA != null && display.scoreB != null ? (
               <>
-                <div style={s.lockedScore}>{match.realScoreA} – {match.realScoreB}</div>
-                {match.status === "finished" ? (
+                <div style={s.lockedScore}>{display.scoreA} – {display.scoreB}</div>
+                {status === "finished" && !display.isFinalUnofficial ? (
                   <span style={s.finalTag}>REZULTAT FINAL</span>
+                ) : display.isFinalUnofficial ? (
+                  <span style={s.liveTag}>FINAL · în așteptarea validării</span>
                 ) : (
-                  <span style={s.liveTag}>● LIVE{match.liveMinute != null ? ` ${match.liveMinute}'` : ""}{match.status === "paused" ? " · Pauză" : ""}</span>
+                  <span style={s.liveTag}>● LIVE{display.minute != null ? ` ${display.minute}'` : ""}{status === "paused" ? " · Pauză" : ""}</span>
                 )}
                 <LiveMatchDetails match={match} compact />
                 {p.scoreA !== "" && p.scoreA !== undefined && (
@@ -114,7 +117,7 @@ export default function MatchPredictionCard({
                   </div>
                 )}
               </>
-            ) : (match.status === "live" || match.status === "paused") ? (
+            ) : (status === "live" || status === "paused") ? (
               <>
                 <div style={s.lockedScore}>– – –</div>
                 <span style={s.liveTag}>● LIVE · rezultat neintrodus încă</span>

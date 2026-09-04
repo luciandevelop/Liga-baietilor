@@ -1,10 +1,10 @@
 import { useEffect, useState } from "react";
-import { collection, doc, getDocs, onSnapshot, query, where } from "firebase/firestore";
+import { doc, onSnapshot } from "firebase/firestore";
 import { db } from "../firebase";
 import { listPredictionsForMatch } from "../services/predictionsService";
 import { getUserPublicProfiles } from "../services/profilesService";
 import { computeMainScore, computeMatchPoints } from "../services/scoringEngine";
-import { listJokersForGameweek } from "../services/adminService";
+import { listJokersForMatch, listJokerExtraForMatch } from "../services/adminService";
 import PlayerAvatar from "./PlayerAvatar";
 import ClubLogo from "./ClubLogo";
 import { color, font, radius } from "../matchdayTheme";
@@ -58,24 +58,28 @@ export default function PredictionsRevealSheet({ match, isFeatured, currentUserI
     })();
 
     // Cine are Jokerul (normal/Extra) pe acest meci — best-effort, separat
-    // de eroarea de mai sus. Dacă eșuează (ex. meci nedezvăluit încă),
-    // seturile rămân goale — comportamentul e identic cu "nimeni nu are
-    // Joker aici", nu o eroare vizibilă în plus.
+    // de eroarea de mai sus. Interogare filtrată direct pe matchId (nu
+    // gameweekId) — se potrivește exact cu ce verifică regula Firestore
+    // pentru citirea unui joker de către alt user (isAfterLock pe
+    // matchId), deci se dezvăluie corect PE MĂSURĂ ce fiecare meci se
+    // blochează, nu abia când s-au blocat toate meciurile etapei. Dacă
+    // eșuează oricum (ex. meci nedezvăluit încă), seturile rămân goale —
+    // comportamentul e identic cu "nimeni nu are Joker aici", nu o
+    // eroare vizibilă în plus.
     (async () => {
       try {
-        const jokers = await listJokersForGameweek(match.gameweekId);
+        const jokers = await listJokersForMatch(match.id);
         if (cancelled) return;
-        setJokerUids(new Set(jokers.filter((j) => j.matchId === match.id).map((j) => j.userId)));
+        setJokerUids(new Set(jokers.map((j) => j.userId)));
       } catch (err) {
-        console.error("Eroare la încărcarea Jokerelor etapei:", err);
+        console.error("Eroare la încărcarea Jokerelor meciului:", err);
       }
       try {
-        const jokerExtraSnap = await getDocs(query(collection(db, "jokerExtra"), where("gameweekId", "==", match.gameweekId)));
+        const jokersExtra = await listJokerExtraForMatch(match.id);
         if (cancelled) return;
-        const jokersExtra = jokerExtraSnap.docs.map((d) => d.data());
-        setJokerExtraUids(new Set(jokersExtra.filter((j) => j.matchId === match.id).map((j) => j.userId)));
+        setJokerExtraUids(new Set(jokersExtra.map((j) => j.userId)));
       } catch (err) {
-        console.error("Eroare la încărcarea Jokerelor Extra ale etapei:", err);
+        console.error("Eroare la încărcarea Jokerelor Extra ale meciului:", err);
       }
     })();
 

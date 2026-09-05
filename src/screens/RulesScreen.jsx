@@ -59,6 +59,17 @@ export default function RulesScreen({ onBack }) {
             <ExRow pred="Ai prezis 1-4" res="Ai ratat rezultatul, dar 1+4=5 goluri, la fel ca real (3+2=5) → 20p" tone="mid" />
             <ExRow pred="Ai prezis 1-1" res="Nici rezultatul, nici totalul de goluri (2 ≠ 5) nu se potrivesc → 0p" tone="bad" />
           </ExampleBox>
+
+          <P small>
+            La egal, cei 70p au o regulă separată — diferența de goluri e mereu 0 la orice egal,
+            deci nu contează ca la victorii. Contează în schimb <b>cât de aproape</b> e egalul real
+            de cel pronosticat: maximum ±1 gol pentru fiecare echipă.
+          </P>
+          <ExampleBox title="Exemplu — ai prezis 1-1 (egal)">
+            <ExRow pred="Rezultat real 1-1" res="Scor exact → 120p" tone="good" />
+            <ExRow pred="Rezultat real 0-0 sau 2-2" res="Egal, la un gol distanță de 1-1 → 70p" tone="good" />
+            <ExRow pred="Rezultat real 3-3 sau 4-4" res="Tot egal, dar prea departe de 1-1 (peste 1 gol) → 50p" tone="mid" />
+          </ExampleBox>
         </Section>
 
         <Section icon="🟨" title="Cartonașe și cornere — punctate separat">

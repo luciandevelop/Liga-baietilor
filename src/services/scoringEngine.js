@@ -13,7 +13,18 @@ export function computeMainScore(predA, predB, realA, realB) {
   const realResult = Math.sign(realDiff);
 
   if (predResult === realResult) {
-    // Rezultat 1/X/2 corect — verificăm dacă și diferența e corectă.
+    // Rezultat 1/X/2 corect — verificăm dacă și nivelul e corect.
+    // CAZ SPECIAL egal: predDiff și realDiff sunt AMBELE 0 pentru ORICE
+    // egal — "predDiff === realDiff" ar fi deci mereu adevărat, indiferent
+    // de nivelul exact (1-1 pronosticat ar trece la 70p și pentru 3-3
+    // real, la fel ca pentru 1-1 real). Bug găsit și reparat, cerut
+    // explicit: la egaluri, verificăm în schimb cât de aproape e nivelul
+    // egalului real de cel pronosticat (max ±1 gol per echipă) — NU se
+    // schimbă nimic la victorii/înfrângeri, unde predDiff/realDiff rămân
+    // comparate exact ca înainte (ex. 3-1 pronosticat → 2-0 real tot 70p).
+    if (predResult === 0) {
+      return Math.abs(predA - realA) <= 1 ? 70 : 50;
+    }
     return predDiff === realDiff ? 70 : 50;
   }
 

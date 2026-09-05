@@ -3,6 +3,7 @@ import DuelFighterPortrait from "./DuelFighterPortrait";
 import { getFighterUrl } from "../assets/fighters";
 import { color, font, radius } from "../matchdayTheme";
 import { usePrefersReducedMotion, EASING } from "../motion";
+import { teamScore, excludedUid } from "../services/scoringEngine";
 
 // ── Aceeași secvență de intrare ca la Duel 1v1 (DuelExperience.jsx) —
 // vezi comentariul de-acolo pentru detalii. Nume de keyframes proprii
@@ -14,19 +15,6 @@ const ENTRANCE = { vs: 0.5, leftDelay: 0.5, leftDur: 0.6, rightDelay: 0.7, right
 // Resolve (surprisesService.js): sub 3 membri, suma tuturor; 3+, se
 // exclude cel clasat la mijloc (floor(n/2)+1) din comparație — el
 // rămâne vizibil în echipă, doar nu-i "contează" scorul aici. ──
-function teamScore(members, liveScores) {
-  if (members.length <= 2) return members.reduce((s, uid) => s + (liveScores[uid] ?? 0), 0);
-  const sorted = [...members].sort((a, b) => (liveScores[b] ?? 0) - (liveScores[a] ?? 0));
-  const excludeIdx = Math.floor(members.length / 2) + 1 - 1;
-  return sorted.reduce((s, uid, i) => (i === excludeIdx ? s : s + (liveScores[uid] ?? 0)), 0);
-}
-
-function excludedUid(members, liveScores) {
-  if (members.length <= 2) return null;
-  const sorted = [...members].sort((a, b) => (liveScores[b] ?? 0) - (liveScores[a] ?? 0));
-  return sorted[Math.floor(members.length / 2) + 1 - 1];
-}
-
 function TeamCol({ members, excluded, leading, score, profiles, duelTheme, entranceStyle }) {
   const fighterSize = members.length > 2 ? 42 : 54;
   return (

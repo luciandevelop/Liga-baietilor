@@ -1,13 +1,7 @@
 import PlayerAvatar from "./PlayerAvatar";
 import DuelFighterPortrait from "./DuelFighterPortrait";
 import { color, font, radius } from "../matchdayTheme";
-
-function teamScore(members, liveScores) {
-  if (members.length <= 2) return members.reduce((s, uid) => s + (liveScores[uid] ?? 0), 0);
-  const sorted = [...members].sort((a, b) => (liveScores[b] ?? 0) - (liveScores[a] ?? 0));
-  const excludeIdx = Math.floor(members.length / 2) + 1 - 1;
-  return sorted.reduce((s, uid, i) => (i === excludeIdx ? s : s + (liveScores[uid] ?? 0)), 0);
-}
+import { teamScore } from "../services/scoringEngine";
 
 // ── Rând compact per confruntare de echipă — pentru grupurile care NU
 // sunt al userului curent. Suportă echipe de 2, 3 sau 4 (Duel de Echipe

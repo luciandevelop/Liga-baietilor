@@ -45,7 +45,7 @@ import PlayerRankRow from "../components/PlayerRankRow";
 import EmptyState from "../components/EmptyState";
 import {
   listRecentEventsForAdmin, listAdminFunItems, addFunItem, deleteFunItem, deleteAllLiveMatchEvents,
-  regenerateCurrentGameweekFeed,
+  regenerateCurrentGameweekFeed, processLiveRankChangesCapped, processTeamDuelPulse,
 } from "../services/feedService";
 import { EDITORIAL_ARTICLES } from "../feedContent/editorialContent";
 import LiveEventPanel from "../components/LiveEventPanel";
@@ -867,6 +867,14 @@ export default function AdminScreen({ onBack }) {
 
       if (result.rows.length > 0 && currentGameweek?.status !== "completed") {
         await publishLiveScores(selectedGameweekId);
+        // Feed-ul viu — chiar acum, imediat după ce clasamentul etapei
+        // s-a schimbat, nu doar dacă Adminul apasă separat "Regenerează
+        // Feed" (asta era cauza reală a Feed-ului "mort": mecanismul de
+        // povești (feedStoryEngine.js) exista deja, complet, dar nu se
+        // apela niciodată automat). Best-effort — un eșec aici nu
+        // trebuie să blocheze deloc fluxul principal de validare.
+        processLiveRankChangesCapped(selectedGameweekId).catch((err) => console.error("Eroare la Feed (clasament):", err));
+        processTeamDuelPulse(selectedGameweekId).catch((err) => console.error("Eroare la Feed (Duel de Echipe):", err));
       }
 
       if (result.incompleteMatchIds.length > 0) {

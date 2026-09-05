@@ -163,3 +163,22 @@ export function computeRankingBonuses(rows) {
 
   return ranked.map((r) => ({ ...r, rankingBonus: bonusByRank[r.rank] || 0 }));
 }
+
+// ── Scor de echipă (Duel de Echipe) — mutat aici din TeamDuelExperience.jsx
+// ca să fie reutilizabil și din Feed (editorial, nu doar din UI). Regula:
+// echipe de 2 → suma simplă. Echipe mai mari (3-4, din resturi) → cel mai
+// slab scor din echipă NU intră în sumă (dar tot ia premiul dacă echipa
+// câștigă) — exact aceeași logică, o singură sursă, folosită acum de
+// ambele. ──
+export function teamScore(members, liveScores) {
+  if (members.length <= 2) return members.reduce((s, uid) => s + (liveScores[uid] ?? 0), 0);
+  const sorted = [...members].sort((a, b) => (liveScores[b] ?? 0) - (liveScores[a] ?? 0));
+  const excludeIdx = Math.floor(members.length / 2) + 1 - 1;
+  return sorted.reduce((s, uid, i) => (i === excludeIdx ? s : s + (liveScores[uid] ?? 0)), 0);
+}
+
+export function excludedUid(members, liveScores) {
+  if (members.length <= 2) return null;
+  const sorted = [...members].sort((a, b) => (liveScores[b] ?? 0) - (liveScores[a] ?? 0));
+  return sorted[Math.floor(members.length / 2) + 1 - 1];
+}

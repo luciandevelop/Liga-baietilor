@@ -8,7 +8,7 @@ import {
   buildUpcomingMatchEvent, buildLiveMatchEvent, buildExternalLiveEvent, attachBanter, mergeFeedEvents, TYPE,
   buildCityFactEvent, buildClubFactEvent, buildDailyFillerEvent, buildQuoteEvent, buildSurpriseCreatedEvent, buildSurpriseMatchupEvent,
   buildSurpriseProgressEvent, buildSurpriseResultEvent, buildSurpriseRewardEvent, pick,
-  buildLineupEvent,
+  buildLineupEvent, buildTeamDuelPulseEvent,
 } from "./feedEngine";
 import { canRevealPredictions } from "./matchLockRule";
 // Logică pură, PARTAJATĂ cu api/football-sync.js (sursă unică de
@@ -19,6 +19,8 @@ import {
   buildPredictionDistributionFact, buildSurpriseFact, buildTopExactScorerFact, buildStandingsGapFact,
   buildBiggestMoveOfGameweekFact,
 } from "./feedFactsEngine";
+import { teamScore } from "./scoringEngine";
+import { getSecretMain } from "./surprisesService";
 import {
   emptyStageMemory, updateStageMemoryWithRanking, updateStageMemoryWithMatchScoring,
   detectLeaderStory, detectPodiumStory, detectBottomStory, detectMomentumAndStreaks, detectRivalry,
@@ -230,6 +232,84 @@ export async function processLiveRankChanges(gameweekId) {
   if (newOnes.length > 0) await saveFeedEvents(newOnes);
 
   return { events: budgeted, observability };
+}
+
+// ── Wrapper peste processLiveRankChanges — NU e un al doilea motor de
+// clasament (motorul rămâne exact cel din feedStoryEngine.js, neatins),
+// doar o gardă de VIZIBILITATE cerută explicit: dacă într-o zi se
+// validează 9 meciuri succesiv, nu vreau 9 carduri de clasament — vreau
+// UNUL SINGUR, care reflectă situația ACTUALĂ, înlocuit (nu adăugat) de
+// fiecare rulare ulterioară din aceeași zi. Motorul intern
+// (detectRankChangeEvents/aggregateRankStory) rămâne liber să combine
+// mai multe schimbări simultane într-o poveste — asta se păstrează,
+// neatinsă; garda de-aici acționează DOAR între apeluri diferite, nu în
+// interiorul unuia singur. ──
+export async function processLiveRankChangesCapped(gameweekId) {
+  const result = await processLiveRankChanges(gameweekId);
+  const clasamentIds = result.events.filter((e) => e.category === "clasament").map((e) => e.id);
+  if (clasamentIds.length === 0) return result; // nimic nou azi — cardurile de mai devreme rămân valabile, nu le atingem
+
+  const dateKey = new Date().toISOString().slice(0, 10);
+  const trackerRef = doc(db, "feedState", `dailyRankVisible_${gameweekId}_${dateKey}`);
+  const trackerSnap = await getDoc(trackerRef).catch(() => null);
+  const previousIds = trackerSnap?.exists() ? (trackerSnap.data().ids || []) : [];
+
+  // Tot ce era vizibil azi și NU mai face parte din rezultatul PROASPĂT
+  // al acestei rulări e depășit — șters, nu doar ascuns, ca să nu se
+  // adune carduri vechi despre tranziții intermediare.
+  const toDelete = previousIds.filter((id) => !clasamentIds.includes(id));
+  for (const id of toDelete) {
+    await deleteDoc(doc(db, "feedEvents", id)).catch(() => {});
+  }
+  await setDoc(trackerRef, { ids: clasamentIds, gameweekId, updatedAt: serverTimestamp() });
+
+  return result;
+}
+
+// ── Duel de Echipe — "pulsul" editorial cel mai echilibrat/dezechilibrat
+// din situația LIVE curentă. NU exista deloc înainte (verificat explicit
+// în feedStoryEngine.js/feedFactsEngine.js — nimic). Reutilizează
+// `gameweekLiveScores` (deja publicat de recomputeAndPublish, aceeași
+// citire ca processLiveRankChanges de mai sus, apelate mereu împreună —
+// nicio citire Firestore nouă în plus) — nu mecanismul Duelului în sine
+// (config.groups, deja calculat de Admin la deschiderea Surprizei), nu
+// scorul (aceeași formulă `teamScore`, mutată acum într-un loc comun cu
+// UI-ul de Duel, nu recalculată diferit). O singură știre/zi (ID cu data
+// calendaristică — regenerarea în aceeași zi suprascrie idempotent,
+// nu duplică; o zi nouă capătă natural un ID nou, deci text proaspăt). ──
+export async function processTeamDuelPulse(gameweekId) {
+  const secretMain = await getSecretMain(gameweekId);
+  if (!secretMain || secretMain.type !== "team-duel-random" || !secretMain.mainRevealed) return { event: null };
+  const groups = secretMain.config?.groups || [];
+  if (groups.length === 0) return { event: null };
+
+  const snap = await getDocs(query(collection(db, "gameweekLiveScores"), where("gameweekId", "==", gameweekId)));
+  if (snap.empty) return { event: null };
+  const liveScores = {};
+  snap.docs.forEach((d) => { const r = d.data(); liveScores[r.userId] = r.totalPoints || 0; });
+
+  const scored = groups.map((g) => ({
+    ...g, scoreA: teamScore(g.teamA, liveScores), scoreB: teamScore(g.teamB, liveScores),
+  })).map((g) => ({ ...g, diff: Math.abs(g.scoreA - g.scoreB) }));
+
+  const mostBalanced = [...scored].sort((a, b) => a.diff - b.diff)[0];
+  const mostUnbalanced = [...scored].sort((a, b) => b.diff - a.diff)[0];
+  // Varietate zilnică, determinist (nu Math.random) — alternează pe
+  // baza zilei calendaristice, nu a orei rulării (aceeași zi = aceeași
+  // alegere, indiferent de câte ori se reapelează).
+  const dateKey = new Date().toISOString().slice(0, 10);
+  const pickBalanced = hashSeedLocal(dateKey + gameweekId) % 2 === 0;
+  const chosen = pickBalanced ? mostBalanced : mostUnbalanced;
+  if (!chosen || chosen.diff === 0) return { event: null }; // egalitate perfectă - nici "echilibrat" nici "dezechilibrat" nu spune nimic nou
+
+  const allUids = [...chosen.teamA, ...chosen.teamB];
+  const profiles = await getUserPublicProfiles(allUids);
+  const namesA = chosen.teamA.map((uid) => profiles[uid]?.nickname || uid).join(" & ");
+  const namesB = chosen.teamB.map((uid) => profiles[uid]?.nickname || uid).join(" & ");
+
+  const event = buildTeamDuelPulseEvent(dateKey, namesA, namesB, chosen.scoreA, chosen.scoreB, pickBalanced);
+  await saveFeedEvents([event]);
+  return { event };
 }
 
 async function getExactScorersUidsForMatch(matchId) {

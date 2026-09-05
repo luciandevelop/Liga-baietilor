@@ -85,6 +85,7 @@ export const IMPORTANCE = {
   MATCH_DECISIVE_GOAL: 78, MATCH_FINAL_WITH_EXACT: 76, MATCH_FINAL: 68,
   GOAL_MAJOR: 73, GOAL_ROUTINE: 40,
   EXACT_SCORE_RARE: 74, EXACT_SCORE: 60,
+  DAILY_PULSE: 62, // "pulsul zilnic" — lider curent/echilibru Duel de Echipe, din date proprii
   JOKER: 58, UPCOMING_IMPORTANT: 50, PREVIEW: 35,
   FACT_INTERNAL: 45, BANTER_ATTACHED: 0,
   FUN: 15, CITY_FACT: 42,
@@ -409,6 +410,30 @@ function buildCombinedRankStory(headlineEvents) {
     ], seed),
     subtitle: null, category: "clasament", priority: Math.max(...sorted.map((e) => e.importance)) + 2,
     detail: { count: sorted.length },
+  };
+}
+
+// ══════════════════════════════════════════════════════════════════
+// "PULSUL ZILNIC" AL DUELULUI DE ECHIPE — cerut explicit: nu exista deloc
+// conținut editorial pentru Duel de Echipe (verificat, căutat în
+// feedStoryEngine.js/feedFactsEngine.js — nimic). Sistemul de
+// clasament/lider/momentum (detectLeaderStory etc.) exista deja, complet,
+// doar nu era apelat automat — ăla NU se reconstruiește aici, doar se
+// conectează (vezi feedService.js/AdminScreen.jsx). Funcție PURĂ — nu
+// atinge Firestore, primește date deja calculate. ──
+export function buildTeamDuelPulseEvent(dateKey, namesA, namesB, scoreA, scoreB, isBalanced) {
+  const id = `pulse_teamduel_${isBalanced ? "balanced" : "unbalanced"}_${dateKey}`;
+  const diff = Math.abs(scoreA - scoreB);
+  return {
+    id, type: TYPE.FACT, subtype: "team_duel_pulse", ts: Date.now(),
+    importance: IMPORTANCE.DAILY_PULSE, actors: [], version: 2,
+    icon: "trophy", important: false,
+    title: isBalanced
+      ? pick([`⚖️ Cel mai echilibrat Duel de Echipe în acest moment: ${namesA} vs ${namesB} — doar ${diff}p diferență.`], id)
+      : pick([`📉 Cel mai dezechilibrat Duel de Echipe în acest moment: ${namesA} vs ${namesB} — ${diff}p diferență.`], id),
+    subtitle: `${scoreA}p – ${scoreB}p`,
+    category: "clasament", priority: IMPORTANCE.DAILY_PULSE,
+    detail: {},
   };
 }
 

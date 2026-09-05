@@ -26,7 +26,7 @@ import {
   listAllMatches,
   runMatchHealthCheck,
   updateMatch,
-  listAllUsers, getPlayerStatus,
+  listAllUsers, getPlayerStatus, listJokersForGameweek,
   getPlayerCardStats,
   republishAllMatchPointsForGameweek,
 } from "../services/adminService";
@@ -62,6 +62,8 @@ import {
 import { DUEL_THEMES, getFighterUrl } from "../assets/fighters";
 import DuelExperience from "../components/DuelExperience";
 import TeamDuelExperience from "../components/TeamDuelExperience";
+import DuelFighterPortrait from "../components/DuelFighterPortrait";
+import PlayerAvatar from "../components/PlayerAvatar";
 import { color, font, layout, radius } from "../theme";
 
 // Ordonare operațională pentru secțiunea de Rezultate: meciurile FĂRĂ
@@ -159,6 +161,13 @@ export default function AdminScreen({ onBack }) {
   const [previewDuelTheme, setPreviewDuelTheme] = useState(DUEL_THEMES[0]?.id || "");
   const [previewDuelMode, setPreviewDuelMode] = useState("1v1"); // "1v1" | "2v2"
   const [previewDuelPlayers, setPreviewDuelPlayers] = useState(["", "", "", ""]); // [mine1, opp1, mine2, opp2]
+  // ── Joker săptămânal — vizibilitate Admin, cine l-a folosit și pe ce
+  // meci, cine nu. Reutilizează `allUsers`/`matches` deja încărcate;
+  // singura citire nouă e lista de jokeri ai etapei curente (nu exista
+  // deja în starea Admin) — o dată per etapă selectată, nu la fiecare
+  // randare. ──
+  const [weeklyJokers, setWeeklyJokers] = useState(null);
+  const [weeklyJokersGwId, setWeeklyJokersGwId] = useState(null);
   // ── Speciale (config) ──
   const now = useNow(60000); // "se închide peste 3 zile" nu are nevoie de secunde live, doar Home/SpecialsScreen
   const [specialCompId, setSpecialCompId] = useState("");
@@ -977,6 +986,14 @@ export default function AdminScreen({ onBack }) {
       .then(setAllUsers)
       .catch((err) => console.error("Eroare la încărcarea listei de utilizatori:", err));
   }, [tab]);
+
+  useEffect(() => {
+    if (tab !== "surprises" || !selectedGameweekId) return;
+    if (weeklyJokersGwId === selectedGameweekId) return; // deja încărcat pentru etapa asta
+    listJokersForGameweek(selectedGameweekId)
+      .then((jokers) => { setWeeklyJokers(jokers); setWeeklyJokersGwId(selectedGameweekId); })
+      .catch((err) => console.error("Eroare la încărcarea Jokerelor etapei:", err));
+  }, [tab, selectedGameweekId, weeklyJokersGwId]);
 
   // Aceeași sursă ca în Clasament — un singur card, indiferent de unde
   // e deschis (Live preview din Admin, sau oricare din cele 3 taburi).
@@ -1926,6 +1943,50 @@ export default function AdminScreen({ onBack }) {
                 })}
               </SectionCard>
 
+              <SectionCard title="🃏 Joker săptămânal — cine l-a folosit">
+                {!selectedGameweekId ? (
+                  <p style={s.hint}>Alege o etapă (sus, din selector) ca să vezi Jokerii ei.</p>
+                ) : weeklyJokersGwId !== selectedGameweekId || weeklyJokers === null ? (
+                  <p style={s.hint}>Se încarcă…</p>
+                ) : (() => {
+                  const activePlayers = allUsers.filter((u) => !u.status || u.status === "active");
+                  const jokerByUid = Object.fromEntries(weeklyJokers.map((j) => [j.userId, j]));
+                  const matchByIdLocal = Object.fromEntries(matches.map((m) => [m.id, m]));
+                  const used = activePlayers.filter((u) => jokerByUid[u.uid]);
+                  const unused = activePlayers.filter((u) => !jokerByUid[u.uid]);
+                  return (
+                    <>
+                      <p style={s.jokerSummary}>Folosit: <b>{used.length}/{activePlayers.length}</b></p>
+                      {used.length > 0 && (
+                        <div style={s.jokerList}>
+                          {used.map((u) => {
+                            const j = jokerByUid[u.uid];
+                            const m = matchByIdLocal[j.matchId];
+                            return (
+                              <div key={u.uid} style={s.jokerRow}>
+                                <span style={s.jokerName}>{u.nickname || u.uid}</span>
+                                <span style={s.jokerArrow}>→</span>
+                                <span style={s.jokerMatch}>{m ? `${m.homeTeam} – ${m.awayTeam}` : "meci necunoscut"}</span>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                      <p style={{ ...s.jokerSummary, marginTop: 10 }}>Nefolosit: <b>{unused.length}</b></p>
+                      {unused.length > 0 && (
+                        <div style={s.jokerList}>
+                          {unused.map((u) => (
+                            <div key={u.uid} style={s.jokerRow}>
+                              <span style={s.jokerName}>{u.nickname || u.uid}</span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </>
+                  );
+                })()}
+              </SectionCard>
+
               <SectionCard title="🥋 Preview Duel — doar în Admin, 100% local">
                 <p style={s.hint}>
                   Verifică grafica temelor de Duel fără să atingi etapa curentă — nimic de-aici nu se scrie
@@ -1955,24 +2016,53 @@ export default function AdminScreen({ onBack }) {
                   </select>
                 </div>
 
-                {(previewDuelMode === "1v1"
-                  ? [["Jucătorul tău", 0], ["Adversar", 1]]
-                  : [["Echipa ta — jucător 1", 0], ["Echipa ta — jucător 2", 2], ["Echipa adversă — jucător 1", 1], ["Echipa adversă — jucător 2", 3]]
-                ).map(([label, slot]) => (
-                  <div key={slot} style={s.surpriseRow}>
-                    <label style={s.surpriseLabel}>{label}</label>
-                    <select
-                      style={s.surpriseSelect}
-                      value={previewDuelPlayers[slot]}
-                      onChange={(e) => setPreviewDuelPlayers((prev) => { const next = [...prev]; next[slot] = e.target.value; return next; })}
-                    >
-                      <option value="">— alege —</option>
-                      {allUsers.map((u) => (
-                        <option key={u.uid} value={u.uid}>{u.nickname || u.uid}</option>
-                      ))}
-                    </select>
-                  </div>
-                ))}
+                {/* ── Grilă de selecție "ca-n joc" — toți jucătorii, apeși pe 2
+                    (sau 4, la 2v2) direct din listă, evidențiați pe loc, exact
+                    ca un ecran de selecție de personaje. Un al doilea tap pe
+                    cineva deja ales îl scoate din nou. Ordinea de umplere:
+                    la 1v1 → tu, apoi adversar; la 2v2 → tu1, tu2, apoi adv1,
+                    adv2. ── */}
+                <div style={s.surpriseRow}>
+                  <label style={s.surpriseLabel}>Jucători</label>
+                  <button
+                    type="button"
+                    style={s.smallBtn}
+                    onClick={() => setPreviewDuelPlayers(["", "", "", ""])}
+                  >
+                    ↺ Golește selecția
+                  </button>
+                </div>
+                <div style={s.previewRoster}>
+                  {allUsers.map((u) => {
+                    const slotIdx = previewDuelPlayers.indexOf(u.uid);
+                    const isMine = slotIdx === 0 || slotIdx === 2;
+                    const isOpp = slotIdx === 1 || slotIdx === 3;
+                    return (
+                      <button
+                        key={u.uid}
+                        type="button"
+                        onClick={() => setPreviewDuelPlayers((prev) => {
+                          const existingIdx = prev.indexOf(u.uid);
+                          if (existingIdx !== -1) { const next = [...prev]; next[existingIdx] = ""; return next; }
+                          const relevantSlots = previewDuelMode === "1v1" ? [0, 1] : [0, 2, 1, 3];
+                          const nextIdx = relevantSlots.find((i) => !prev[i]);
+                          if (nextIdx === undefined) return prev; // toate sloturile pline — ignoră tap-ul
+                          const next = [...prev]; next[nextIdx] = u.uid; return next;
+                        })}
+                        style={{ ...s.rosterCard, ...(isMine ? s.rosterCardMine : {}), ...(isOpp ? s.rosterCardOpp : {}) }}
+                      >
+                        {previewDuelTheme ? (
+                          <DuelFighterPortrait avatarId={u.avatarId} nickname={u.nickname} theme={previewDuelTheme} width={40} height={56} fallbackSize={40} borderRadius={6} />
+                        ) : (
+                          <PlayerAvatar avatarId={u.avatarId} nickname={u.nickname} size={40} />
+                        )}
+                        <span style={s.rosterName}>{u.nickname || u.uid}</span>
+                        {isMine && <span style={s.rosterBadgeMine}>TU</span>}
+                        {isOpp && <span style={s.rosterBadgeOpp}>ADV</span>}
+                      </button>
+                    );
+                  })}
+                </div>
 
                 {(() => {
                   const mineSlots = previewDuelMode === "1v1" ? [0] : [0, 2];
@@ -2374,9 +2464,28 @@ const s = {
   },
   doneTag: { fontSize: 10.5, fontWeight: 700, color: "#8BD957", flexShrink: 0 },
 
+  // ── Joker săptămânal (Admin) ──
+  jokerSummary: { fontSize: 12, color: "#B4BBC7", fontFamily: "inherit" },
+  jokerList: { display: "flex", flexDirection: "column", gap: 4, marginTop: 6 },
+  jokerRow: { display: "flex", alignItems: "center", gap: 6, fontSize: 11.5, color: "#fff", fontFamily: "inherit" },
+  jokerName: { fontWeight: 700 },
+  jokerArrow: { color: "#8B93A8" },
+  jokerMatch: { color: "#D4AF37" },
+
   // ── Preview Duel (Admin) ──
   previewDuelBox: { marginTop: 12, paddingTop: 12, borderTop: "1px dashed rgba(255,255,255,0.12)" },
   previewDuelMissing: { marginTop: 8, fontSize: 10.5, color: "#F0930C", fontFamily: "inherit" },
+  previewRoster: { display: "flex", flexWrap: "wrap", gap: 8, marginTop: 8, marginBottom: 4 },
+  rosterCard: {
+    display: "flex", flexDirection: "column", alignItems: "center", gap: 3, width: 62, padding: "6px 4px",
+    borderRadius: 8, border: "1px solid rgba(255,255,255,0.12)", background: "rgba(255,255,255,0.03)",
+    cursor: "pointer", position: "relative",
+  },
+  rosterCardMine: { border: "1.5px solid rgba(139,217,87,0.8)", background: "rgba(139,217,87,0.1)", boxShadow: "0 0 10px -2px rgba(139,217,87,0.5)" },
+  rosterCardOpp: { border: "1.5px solid rgba(240,85,90,0.8)", background: "rgba(240,85,90,0.1)", boxShadow: "0 0 10px -2px rgba(240,85,90,0.5)" },
+  rosterName: { fontSize: 9, color: "#fff", textAlign: "center", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: "100%" },
+  rosterBadgeMine: { position: "absolute", top: 2, right: 2, fontSize: 7.5, fontWeight: 800, color: "#8BD957", background: "rgba(10,11,16,0.85)", borderRadius: 4, padding: "1px 3px" },
+  rosterBadgeOpp: { position: "absolute", top: 2, right: 2, fontSize: 7.5, fontWeight: 800, color: "#F0555A", background: "rgba(10,11,16,0.85)", borderRadius: 4, padding: "1px 3px" },
 
   triviaBox: { marginTop: 4, marginBottom: 8, paddingTop: 8, borderTop: "1px dashed rgba(255,255,255,0.1)" },
   triviaEditor: { marginTop: 8, display: "flex", flexDirection: "column", gap: 8 },

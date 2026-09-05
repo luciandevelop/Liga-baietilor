@@ -215,6 +215,37 @@ export default function RulesScreen({ onBack }) {
           <P small>Maxim 100p — e Surpriza Bonus, separată de cea Principală.</P>
         </Section>
 
+        <Section icon="🎁" title="Mystery Box (Surpriza Bonus)">
+          <P>40 de cutii, cu valori ascunse până alegi. Alegi o cutie; poți rejuca o dată, dar dacă rejoci, pierzi complet prima alegere — contează doar ultima.</P>
+          <Table
+            rows={[
+              ["5 cutii", "100p"],
+              ["8 cutii", "75p"],
+              ["9 cutii", "50p"],
+              ["4 cutii", "40p"],
+              ["3 cutii", "30p"],
+              ["3 cutii", "20p"],
+              ["6 cutii", "0p"],
+              ["2 cutii", "🃏 Joker Extra"],
+            ]}
+          />
+          <P small>
+            Cele 2 cutii cu <B>Joker Extra</B> nu dau puncte — îți dau dreptul la un al doilea
+            Joker în etapa asta, pe lângă cel normal (dacă rejoci pe o cutie Joker Extra, îl
+            pierzi la fel ca orice altă valoare).
+          </P>
+        </Section>
+
+        <Section icon="🥅" title="Penalty (Surpriza Bonus)">
+          <P>Ești tras la sorți cu un adversar. Amândoi alegeți, în secret, 5 zone de șut (stânga/centru/dreapta) și 5 zone de apărare, înainte să vedeți alegerile celuilalt.</P>
+          <Table rows={[["Fiecare gol marcat", "+10p"], ["Fiecare apărare reușită", "+10p"], ["Maxim posibil", "100p (5 goluri + 5 apărări)"]]} />
+          <ExampleBox title="Exemplu — un șut">
+            <ExRow pred="Tu tragi stânga, adversarul apără dreapta" res="Gol → +10p pentru tine" tone="good" />
+            <ExRow pred="Tu tragi stânga, adversarul apără stânga" res="Apărat, 0p la lovitura asta" tone="bad" />
+          </ExampleBox>
+          <P small>Dacă adversarul nu trimite alegerile la timp, iei automat 50p (5 goluri, nimic de apărat), iar el 0p.</P>
+        </Section>
+
         <div style={s.footerNote}>
           Ceva neclar? Întreabă-l pe Lu direct în grup — regulile de mai sus sunt actualizate
           cu ultima versiune a aplicației.

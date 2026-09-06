@@ -38,6 +38,7 @@ export default function PlayerAvatar({ avatarId, nickname, size = 32 }) {
           alt={nickname || "avatar"}
           style={{ width: "100%", height: "100%", objectFit: "cover" }}
           onError={() => setImgFailed(true)}
+          loading="lazy"
         />
       ) : (
         initial || "?"

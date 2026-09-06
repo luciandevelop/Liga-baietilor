@@ -25,6 +25,25 @@ function catalogLabel(list, id) {
   return list.find((c) => c.id === id)?.label || id;
 }
 
+// ── Poartă de afișare pentru orice Surpriză care are nevoie de
+// liveScores (Duel 1v1, Duel de Echipe, Half&Half, Sabotaj) — cerut
+// explicit: lipsa datelor sau o eroare de citire NU trebuie niciodată
+// interpretată ca "0 puncte pentru toată lumea". Randează conținutul
+// real DOAR când liveScoresStatus === "ready"; altfel, o stare de
+// încărcare sau de eroare clară, fără să atingă deloc componentele de
+// Duel sau logica lor de calcul. ──
+function LiveScoresGate({ status, children }) {
+  if (status === "ready") return children;
+  if (status === "error") {
+    return <div style={gateStyles.error}>⚠️ Nu am putut încărca scorurile live acum. Reîncearcă în câteva momente (redeschide ecranul).</div>;
+  }
+  return <div style={gateStyles.loading}>Se încarcă scorurile live…</div>;
+}
+const gateStyles = {
+  loading: { fontSize: 12, color: color.textFaint, fontFamily: font.body, textAlign: "center", padding: "24px 12px" },
+  error: { fontSize: 12, color: "#F0555A", fontFamily: font.body, textAlign: "center", padding: "24px 12px", lineHeight: 1.5 },
+};
+
 export default function SurprisesScreen({ user, onBack }) {
   const [loading, setLoading] = useState(true);
   const [season, setSeason] = useState(null);
@@ -34,7 +53,8 @@ export default function SurprisesScreen({ user, onBack }) {
   const [secretBonus, setSecretBonus] = useState(null);
   const [myResult, setMyResult] = useState(null);
   const [profiles, setProfiles] = useState({});
-  const [liveScores, setLiveScores] = useState({});
+  const [liveScores, setLiveScores] = useState(null); // null = incă neîncărcat; DIFERIT explicit de {} (gol dar valid)
+  const [liveScoresStatus, setLiveScoresStatus] = useState("loading"); // loading | ready | error
   const [history, setHistory] = useState([]);
   const [allResults, setAllResults] = useState(null); // null = nu s-a incarcat / nu-i inca vizibil
   const [spinTick, setSpinTick] = useState(0); // forteaza reimprospatarea listei live de rotiri
@@ -42,6 +62,8 @@ export default function SurprisesScreen({ user, onBack }) {
   useEffect(() => {
     (async () => {
       setLoading(true);
+      setLiveScoresStatus("loading");
+      setLiveScores(null);
       const s = await getCurrentSeason();
       setSeason(s);
       if (!s) { setLoading(false); return; }
@@ -79,7 +101,26 @@ export default function SurprisesScreen({ user, onBack }) {
         // ultimele locuri) — exact cauza "haosului" de punctaje raportat
         // la Duel (1056p, -100p etc.). Acum: STRICT meciuri FINAL, aceeași
         // cifră ca în Clasament → Etapă, niciodată negativă.
-        getLiveGameweekPoints(gw.id).then(({ pointsByUid }) => setLiveScores(pointsByUid));
+        //
+        // BUG P0 REPARAT ACUM (audit performanță): cererea de mai jos nu
+        // avea NICIUN .catch() — dacă eșua (eroare tranzitorie Firebase),
+        // liveScores rămânea la valoarea inițială pentru totdeauna (până
+        // la un refresh), iar UI-ul o interpreta drept "0 puncte pentru
+        // toată lumea", nu drept "eroare/încă nu știm". Exact simptomul
+        // raportat la Duel de Echipe. Acum: stare explicită de
+        // loading/error, separată de valoarea 0 reală — vezi
+        // liveScoresStatus, verificat mai jos în randare (gate-ul
+        // LiveScoresGate) înainte să ajungă la orice componentă de Duel.
+        getLiveGameweekPoints(gw.id)
+          .then(({ pointsByUid }) => { setLiveScores(pointsByUid); setLiveScoresStatus("ready"); })
+          .catch((err) => {
+            console.error("Eroare la încărcarea scorurilor live pentru Surprize (gameweekId=" + gw.id + "):", err);
+            setLiveScoresStatus("error");
+            // liveScores rămâne exact ce era (null la primul eșec, sau
+            // ultima valoare bună dacă vreodată se re-declanșează acest
+            // efect cu date deja încărcate anterior) — NICIODATĂ suprascris
+            // cu 0 sau cu un obiect gol doar pentru că a eșuat cererea.
+          });
 
         // Rezultatele TUTUROR — vizibile abia după primul Resolve (regula
         // Firestore respinge interogarea altfel, nu doar o ascunde în UI).
@@ -159,7 +200,7 @@ export default function SurprisesScreen({ user, onBack }) {
                     <div style={s.fallbackNote}>Fără etapă anterioară finalizată încă — perechile sunt aleatorii de data asta.</div>
                   )}
                   {(secretMain?.type === "duel-random" || secretMain?.type === "duel-extreme" || secretMain?.type === "duel-rivali") && (
-                    <>
+                    <LiveScoresGate status={liveScoresStatus}>
                       <DuelExperience
                         myUid={user.uid}
                         opponentUid={myOpponent}
@@ -190,11 +231,11 @@ export default function SurprisesScreen({ user, onBack }) {
                           </div>
                         </div>
                       )}
-                    </>
+                    </LiveScoresGate>
                   )}
 
                   {secretMain?.type === "team-duel-random" && (
-                    <>
+                    <LiveScoresGate status={liveScoresStatus}>
                       <TeamDuelExperience
                         myUid={user.uid}
                         myTeam={myTeamGroup}
@@ -228,20 +269,22 @@ export default function SurprisesScreen({ user, onBack }) {
                           </div>
                         </div>
                       )}
-                    </>
+                    </LiveScoresGate>
                   )}
 
                   {(secretMain?.type === "half-random" || secretMain?.type === "half-topbottom") && (
-                    <HalfHalfExperience
-                      myUid={user.uid}
-                      top={secretMain?.config?.top || []}
-                      bottom={secretMain?.config?.bottom || []}
-                      isTopVariant={secretMain?.type === "half-topbottom"}
-                      profiles={profiles}
-                      liveScores={liveScores}
-                      resolved={!!pub?.mainResolved}
-                      myPoints={myResult?.mainPoints}
-                    />
+                    <LiveScoresGate status={liveScoresStatus}>
+                      <HalfHalfExperience
+                        myUid={user.uid}
+                        top={secretMain?.config?.top || []}
+                        bottom={secretMain?.config?.bottom || []}
+                        isTopVariant={secretMain?.type === "half-topbottom"}
+                        profiles={profiles}
+                        liveScores={liveScores}
+                        resolved={!!pub?.mainResolved}
+                        myPoints={myResult?.mainPoints}
+                      />
+                    </LiveScoresGate>
                   )}
 
                   {secretMain?.type === "trivia" && (
@@ -277,16 +320,18 @@ export default function SurprisesScreen({ user, onBack }) {
                   )}
 
                   {secretMain?.type === "sabotaj" && (
-                    <SabotajExperience
-                      gameweekId={gameweek.id}
-                      myUid={user.uid}
-                      order={secretMain?.config?.order || []}
-                      profiles={profiles}
-                      liveScores={liveScores}
-                      sabotajRevealed={!!pub?.sabotajRevealed}
-                      resolved={!!pub?.mainResolved}
-                      myResult={myResult}
-                    />
+                    <LiveScoresGate status={liveScoresStatus}>
+                      <SabotajExperience
+                        gameweekId={gameweek.id}
+                        myUid={user.uid}
+                        order={secretMain?.config?.order || []}
+                        profiles={profiles}
+                        liveScores={liveScores}
+                        sabotajRevealed={!!pub?.sabotajRevealed}
+                        resolved={!!pub?.mainResolved}
+                        myResult={myResult}
+                      />
+                    </LiveScoresGate>
                   )}
                 </>
               )}

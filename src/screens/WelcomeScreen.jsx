@@ -175,8 +175,14 @@ export default function WelcomeScreen({ user, profile, isAdmin, onOpenAdmin, onO
         (async () => {
           if (!jokerFetchedRef.current) {
             jokerFetchedRef.current = true;
-            cachedJokerRef.current = await loadUserJoker(gw.id, user.uid).catch((err) => { console.error("Eroare citire Joker propriu:", err); return null; });
-            cachedJokerExtraRef.current = await loadUserJokerExtra(gw.id, user.uid).catch((err) => { console.error("Eroare citire Joker Extra propriu:", err); return null; });
+            // Doua citiri independente (Joker si Joker Extra nu depind
+            // una de alta) - rulate acum in paralel, nu secvential, ca
+            // sa nu adaugam doua round-trip-uri complete de retea unul
+            // dupa altul (optimizare de performanta, audit Etapa 2).
+            [cachedJokerRef.current, cachedJokerExtraRef.current] = await Promise.all([
+              loadUserJoker(gw.id, user.uid).catch((err) => { console.error("Eroare citire Joker propriu:", err); return null; }),
+              loadUserJokerExtra(gw.id, user.uid).catch((err) => { console.error("Eroare citire Joker Extra propriu:", err); return null; }),
+            ]);
           }
           const j = cachedJokerRef.current;
           if (j && !processedJokersRef.current.has(`${j.gameweekId}_${j.userId}`)) {

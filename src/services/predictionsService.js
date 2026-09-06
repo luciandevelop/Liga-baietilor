@@ -32,18 +32,56 @@ async function resolveCurrentSeason() {
 // Alege etapa curentă a sezonului: STRICT cea a cărei săptămână
 // [weekStart, weekEnd] conține azi. Fără fallback pe "ultima etapă" —
 // dacă nu există etapă pentru săptămâna curentă, întoarce null explicit.
+// ── Etapa "curentă" — REPARAT: înainte se decidea STRICT după interval
+// de date (now între weekStart/weekEnd), deci la trecerea de weekEnd
+// (duminică 23:59→00:00) nicio etapă nu mai era "curentă" și TOT ce
+// depindea de asta dispărea din aplicație (meciuri, rezultate, Surpriza
+// săptămânii) — deși Adminul nu finalizase încă nimic. Regulă nouă,
+// cerută explicit: etapa rămâne curentă/vizibilă până la finalizarea
+// EXPLICITĂ din Admin (gameweeks/{id}.status === "completed" — același
+// câmp deja folosit la finalizare, nu un mecanism nou).
+//
+// Ordine de căutare:
+// 1. Etapa "în plină desfășurare" (now în [weekStart, weekEnd]) — cazul
+//    normal, comportament NESCHIMBAT.
+// 2. Dacă nicio etapă nu se potrivește (fie între etape, fie am trecut
+//    de weekEnd al ultimei), căutăm cea mai recentă etapă care CHIAR a
+//    început (weekStart <= now) și care NU e încă finalizată de Admin —
+//    exact cazul "etapa s-a terminat calendaristic, dar Adminul n-a
+//    apăsat încă Finalizează". Rămâne vizibilă.
+// 3. Dacă nici asta nu găsește nimic (nicio etapă n-a început încă —
+//    ex. înainte de prima etapă a sezonului), întoarce null, EXACT ca
+//    înainte — nu arătăm o etapă viitoare mai devreme decât trebuie.
+//
+// NU schimbă în niciun fel regulile de deadline pentru pronosticuri
+// (isBeforeLock/isAfterLock, complet separate, neatinse) — doar CE
+// etapă se consideră "curentă" pentru afișare.
 async function resolveCurrentGameweek(seasonId) {
   const snap = await getDocs(query(collection(db, "gameweeks"), where("seasonId", "==", seasonId)));
   const gameweeks = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
   if (gameweeks.length === 0) return null;
 
   const now = Date.now();
+  const bounds = (g) => ({
+    start: g.weekStart?.toMillis ? g.weekStart.toMillis() : null,
+    end: g.weekEnd?.toMillis ? g.weekEnd.toMillis() : null,
+  });
+
   const withinWeek = gameweeks.find((g) => {
-    const start = g.weekStart?.toMillis ? g.weekStart.toMillis() : null;
-    const end = g.weekEnd?.toMillis ? g.weekEnd.toMillis() : null;
+    const { start, end } = bounds(g);
     return start !== null && end !== null && now >= start && now <= end;
   });
-  return withinWeek || null;
+  if (withinWeek) return withinWeek;
+
+  const startedNotCompleted = gameweeks
+    .filter((g) => {
+      const { start } = bounds(g);
+      return start !== null && start <= now && g.status !== "completed";
+    })
+    .sort((a, b) => bounds(b).start - bounds(a).start);
+  if (startedNotCompleted.length > 0) return startedNotCompleted[0];
+
+  return null;
 }
 
 export async function getCurrentSeason() {

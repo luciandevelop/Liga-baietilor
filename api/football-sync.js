@@ -44,10 +44,15 @@ export default async function handler(req, res) {
     // sezonului la fiecare rulare (asta însemna N citiri, la 10 minute,
     // non-stop, 144×/zi — cost mare independent de orice meci live).
     // Firestore poate găsi direct candidatul corect cu O SINGURĂ
-    // citire: cea mai recentă etapă al cărei weekStart <= acum. Dacă
-    // și weekEnd-ul ei acoperă momentul curent, e etapa activă — exact
-    // aceeași regulă ca înainte (fereastra weekStart/weekEnd), doar
-    // găsită eficient, nu prin scanarea completă a colecției.
+    // citire: cea mai recentă etapă al cărei weekStart <= acum.
+    //
+    // REPARAT (aceeași cauză ca dispariția etapei din UI, unificat):
+    // înainte, etapa mai trebuia să aibă și weekEnd >= acum ca să fie
+    // considerată "activă" — la trecerea de weekEnd (duminică 23:59),
+    // sync-ul live se oprea complet pentru etapă, chiar dacă Adminul nu
+    // o finalizase încă explicit. Acum: etapa rămâne activă pentru
+    // sync până la finalizarea explicită din Admin (status==="completed",
+    // aceeași sursă de adevăr ca la client, nu un mecanism nou).
     const now = Date.now();
     const nowTs = Timestamp.fromMillis(now);
     const gwQuerySnap = await db.collection("gameweeks")
@@ -56,7 +61,7 @@ export default async function handler(req, res) {
       .limit(1)
       .get();
     const candidate = gwQuerySnap.empty ? null : { id: gwQuerySnap.docs[0].id, ...gwQuerySnap.docs[0].data() };
-    const currentGw = candidate && candidate.weekEnd?.toMillis && candidate.weekEnd.toMillis() >= now ? candidate : null;
+    const currentGw = candidate && candidate.status !== "completed" ? candidate : null;
     if (!currentGw) {
       return res.status(200).json({ skipped: true, reason: "no_gameweek_in_current_week_window", requestsUsedToday: quota.requestsUsed });
     }

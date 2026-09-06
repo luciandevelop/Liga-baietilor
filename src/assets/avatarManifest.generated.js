@@ -84,6 +84,12 @@ export default {
       "6": "file_00000000ba8081f5b6642c0b5ef373ce.png"
     }
   },
+  "ghioca": {
+    "nextIndex": 2,
+    "files": {
+      "1": "file_000000009f048246ac6a1662917a3f74.png"
+    }
+  },
   "luck87": {
     "nextIndex": 15,
     "files": {

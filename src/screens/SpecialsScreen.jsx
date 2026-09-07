@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { PICK_TYPES } from "../specialDefinitions";
 import {
   listSpecialPhases, getUserSpecialProgress, loadAllSpecialPicks, listAllSpecialCompetitions,
+  SPECIALS_EDITION_ID,
 } from "../services/specialsService";
 import { getUserPublicProfiles } from "../services/profilesService";
 import CompetitionLogo from "../components/CompetitionLogo";
@@ -11,10 +12,6 @@ import PageHeader from "../components/PageHeader";
 import useNow from "../hooks/useNow";
 import { usePrefersReducedMotion } from "../motion";
 import { color, font, radius, shadow } from "../matchdayTheme";
-
-// Sezonul curent — folosit deja de restul aplicației (predictionsService).
-// Reutilizez direct, nu recreez o a doua sursă de "care e sezonul activ".
-import { getCurrentSeason } from "../services/predictionsService";
 
 // Punctajul MAXIM al unei faze — afișat ÎNTOTDEAUNA, indiferent de stare
 // ("utilizatorul trebuie să știe instant pentru ce joacă"). Format diferit
@@ -71,7 +68,6 @@ function CountdownBlock({ closesInMs, reduced }) {
 export default function SpecialsScreen({ user, onBack }) {
   const now = useNow(1000); // secunde live pe cronometru — cerut explicit
   const reduced = usePrefersReducedMotion();
-  const [season, setSeason] = useState(null);
   const [progress, setProgress] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -84,12 +80,12 @@ export default function SpecialsScreen({ user, onBack }) {
       setLoading(true);
       setError("");
       try {
-        const s = await getCurrentSeason();
-        setSeason(s);
-        if (s) {
-          const prog = await getUserSpecialProgress(user.uid, s.id);
-          setProgress(prog);
-        }
+        // REPARAT — Specialele NU depind de sezonul Play League curent
+        // (rămân valabile pe toată ediția, indiferent câte din cele 10
+        // sezoane au trecut, sau dacă vreun sezon e activ chiar acum).
+        // SPECIALS_EDITION_ID e un identificator FIX, nu sezonul real.
+        const prog = await getUserSpecialProgress(user.uid, SPECIALS_EDITION_ID);
+        setProgress(prog);
       } catch (err) {
         console.error(err);
         setError(err.message || err.code);
@@ -100,8 +96,7 @@ export default function SpecialsScreen({ user, onBack }) {
   }, [user.uid]);
 
   async function refreshProgress() {
-    if (!season) return;
-    const prog = await getUserSpecialProgress(user.uid, season.id);
+    const prog = await getUserSpecialProgress(user.uid, SPECIALS_EDITION_ID);
     setProgress(prog);
   }
 
@@ -128,7 +123,7 @@ export default function SpecialsScreen({ user, onBack }) {
 
   if (loading) return <div style={s.page}><div style={s.centerBox}>Se încarcă…</div></div>;
   if (error) return <div style={s.page}><div style={s.centerBox}>Eroare: {error}</div></div>;
-  if (!season || !progress) {
+  if (!progress) {
     return (
       <div style={s.page}>
         <div style={s.wrap}>
@@ -163,7 +158,7 @@ export default function SpecialsScreen({ user, onBack }) {
             progress={progress} now={now} reduced={reduced}
             expandedPhaseId={expandedPhaseId} onExpand={handleExpand}
             revealData={revealData} revealLoading={revealLoading}
-            uid={user.uid} seasonId={season.id} onPickSaved={refreshProgress}
+            uid={user.uid} seasonId={SPECIALS_EDITION_ID} onPickSaved={refreshProgress}
           />
         ))}
 
@@ -175,7 +170,7 @@ export default function SpecialsScreen({ user, onBack }) {
                 progress={progress} now={now} reduced={reduced}
                 expandedPhaseId={expandedPhaseId} onExpand={handleExpand}
                 revealData={revealData} revealLoading={revealLoading}
-                uid={user.uid} seasonId={season.id} onPickSaved={refreshProgress}
+                uid={user.uid} seasonId={SPECIALS_EDITION_ID} onPickSaved={refreshProgress}
               />
             ))}
           </div>
@@ -191,7 +186,7 @@ export default function SpecialsScreen({ user, onBack }) {
                   progress={progress} now={now} reduced={reduced}
                   expandedPhaseId={expandedPhaseId} onExpand={handleExpand}
                   revealData={revealData} revealLoading={revealLoading}
-                  uid={user.uid} seasonId={season.id} onPickSaved={refreshProgress}
+                  uid={user.uid} seasonId={SPECIALS_EDITION_ID} onPickSaved={refreshProgress}
                 />
               ))}
             </div>

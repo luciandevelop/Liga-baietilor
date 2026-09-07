@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { doc, getDoc, collection, getDocs, query, where } from "firebase/firestore";
 import { db, auth } from "../firebase";
-import { listAllSpecialCompetitions, listSpecialPhases, openSpecialPhase, resolveSpecialPhase, listAllSpecialPicksForPhases } from "../services/specialsService";
+import { listAllSpecialCompetitions, listSpecialPhases, openSpecialPhase, resolveSpecialPhase, listAllSpecialPicksForPhases, SPECIALS_EDITION_ID, migrateSpecialPhasesToEdition } from "../services/specialsService";
 import { PICK_TYPES, getPhaseDefinition } from "../specialDefinitions";
 import { resolveTeamOptions } from "../teamRegistry";
 import SpecialResolvePicker from "../components/SpecialResolvePicker";
@@ -1035,16 +1035,19 @@ export default function AdminScreen({ onBack }) {
     }
   }
 
-  // ── Speciale ──
+  // ── Speciale ── Specialele NU depind de sezonul Play League selectat
+  // (rămân valabile pe toată ediția) — folosim SPECIALS_EDITION_ID fix,
+  // nu selectedSeasonId. Gardul de mai jos (tab==="speciale") rămâne
+  // neschimbat, doar valoarea interogării s-a decuplat de sezon.
   useEffect(() => {
-    if (tab !== "speciale" || !selectedSeasonId) return;
-    listSpecialPhases(selectedSeasonId)
+    if (tab !== "speciale") return;
+    listSpecialPhases(SPECIALS_EDITION_ID)
       .then(setSpecialPhasesForSeason)
       .catch((err) => console.error("Eroare la încărcarea fazelor speciale:", err));
     listAllUsers()
       .then((users) => setCompletionActiveUsers(users.filter((u) => getPlayerStatus(u) === "active")))
       .catch((err) => console.error("Eroare la lista de useri activi (overview Speciale):", err));
-  }, [tab, selectedSeasonId, openMsg, resolveMsg]);
+  }, [tab, openMsg, resolveMsg]);
 
   // ── Overview agregat: cine a completat Specialele — peste TOATE
   // fazele deschise deja (nu cele blocate), recalculat ori de câte ori
@@ -1070,7 +1073,7 @@ export default function AdminScreen({ onBack }) {
   }
 
   async function handleOpenSpecialPhase() {
-    if (!specialPhaseDef || !selectedSeasonId) return;
+    if (!specialPhaseDef) return;
     const labels = optionsText.split("\n").map((l) => l.trim()).filter(Boolean);
     if (labels.length === 0) { setOpenMsg("Introdu cel puțin o opțiune."); return; }
     if (!closesAtInput) { setOpenMsg("Setează data de închidere."); return; }
@@ -1079,7 +1082,7 @@ export default function AdminScreen({ onBack }) {
     setOpenMsg("");
     try {
       await openSpecialPhase({
-        seasonId: selectedSeasonId,
+        seasonId: SPECIALS_EDITION_ID,
         phaseId: specialPhaseDef.id,
         competitionId: specialComp.id,
         closesAt: new Date(closesAtInput),
@@ -1256,7 +1259,7 @@ export default function AdminScreen({ onBack }) {
               <select style={s.select} value={selectedGameweekId} onChange={(e) => setSelectedGameweekId(e.target.value)}>
                 <option value="">— alege o etapă —</option>
                 {gameweeks.map((g) => (
-                  <option key={g.id} value={g.id}>{g.title} · {g.status}</option>
+                  <option key={g.id} value={g.id}>{g.title}</option>
                 ))}
               </select>
             )}
@@ -1463,6 +1466,21 @@ export default function AdminScreen({ onBack }) {
             {/* ── Speciale — deschide/rezolvă fazele Specialelor Sezonului ── */}
             {tab === "speciale" && (
               <SectionCard title="Specialele Sezonului">
+                <button
+                  type="button"
+                  style={{ ...s.linkBtn, marginBottom: 10 }}
+                  onClick={async () => {
+                    try {
+                      const { migrated, total } = await migrateSpecialPhasesToEdition();
+                      setOpenMsg(`Migrare Speciale — ${migrated}/${total} faze mutate pe ediția Play League 2026/27.`);
+                    } catch (err) {
+                      console.error(err);
+                      setOpenMsg("Eroare la migrare: " + (err.message || err.code));
+                    }
+                  }}
+                >
+                  🔄 Fă vizibile Specialele existente (o singură dată)
+                </button>
                 <div style={{ marginBottom: 16, paddingBottom: 16, borderBottom: "1px solid rgba(255,255,255,0.08)" }}>
                   <div style={{ fontSize: 12, fontWeight: 800, color: "#fff", marginBottom: 4 }}>Cine a completat Specialele</div>
                   <SpecialsCompletionOverview

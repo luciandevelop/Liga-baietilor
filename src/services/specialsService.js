@@ -1,8 +1,18 @@
 import {
-  collection, doc, getDoc, getDocs, setDoc, query, where, runTransaction, serverTimestamp,
+  collection, doc, getDoc, getDocs, setDoc, query, where, runTransaction, serverTimestamp, updateDoc,
 } from "firebase/firestore";
 import { db } from "../firebase";
 import { PICK_TYPES, getPhaseDefinition, SPECIAL_COMPETITIONS } from "../specialDefinitions";
+
+// ── Specialele NU aparțin unui sezon Play League (fiecare sezon = doar
+// 4 etape/săptămâni) — sunt pronosticuri pe termen lung, valabile pe
+// TOATĂ ediția Play League 2026/27 (7 sept 2026 – 13 iun 2027, 10
+// sezoane). Câmpul "seasonId" de pe specialPhases rămâne neschimbat ca
+// NUME/mecanism (nicio arhitectură nouă) — doar valoarea lui e acum
+// un identificator FIX, al întregii ediții, nu al sezonului Play
+// League curent selectat/activ. Asta decuplează complet ciclul de
+// viață al Specialelor de ciclul (mult mai scurt) al sezoanelor. ──
+export const SPECIALS_EDITION_ID = "play-league-2026-27";
 
 // ── Citire ──────────────────────────────────────────────────────────
 
@@ -48,6 +58,23 @@ export async function getUserSpecialProgress(uid, seasonId) {
 // Deschide/actualizează o fază — creează documentul dacă nu există,
 // altfel doar actualizează opțiunile/orarul (nu atinge picks-urile deja
 // salvate de useri).
+// ── Migrare, o singură dată — Specialele deja create (dinainte de acest
+// fix) au încă seasonId-ul sezonului Play League REAL în care au fost
+// deschise, deci sunt "invizibile" acum (query-urile caută
+// SPECIALS_EDITION_ID). Sigur de rulat oricând, oricâte ori — mută
+// DOAR câmpul seasonId, nu atinge status/opțiuni/deadline/rezultate.
+// Documentele deja pe SPECIALS_EDITION_ID sunt sărite (idempotent). ──
+export async function migrateSpecialPhasesToEdition() {
+  const snap = await getDocs(collection(db, "specialPhases"));
+  let migrated = 0;
+  for (const d of snap.docs) {
+    if (d.data().seasonId === SPECIALS_EDITION_ID) continue;
+    await updateDoc(doc(db, "specialPhases", d.id), { seasonId: SPECIALS_EDITION_ID });
+    migrated++;
+  }
+  return { migrated, total: snap.docs.length };
+}
+
 export async function openSpecialPhase({ seasonId, phaseId, competitionId, closesAt, options }) {
   await setDoc(
     doc(db, "specialPhases", phaseId),

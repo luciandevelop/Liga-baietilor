@@ -682,6 +682,17 @@ export default function AdminScreen({ onBack }) {
         } else if (allSeasons.length > 0) {
           setAutoDetectedLabel("Niciun sezon activ azi — alege manual mai jos.");
           setShowManualSelectors(true);
+        } else {
+          // REPARAT — caz negăsit înainte: ZERO sezoane există (ex. chiar
+          // după un Reset complet). Nici ramura de mai sus, nici cea de
+          // "sezon curent găsit" nu se activau — eticheta rămânea goală,
+          // selectoarele manuale nu se arătau, ecranul Admin părea "gol"
+          // și fără nicio acțiune posibilă. Acum: mesaj clar + selectoare
+          // deschise automat, ca să poți crea un sezon nou direct de-aici.
+          // Restul Admin-ului (tab-uri ca "Jucători") era deja accesibil
+          // indiferent de asta — nu era o blocare reală de rutare.
+          setAutoDetectedLabel("Niciun sezon nu există încă — creează unul mai jos, sau folosește tab-ul „Jucători” dacă vrei doar să gestionezi jucătorii.");
+          setShowManualSelectors(true);
         }
       } catch (err) {
         console.error("Eroare la auto-detecție sezon/etapă:", err);
@@ -873,6 +884,11 @@ export default function AdminScreen({ onBack }) {
         // povești (feedStoryEngine.js) exista deja, complet, dar nu se
         // apela niciodată automat). Best-effort — un eșec aici nu
         // trebuie să blocheze deloc fluxul principal de validare.
+        // Repornit (7 sept) — motorul scump și redundant din WelcomeScreen
+        // (processRankChanges, înmulțit pe fiecare user conectat) a fost
+        // eliminat complet; acesta rămâne SINGURA sursă acum, rulează o
+        // singură dată per validare, indiferent de câți useri sunt
+        // conectați — mult mai ieftin, verificat.
         processLiveRankChangesCapped(selectedGameweekId).catch((err) => console.error("Eroare la Feed (clasament):", err));
         processTeamDuelPulse(selectedGameweekId).catch((err) => console.error("Eroare la Feed (Duel de Echipe):", err));
       }

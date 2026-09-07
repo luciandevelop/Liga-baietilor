@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { getCurrentSeason, getCurrentGameweek, loadUserPredictions, loadUserJoker, loadUserJokerExtra, isMatchLocked } from "../services/predictionsService";
 import { listenMatches, listenLiveGameweekScores, listGameweekScores, getUserSeasonPoints } from "../services/adminService";
 import { getUserPublicProfiles } from "../services/profilesService";
-import { processRankChanges, processFinishedMatches, processJokerActivation, processUpcomingMatches, getHomeFeedTop, processSurpriseCreated, processSurpriseMatchup, processSurpriseResult, processExternalMatchDelta, processMatchIntelligence, processDailyFillerIfQuiet, processClubFactsForMatch } from "../services/feedService";
+import { processFinishedMatches, processJokerActivation, processUpcomingMatches, getHomeFeedTop, processSurpriseCreated, processSurpriseMatchup, processSurpriseResult, processExternalMatchDelta, processMatchIntelligence, processDailyFillerIfQuiet, processClubFactsForMatch } from "../services/feedService";
 import { doc, getDoc } from "firebase/firestore";
 import { db } from "../firebase";
 import useNow from "../hooks/useNow";
@@ -249,17 +249,16 @@ export default function WelcomeScreen({ user, profile, isAdmin, onOpenAdmin, onO
       const p = await getUserPublicProfiles(sorted.map((r) => r.uid));
       setProfiles((prev) => ({ ...prev, ...p }));
 
-      // Clasamentul General (nu doar etapa curentă) — motorul de Feed
-      // decide singur ce merită raportat (lider nou, podium, top 10,
-      // salturi mari), nu textul de aici. Rezultatul se scrie o dată în
-      // Firestore (ID determinist -> fără duplicate), apoi Feed-ul se
-      // reîmprospătează din sursa unică (getHomeFeedTop).
-      try {
-        const { events } = await processRankChanges();
-        if (events.length > 0) await refreshFeedTop();
-      } catch (err) {
-        console.error("Eroare la procesarea evenimentelor de clasament:", err);
-      }
+      // REPARAT (7 sept) — CAUZA GĂSITĂ a celor 400.000 de citiri/24h:
+      // processRankChanges() citea ÎNTREAGA colecție de useri, NECONDIȚIONAT,
+      // de fiecare dată când gameweekLiveScores se schimba — iar asta se
+      // întâmplă pentru FIECARE user conectat simultan (ascultător live),
+      // nu o singură dată. La 15-17 useri conectați + multe validări
+      // succesive de meciuri, costul se înmulțea, nu doar se aduna.
+      // Mecanismul echivalent există acum server-side, în Admin
+      // (processLiveRankChangesCapped, apelat O SINGURĂ DATĂ per validare,
+      // indiferent de câți useri sunt conectați) — acesta de aici a
+      // devenit complet redundant. Eliminat, nu doar oprit.
     }
 
     return () => { if (unsubMatches) unsubMatches(); if (unsubScores) unsubScores(); };
@@ -805,7 +804,17 @@ const s = {
     boxShadow: shadow.elevated,
   },
 
-  heroBody: { flex: 1, display: "flex", flexDirection: "column", justifyContent: "center", alignItems: "center", padding: "8px 16px 16px", textAlign: "center" },
+  heroBody: {
+    flex: 1, display: "flex", flexDirection: "column", justifyContent: "center", alignItems: "center",
+    padding: "8px 16px 16px", textAlign: "center",
+    // Continuă din culoarea de bază a TopTabNav (#15181F), introduce
+    // FOARTE gradual o urmă din albastrul real Champions League
+    // (extras din tema competiției existente, nu inventat) — se
+    // stabilizează la acea valoare pe la ~260px (unde ajunge cardul,
+    // în mod normal), nu se tot diluează spre nesfârșit în zona goală
+    // de dedesubt, dacă ecranul e mai înalt decât conținutul.
+    background: "linear-gradient(180deg, #15181F 0px, #14171E 120px, rgba(12,42,171,0.05) 260px, rgba(12,42,171,0.05) 100%)",
+  },
 
   // ── Cardul hero — compoziție unică (competiție + echipe + countdown +
   // CTA), cu profunzime reală: gradient discret + glow + bordură, nu

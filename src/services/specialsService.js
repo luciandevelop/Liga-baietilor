@@ -129,9 +129,18 @@ export async function resolveSpecialPhase(phaseId, correctAnswer) {
       const existingScore = await tx.get(scoreRef);
       if (existingScore.exists()) return; // deja scris — nu duplicăm
       const userSnap = await tx.get(userRef);
-      const prevPoints = userSnap.exists() ? userSnap.data().seasonPoints || 0 : 0;
+      // Câmp SEPARAT (specialPoints), NU seasonPoints — reparat explicit:
+      // seasonPoints trebuie să rămână STRICT punctele de etape, resetabile
+      // curat la Reset. Specialele supraviețuiesc Reset-ului (cerut încă
+      // de la început), deci punctele lor nu pot locui în același câmp pe
+      // care Reset îl duce la 0 — contribuția lor s-ar "pierde" la reset,
+      // apoi ar putea reapărea prin orice recalculare ulterioară a
+      // aceluiași câmp combinat. Clasamentul General acum ADUNĂ
+      // seasonPoints + specialPoints la afișare (vezi listGeneralLeaderboard),
+      // nu le mai amestecă la scriere.
+      const prevSpecialPoints = userSnap.exists() ? userSnap.data().specialPoints || 0 : 0;
       tx.set(scoreRef, { phaseId, userId: pick.userId, points, computedAt: serverTimestamp() });
-      tx.update(userRef, { seasonPoints: prevPoints + points });
+      tx.update(userRef, { specialPoints: prevSpecialPoints + points });
     });
   }
 

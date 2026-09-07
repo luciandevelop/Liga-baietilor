@@ -139,8 +139,10 @@ export default {
     }
   },
   "sammy20": {
-    "nextIndex": 1,
-    "files": {}
+    "nextIndex": 2,
+    "files": {
+      "1": "sammy_fighter_300x420.webp"
+    }
   },
   "sexu-ciobanu": {
     "nextIndex": 9,

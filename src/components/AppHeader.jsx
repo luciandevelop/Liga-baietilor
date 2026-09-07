@@ -24,7 +24,14 @@ const CURRENT_SEASON_NUMBER = 1;
 const CURRENT_SEASON = SEASONS[CURRENT_SEASON_NUMBER - 1];
 
 const SEASON_TITLE = "PLAY LEAGUE";
-const SEASON_SUBTITLE = `${CURRENT_SEASON.emoji} SEZONUL ${CURRENT_SEASON_NUMBER} · ${CURRENT_SEASON.name.toUpperCase()}`;
+const SEASON_NAME = `${CURRENT_SEASON.emoji} ${CURRENT_SEASON.name.toUpperCase()}`;
+const SEASON_NUMBER_LABEL = `SEZONUL ${CURRENT_SEASON_NUMBER}`;
+// ── Font-size responsive, calculat din lungimea numelui sezonului —
+// cerut explicit: nu micșorăm tot header-ul permanent doar pentru cele
+// 2 nume lungi din 10 ("Fără Iubire, Doar Puncte" / "Unii Speră, Alții
+// Disperă"), dar alea chiar au nevoie de puțin mai mic ca să nu iasă
+// din ecran pe mobil. Restul (8 din 10) rămân la dimensiunea mare. ──
+const SEASON_NAME_SIZE = CURRENT_SEASON.name.length > 20 ? 11.5 : 14;
 
 function BellIcon({ size = 20 }) {
   return (
@@ -45,12 +52,15 @@ export default function AppHeader({ nickname, points, avatarId, hasNotification,
   return (
     <div style={s.row}>
       <div style={s.logoGroup}>
-        <div style={s.heroWrap}>
-          <img src={playLeagueHero} alt="Play League" style={s.heroImg} />
+        <div style={s.heroGlow}>
+          <div style={s.heroWrap}>
+            <img src={playLeagueHero} alt="Play League" style={s.heroImg} />
+          </div>
         </div>
-        <div>
-          <div style={s.title}>{SEASON_TITLE}</div>
-          <div style={s.eyebrow}>{SEASON_SUBTITLE}</div>
+        <div style={s.textBlock}>
+          <div style={s.brand}>{SEASON_TITLE}</div>
+          <div style={s.seasonName}>{SEASON_NAME}</div>
+          <div style={s.seasonNumber}>{SEASON_NUMBER_LABEL}</div>
         </div>
       </div>
 
@@ -80,35 +90,52 @@ const s = {
     display: "flex",
     alignItems: "center",
     justifyContent: "space-between",
-    padding: "14px 16px",
+    padding: "10px 16px",
     background: color.headerBg,
     borderBottom: `1px solid ${color.borderSubtle}`,
+    gap: 8,
   },
-  logoGroup: { display: "flex", alignItems: "center", gap: 12 },
-  // ── Mărit moderat față de vechiul pătrățel de 38px (cerut explicit —
-  // personajul trebuie să aibă prezență, fără să devină banner). Colț
-  // rotunjit + inel auriu + glow discret, ca imaginea originală (care
-  // are deja un cadru auriu) să se integreze natural în temă, nu să
-  // pară "lipită". ──
+  // gap redus (12 -> 9) — imaginea și textul trebuie să se simtă un
+  // singur bloc de identitate, nu "icon | text" separate.
+  // flex:1 + minWidth:0 — cerut explicit (punctul 7): la nume lungi de
+  // sezon, textul trebuie să se restrângă/treacă pe rând nou, NU să
+  // intre peste zona utilizatorului din dreapta.
+  logoGroup: { display: "flex", alignItems: "center", gap: 9, minWidth: 0, flex: 1 },
+  // ── Mărită semnificativ (62 -> 86px, +24px) — cerut explicit: se
+  // pierdeau fotoliul/berea/atmosfera la dimensiunea veche. Glow-ul din
+  // jurul cadrului acum se extinde puțin ÎN AFARA cadrului (heroGlow),
+  // ca lumina să "curgă" spre text, nu să se oprească brusc la margine —
+  // exact legătura vizuală cerută, fără card/dreptunghi nou. ──
+  heroGlow: {
+    borderRadius: radius.md, flexShrink: 0,
+    boxShadow: "0 0 22px 1px rgba(212,175,55,0.4), 0 0 8px 1px rgba(232,148,60,0.25)",
+  },
   heroWrap: {
-    width: 62, height: 62, borderRadius: radius.md, flexShrink: 0, overflow: "hidden",
+    width: 80, height: 80, borderRadius: radius.md, flexShrink: 0, overflow: "hidden",
     border: `1.5px solid ${color.goldBorder}`,
-    boxShadow: "0 0 14px -2px rgba(212,175,55,0.5)",
   },
   heroImg: { width: "100%", height: "100%", objectFit: "cover", display: "block" },
-  title: { fontFamily: font.display, fontWeight: 800, fontSize: 16.5, color: color.textPrimary, letterSpacing: "0.02em" },
-  // ── Glow portocaliu discret pe subtitlu — ecoul focului din imagine
-  // ("Sezonul 1 · Încălzirea"), fără nicio animație/particule — cerut
-  // explicit: premium, nu kitsch, zero cost de performanță. ──
-  // Fără nowrap — unele nume de sezon (ex. Sezonul 8) sunt mai lungi
-  // decât "Încălzirea" și ar ieși din ecran forțate pe un singur rând;
-  // lasă să treacă pe 2 rânduri quando e nevoie, natural.
-  eyebrow: {
-    fontSize: 9.5, fontWeight: 700, color: "#E8A455", letterSpacing: "0.03em", marginTop: 2, lineHeight: 1.3,
-    textShadow: "0 0 8px rgba(232,164,85,0.45)",
+  textBlock: { display: "flex", flexDirection: "column", minWidth: 0, flex: 1 },
+  // ── Ierarhie nouă, cerută explicit — 3 niveluri, nu 2 egale:
+  // 1) PLAY LEAGUE = brandul, mic, discret, doar context
+  // 2) 🔥 ÎNCĂLZIREA = identitatea sezonului, CEA MAI IMPORTANTĂ,
+  //    mărită, cu glow cald — asta trebuie să sară în ochi primul
+  // 3) SEZONUL 1 = informație secundară, cea mai mică ──
+  brand: {
+    fontFamily: font.body, fontWeight: 700, fontSize: 10, color: color.textFaint,
+    letterSpacing: "0.08em", textTransform: "uppercase", whiteSpace: "nowrap",
+  },
+  seasonName: {
+    fontFamily: font.display, fontWeight: 800, fontSize: SEASON_NAME_SIZE, color: "#F0B860",
+    letterSpacing: "0.01em", lineHeight: 1.15, marginTop: 2, wordBreak: "break-word",
+    textShadow: "0 0 16px rgba(232,148,60,0.55), 0 0 4px rgba(232,148,60,0.4)",
+  },
+  seasonNumber: {
+    fontFamily: font.body, fontWeight: 700, fontSize: 9.5, color: color.textFaint,
+    letterSpacing: "0.08em", marginTop: 2,
   },
 
-  right: { display: "flex", alignItems: "center", gap: 10 },
+  right: { display: "flex", alignItems: "center", gap: 10, flexShrink: 0 },
   profileBtn: {
     display: "flex", alignItems: "center", gap: 8, background: "none", border: "none", cursor: "pointer", padding: 0,
   },

@@ -15,7 +15,7 @@ import {
   listGameweeks,
   bulkCreateMatches,
   listMatches,
-  resetAllTestData,
+  resetAllTestData, migrateSpecialPointsFromScores,
   setFeaturedMatches,
   deleteMatch,
   saveMatchResult,
@@ -1215,6 +1215,27 @@ export default function AdminScreen({ onBack }) {
             <button style={s.resetBtn} onClick={handleReset} disabled={loading} type="button">⚠️ Reset</button>
           }
         />
+
+        <button
+          type="button"
+          style={s.migrateSpecialBtn}
+          disabled={loading}
+          onClick={async () => {
+            if (!window.confirm('Recalculează punctele din Speciale (specialPoints) pentru toți userii, din specialScores existente. Sigur de rulat oricând — nu inventează puncte, doar le pune la locul corect. Continui?')) return;
+            setLoading(true);
+            try {
+              const { usersUpdated } = await migrateSpecialPointsFromScores();
+              setMessage(`Migrare Speciale — specialPoints recalculat pentru ${usersUpdated} useri.`);
+            } catch (err) {
+              console.error(err);
+              setMessage("Eroare la migrarea Specialelor: " + (err.message || err.code));
+            } finally {
+              setLoading(false);
+            }
+          }}
+        >
+          🔄 Recalculează puncte Speciale
+        </button>
 
         {message && <div style={s.message}>{message}</div>}
 
@@ -2418,6 +2439,11 @@ const s = {
   resetBtn: {
     background: color.redBg, border: `1px solid ${color.redBorder}`, color: color.red,
     borderRadius: radius.sm, padding: "8px 14px", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: font.body,
+  },
+  migrateSpecialBtn: {
+    background: "transparent", border: `1px solid ${color.goldBorder}`, color: color.gold,
+    borderRadius: radius.sm, padding: "7px 12px", fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: font.body,
+    marginTop: 8, marginBottom: 4,
   },
   hint: { fontSize: 11.5, color: color.textMuted, lineHeight: 1.5, margin: "0 0 4px" },
   linkBtn: {

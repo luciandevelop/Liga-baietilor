@@ -1,6 +1,6 @@
 // ══════════════════════════════════════════════════════════════════
 // api/football-sync.js — Vercel Serverless Function (plan Hobby,
-// gratuit). Declanșată de GitHub Actions la ~10 minute, DAR decide
+// gratuit). Declanșată de GitHub Actions la ~5 minute, DAR decide
 // SINGURĂ dacă merită să cheme API-Football — schedulerul poate bate
 // des, asta NU înseamnă consum.
 //
@@ -9,6 +9,31 @@
 //   CRON_SECRET                — orice string lung, generat de tine
 //   FIREBASE_SERVICE_ACCOUNT_KEY — JSON-ul contului de service Firebase
 //   FIREBASE_PROJECT_ID        — id-ul proiectului Firebase
+//
+// ── REPARAT (audit Firestore reads, P0+P1) ──────────────────────────
+// Firebase Admin SDK (folosit aici) NU are o cotă separată de restul
+// aplicației — orice citire de-aici contează în ACEEAȘI limită zilnică
+// de 50.000. Găsit și reparat:
+// 1. Înainte: citea TOATE meciurile etapei (până la 20) la FIECARE
+//    rulare, doar ca să afle dacă are ceva relevant de făcut. Acum:
+//    interogare Firestore filtrată direct pe fereastra de timp
+//    (server-side) — o zi fără niciun meci în fereastră costă ~0
+//    citiri pentru pasul ăsta, nu 20.
+// 2. Înainte: citea cache-ul extern (externalFootballCache) de DOUĂ ORI
+//    per meci, separat — o dată pentru verificarea "e încă live?", a
+//    doua oară pentru lineup. Acum: o singură citire per meci, per
+//    rulare, reutilizată peste tot unde e nevoie.
+// 3. Fereastra de monitorizare unificată la T-60 (o oră înainte de
+//    kickoff) → T+150min (acoperă prelungiri/întârzieri) — înainte
+//    erau 2 ferestre diferite (±3h pentru meciuri normale, ±48h pentru
+//    Meciurile Săptămânii, rămasă dintr-o funcționalitate — H2H/formă —
+//    deja eliminată).
+// 4. După FT (sau alt status final — AET/PEN/PST/CANC/ABD/AWD/WO),
+//    meciul e exclus explicit din verificările ulterioare ale zilei —
+//    nu mai consumă nimic după ce s-a terminat.
+//
+// NIMIC din mecanismul de scoring/Joker/Feed/predicții nu a fost
+// atins — strict citirile din bucla asta de sincronizare.
 // ══════════════════════════════════════════════════════════════════
 import { getAdminDb } from "./_lib/firebaseAdmin.js";
 import { Timestamp } from "firebase-admin/firestore";
@@ -17,7 +42,18 @@ import { normalizeFixture, matchFixture, detectDelta, normalizeLineup, leagueSup
 const DAILY_LIMIT = 100;
 const SAFETY_MARGIN = 85; // pentru matching (o singură dată/meci, nu urgent)
 const MARGIN_LIVE = 98; // LIVE are prioritate ABSOLUTĂ — se oprește doar la limită
-const RELEVANT_WINDOW_MS = 3 * 3600 * 1000; // 3h înainte/după kickoff = "relevant"
+
+// ── Fereastra unificată de monitorizare — cerut explicit: un meci
+// intră în atenția sincronizării DOAR de la T-60 (o oră înainte de
+// kickoff), nu mai devreme. Rămâne monitorizat până la 150 min după
+// kickoff (durată tipică + pauză + prelungiri), ca să nu pierdem
+// finalul dacă un meci a întârziat. ──
+const MONITOR_BEFORE_MS = 60 * 60 * 1000; // T-60
+const MONITOR_AFTER_MS = 150 * 60 * 1000;
+
+// Statusuri API-Football care înseamnă "meciul s-a încheiat definitiv,
+// nu mai are rost să-l verificăm în continuare azi".
+const FINISHED_STATUSES = ["FT", "AET", "PEN", "PST", "CANC", "ABD", "AWD", "WO"];
 
 export default async function handler(req, res) {
   const authHeader = req.headers["authorization"];
@@ -40,19 +76,8 @@ export default async function handler(req, res) {
       quota = { date: todayKey, requestsUsed: 0, lastSync: null, lastSuccess: null, lastError: null };
     }
 
-    // ── 2. Etapa curentă — OPTIMIZAT: nu mai citim TOATE etapele
-    // sezonului la fiecare rulare (asta însemna N citiri, la 10 minute,
-    // non-stop, 144×/zi — cost mare independent de orice meci live).
-    // Firestore poate găsi direct candidatul corect cu O SINGURĂ
-    // citire: cea mai recentă etapă al cărei weekStart <= acum.
-    //
-    // REPARAT (aceeași cauză ca dispariția etapei din UI, unificat):
-    // înainte, etapa mai trebuia să aibă și weekEnd >= acum ca să fie
-    // considerată "activă" — la trecerea de weekEnd (duminică 23:59),
-    // sync-ul live se oprea complet pentru etapă, chiar dacă Adminul nu
-    // o finalizase încă explicit. Acum: etapa rămâne activă pentru
-    // sync până la finalizarea explicită din Admin (status==="completed",
-    // aceeași sursă de adevăr ca la client, nu un mecanism nou).
+    // ── 2. Etapa curentă — o singură citire, cea mai recentă etapă al
+    // cărei weekStart <= acum, nefinalizată explicit din Admin. ──
     const now = Date.now();
     const nowTs = Timestamp.fromMillis(now);
     const gwQuerySnap = await db.collection("gameweeks")
@@ -66,61 +91,42 @@ export default async function handler(req, res) {
       return res.status(200).json({ skipped: true, reason: "no_gameweek_in_current_week_window", requestsUsedToday: quota.requestsUsed });
     }
     const gwId = currentGw.id;
-    const featuredIds = new Set(currentGw.featuredMatchIds || []);
 
-    const matchesSnap = await db.collection("matches").where("gameweekId", "==", gwId).get();
-    const allMatches = matchesSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
-    // ── Meciurile săptămânii (featured) intră în Match Intelligence cu
-    // până la 48h înainte de kickoff — cerut explicit, ca H2H/formă/
-    // predicții să nu aștepte ziua meciului. Restul rămân pe fereastra
-    // îngustă (3h), pentru economie de request-uri. ──
-    const FEATURED_WINDOW_MS = 48 * 3600 * 1000;
-    const relevant = allMatches.filter((m) => {
-      if (m.status === "finished") return false;
-      const kickoffMs = m.kickoffAt?.toMillis ? m.kickoffAt.toMillis() : null;
-      if (!kickoffMs) return false;
-      const window = featuredIds.has(m.id) ? FEATURED_WINDOW_MS : RELEVANT_WINDOW_MS;
-      return Math.abs(now - kickoffMs) <= window || (kickoffMs > now && kickoffMs - now <= window);
-    });
+    // ── 3. Meciurile RELEVANTE ACUM — filtrate direct de Firestore,
+    // server-side, pe fereastra T-60 → T+150min. NU se mai citesc toate
+    // cele ~20 de meciuri ale etapei ca să afle "am ceva de făcut?" —
+    // dacă 0 meciuri sunt în fereastră, query-ul întoarce 0 documente,
+    // cost aproape 0. (Necesită un index compus Firestore pe
+    // gameweekId+kickoffAt — dacă prima rulare eșuează cu o eroare
+    // despre index lipsă, link-ul din eroare îl creează automat,
+    // durează câteva minute să se activeze, apoi funcționează
+    // permanent.)
+    const windowStart = Timestamp.fromMillis(now - MONITOR_AFTER_MS);
+    const windowEnd = Timestamp.fromMillis(now + MONITOR_BEFORE_MS);
+    const matchesSnap = await db.collection("matches")
+      .where("gameweekId", "==", gwId)
+      .where("kickoffAt", ">=", windowStart)
+      .where("kickoffAt", "<=", windowEnd)
+      .get();
+
+    const relevant = matchesSnap.docs
+      .map((d) => ({ id: d.id, ...d.data() }))
+      .filter((m) => {
+        if (m.status === "finished") return false; // validat oficial de Admin — gata
+        if (FINISHED_STATUSES.includes(m.liveApiStatus)) return false; // FT/AET/etc. detectat automat — gata, nu mai verificăm azi
+        return true;
+      });
 
     if (relevant.length === 0) {
       quota.lastSync = now;
       await quotaRef.set(quota, { merge: true });
-      return res.status(200).json({ skipped: true, reason: "gameweek_found_but_no_match_in_sync_window", requestsUsedToday: quota.requestsUsed });
+      return res.status(200).json({ skipped: true, reason: "no_match_in_monitoring_window", requestsUsedToday: quota.requestsUsed });
     }
 
-    // ── BUG REAL GĂSIT ȘI REPARAT ACUM: fereastra ±3h ("relevant") era
-    // folosită și pentru interogarea de scor LIVE, repetată la fiecare
-    // sincronizare — nu doar pentru căutările o-singură-dată (lineup/
-    // h2h/formă/predicții/accidentări, unde ±3h chiar are sens, ca să
-    // prindem lineup-ul din timp). Rezultat: pe o zi cu 5 meciuri
-    // eșalonate, ferestrele de ±3h se suprapun aproape toată ziua,
-    // umflând artificial costul LIVE mult peste ținta de 75-80/zi.
-    //
-    // Separat acum: LIVE se interoghează DOAR de la 20 min înainte de
-    // kickoff până la 150 min după (durata tipică a unui meci +
-    // pauză + prelungiri) — sau dacă ULTIMA stare cunoscută din cache
-    // era deja "live" (1H/2H/HT/ET), ca să nu ratăm finalul dacă
-    // meciul a întârziat. Restul (lineup/H2H/formă/predicții) rămân
-    // pe fereastra largă ±3h — sunt cereri O SINGURĂ DATĂ, ieftine,
-    // indiferent de lățimea ferestrei. ──
-    const LIVE_WINDOW_BEFORE_MS = 20 * 60 * 1000;
-    const LIVE_WINDOW_AFTER_MS = 150 * 60 * 1000;
-    const cachedStatusById = {}; // populat mai jos, înainte de secțiunea LIVE
-
-    function isLiveRelevant(m, cachedStatus) {
-      const kickoffMs = m.kickoffAt?.toMillis ? m.kickoffAt.toMillis() : null;
-      if (!kickoffMs) return false;
-      const withinWindow = now >= kickoffMs - LIVE_WINDOW_BEFORE_MS && now <= kickoffMs + LIVE_WINDOW_AFTER_MS;
-      const stillLiveInCache = ["1H", "2H", "HT", "ET"].includes(cachedStatus);
-      return withinWindow || stillLiveInCache;
-    }
-
-    // BUG REPARAT: acest prag global folosea SAFETY_MARGIN (85), oprind
-    // ȘI polling-ul LIVE — contrazicea exact cerința "LIVE are
-    // prioritate absolută". Acum oprirea completă vine doar la
-    // MARGIN_LIVE (98), aproape de limita hard — restul (lineup/H2H/
-    // formă/predicții/injuries) rămân protejate individual, mai jos.
+    // BUG REPARAT (păstrat din auditul anterior): pragul global de
+    // oprire completă folosea SAFETY_MARGIN (85), oprind ȘI LIVE-ul —
+    // contrazicea "LIVE are prioritate absolută". Oprirea completă
+    // vine doar la MARGIN_LIVE (98), aproape de limita hard.
     if (quota.requestsUsed >= MARGIN_LIVE) {
       quota.lastSync = now;
       quota.lastError = `Quota aproape epuizată (${quota.requestsUsed}/${DAILY_LIMIT}) — sincronizare oprită pentru azi.`;
@@ -131,7 +137,7 @@ export default async function handler(req, res) {
     let apiCallsThisRun = 0;
     const results = { matched: 0, unmatched: 0, ambiguous: 0, live: 0, errors: [] };
 
-    // ── 3. Meciuri nemapate încă → o singură cerere /fixtures?date=
+    // ── 4. Meciuri nemapate încă → o singură cerere /fixtures?date=
     // per dată unică necesară, DOAR dacă mai avem buget. ──
     const unmapped = relevant.filter((m) => !m.externalFixtureId);
     const uniqueDates = [...new Set(unmapped.map((m) => {
@@ -149,22 +155,8 @@ export default async function handler(req, res) {
         if (!resp.ok) { results.errors.push(`fixtures?date=${date}: HTTP ${resp.status}`); continue; }
         const data = await resp.json();
         const candidatesForDate = data.response || [];
-        // ── DIAGNOSTIC TEMPORAR — nu schimbă comportamentul, doar
-        // raportează exact ce a primit API-ul, ca să vedem clar dacă
-        // problema e data (0 fixture-uri primite deloc) sau potrivirea
-        // numelor de echipe (fixture-uri primite, dar niciunul nu se
-        // potrivește). Se poate scoate după ce identificăm cauza. ──
-        results.diagnostic = results.diagnostic || [];
-        results.diagnostic.push({ date, fixturesReceived: candidatesForDate.length });
         for (const m of unmapped.filter((mm) => new Date(mm.kickoffAt.toMillis()).toISOString().slice(0, 10) === date)) {
           const matchResult = matchFixture({ homeTeam: m.homeTeam, awayTeam: m.awayTeam, kickoffAtMs: m.kickoffAt.toMillis() }, candidatesForDate);
-          if (matchResult.status === "unmatched") {
-            // Primele 5 nume de echipe primite de la API în ziua asta —
-            // ca să vedem exact cum le scrie API-Football, comparat cu
-            // ce avem noi stocat (m.homeTeam/m.awayTeam).
-            const sampleNames = candidatesForDate.slice(0, 5).map((f) => `${f.teams.home.name} vs ${f.teams.away.name}`);
-            results.diagnostic.push({ unmatchedOurNames: `${m.homeTeam} vs ${m.awayTeam}`, ourKickoff: new Date(m.kickoffAt.toMillis()).toISOString(), sampleApiNames: sampleNames });
-          }
           if (matchResult.status === "matched") {
             const matchedFixture = candidatesForDate.find((c) => c.fixture.id === matchResult.fixtureId);
             await db.collection("matches").doc(m.id).set({
@@ -188,19 +180,29 @@ export default async function handler(req, res) {
       }
     }
 
-    // ── 4. Meciuri deja mapate și DOAR ÎN FEREASTRA LIVE (nu ±3h larg —
-    // vezi bug-ul reparat mai sus) → UN SINGUR request batch
+    // ── 5. O SINGURĂ citire de cache per meci mapat, per rulare —
+    // reutilizată mai jos ATÂT pentru decizia "e încă live?" CÂT ȘI
+    // pentru verificarea lineup-ului (înainte erau 2 citiri separate
+    // pe același document). ──
     const mappedRelevant = relevant.filter((m) => m.externalFixtureId);
-    // Citim starea cache pentru fiecare, ca să aplicăm "stillLiveInCache"
-    // (un meci care a intrat în prelungiri nu trebuie abandonat brusc
-    // doar pentru că fereastra fixă s-a terminat).
+    const cacheByFixtureId = {};
     for (const m of mappedRelevant) {
       const snap = await db.collection("externalFootballCache").doc(String(m.externalFixtureId)).get();
-      cachedStatusById[m.externalFixtureId] = snap.exists ? snap.data().status : null;
+      cacheByFixtureId[m.externalFixtureId] = snap.exists ? snap.data() : {};
     }
-    const mappedIds = mappedRelevant
-      .filter((m) => isLiveRelevant(m, cachedStatusById[m.externalFixtureId]))
-      .map((m) => m.externalFixtureId);
+
+    function isLiveNow(m) {
+      const kickoffMs = m.kickoffAt?.toMillis ? m.kickoffAt.toMillis() : null;
+      if (!kickoffMs) return false;
+      const withinWindow = now >= kickoffMs && now <= kickoffMs + MONITOR_AFTER_MS;
+      const stillLiveInCache = ["1H", "2H", "HT", "ET"].includes(cacheByFixtureId[m.externalFixtureId]?.status);
+      return withinWindow || stillLiveInCache;
+    }
+
+    // ── 6. Scor live — DOAR meciurile chiar începute (kickoff trecut)
+    // sau încă live conform ultimului cache. UN SINGUR request batch
+    // pentru toate deodată, indiferent câte sunt live simultan. ──
+    const mappedIds = mappedRelevant.filter(isLiveNow).map((m) => m.externalFixtureId);
     if (mappedIds.length > 0 && quota.requestsUsed + apiCallsThisRun < MARGIN_LIVE) {
       try {
         const resp = await fetch(`https://v3.football.api-sports.io/fixtures?ids=${mappedIds.join("-")}`, {
@@ -212,9 +214,10 @@ export default async function handler(req, res) {
           for (const f of data.response || []) {
             const newSnapshot = normalizeFixture(f);
             const cacheRef = db.collection("externalFootballCache").doc(String(newSnapshot.fixtureId));
-            const oldSnap = await cacheRef.get();
-            const oldSnapshot = oldSnap.exists ? oldSnap.data() : null;
-            const delta = detectDelta(oldSnapshot, newSnapshot);
+            // Reutilizăm cache-ul deja citit mai sus (pasul 5) — nu mai
+            // citim din nou același document.
+            const oldSnapshot = cacheByFixtureId[newSnapshot.fixtureId] || null;
+            const delta = detectDelta(oldSnapshot?.status ? oldSnapshot : null, newSnapshot);
 
             const ourMatch = relevant.find((m) => m.externalFixtureId === newSnapshot.fixtureId);
             await cacheRef.set({
@@ -223,18 +226,15 @@ export default async function handler(req, res) {
               lastDeltaEvents: delta.newEvents,
               lastStatusChange: delta.statusChanged ? { from: oldSnapshot?.status || null, to: newSnapshot.status } : null,
               lastScoreChange: delta.scoreChanged ? { before: delta.oldScore || { home: 0, away: 0 }, after: delta.newScore || { home: newSnapshot.homeScore, away: newSnapshot.awayScore } } : null,
-            }, { merge: true }); // merge:true — PĂSTREAZĂ lineup scris de secțiunea Match Intelligence la sincronizări anterioare. lastDeltaEvents etc. tot se suprascriu corect (sunt incluse explicit în fiecare scriere).
+            }, { merge: true }); // merge:true — PĂSTREAZĂ lineup scris anterior.
 
             // ── SCRIERE DIRECTĂ pe documentul MECIULUI — câmpuri NOI,
             // separate ("liveApi*"), NICIODATĂ prin updateMatchStatus/
-            // saveMatchResult (acelea rămân STRICT manuale, ale Adminului,
-            // și sunt singurele care declanșează scoring —
-            // publishMatchPointsIfFinal e apelată DOAR din
-            // updateMatchStatus, niciodată de-aici). Asta e afișare live
-            // automată, NU rezultat oficial. Validarea rămâne 100% a
-            // Adminului, ca înainte — automatizarea doar elimină nevoia
-            // lui de a actualiza manual scorul/minutul/evenimentele CÂT
-            // TIMP meciul e în desfășurare.
+            // saveMatchResult (acelea rămân STRICT manuale, ale
+            // Adminului, singurele care declanșează scoring). Exact
+            // acest scris e cel pe care listenMatches (onSnapshot din
+            // WelcomeScreen) îl "vede" automat, fără refresh — validat,
+            // neschimbat față de înainte.
             if (ourMatch?.id) {
               await db.collection("matches").doc(ourMatch.id).set({
                 liveApiStatus: newSnapshot.status,
@@ -256,34 +256,26 @@ export default async function handler(req, res) {
       }
     }
 
-    // ── 5. MATCH INTELLIGENCE — REDUS explicit, la cerere: doar LINEUP
-    // rămâne automat (prioritate #2 după LIVE). H2H/formă/predicții/
-    // accidentări NU se mai cer — consumau request-uri API pentru
-    // conținut de Feed pe care Adminul nu-l mai vrea generat automat.
-    // Feed-ul se bazează acum pe meciuri + scor live + clasament +
-    // citate + fapte de club, nu pe aceste 4 categorii. ──
+    // ── 7. LINEUP — max 3 încercări per fixture, în 3 ferestre fixe
+    // (neschimbat), dar acum folosind cache-ul DEJA citit la pasul 5,
+    // nu o citire nouă. ──
     const MARGIN_LINEUP = 95;
-
-    // LINEUP — MAXIM 3 încercări per fixture, în 3 ferestre fixe, ca
-    // să nu consume request-uri la infinit dacă lineup-ul întârzie.
     const LINEUP_WINDOWS = [
       [38, 50],  // încercarea 1 — 38 până la 50 min ÎNAINTE de kickoff
       [18, 30],  // încercarea 2
       [3, 15],   // încercarea 3, ultima șansă
     ];
 
-    for (const m of relevant.filter((mm) => mm.externalFixtureId)) {
-      const cacheRef = db.collection("externalFootballCache").doc(String(m.externalFixtureId));
-      const cacheSnap = await cacheRef.get();
-      const existing = cacheSnap.exists ? cacheSnap.data() : {};
+    for (const m of mappedRelevant) {
+      const existing = cacheByFixtureId[m.externalFixtureId] || {};
       const coverage = existing.coverage || null;
       const kickoffMs = m.kickoffAt.toMillis();
       const minutesToKickoff = (kickoffMs - now) / 60000;
       const attempts = existing.lineupAttempts || 0;
       const inAnyLineupWindow = LINEUP_WINDOWS.some(([from, to]) => minutesToKickoff >= from && minutesToKickoff <= to);
 
-      // LINEUP — max 3 încercări, STOP definitiv după primul succes SAU după a 3-a încercare eșuată.
       if (!existing.lineup && attempts < 3 && inAnyLineupWindow && leagueSupports(coverage, "lineups") && quota.requestsUsed + apiCallsThisRun < MARGIN_LINEUP) {
+        const cacheRef = db.collection("externalFootballCache").doc(String(m.externalFixtureId));
         try {
           const r = await fetch(`https://v3.football.api-sports.io/fixtures/lineups?fixture=${m.externalFixtureId}`, { headers: { "x-apisports-key": API_KEY } });
           apiCallsThisRun++;
@@ -292,7 +284,7 @@ export default async function handler(req, res) {
             const d = await r.json();
             const lineup = normalizeLineup(d.response);
             if (lineup) await cacheRef.set({ lineup, lineupFoundAt: now, lineupAttempts: newAttempts }, { merge: true });
-            else await cacheRef.set({ lineupAttempts: newAttempts }, { merge: true }); // 200 OK dar încă gol — numărăm încercarea
+            else await cacheRef.set({ lineupAttempts: newAttempts }, { merge: true });
           } else {
             await cacheRef.set({ lineupAttempts: newAttempts }, { merge: true });
           }
@@ -303,7 +295,7 @@ export default async function handler(req, res) {
       }
     }
 
-    // ── 6. Quota — actualizată o singură dată, la final. ──
+    // ── 8. Quota — actualizată o singură dată, la final. ──
     quota.requestsUsed += apiCallsThisRun;
     quota.lastSync = now;
     if (apiCallsThisRun > 0 && results.errors.length === 0) quota.lastSuccess = now;

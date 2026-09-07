@@ -85,9 +85,15 @@ export default {
     }
   },
   "ghioca": {
-    "nextIndex": 2,
+    "nextIndex": 8,
     "files": {
-      "1": "file_000000009f048246ac6a1662917a3f74.png"
+      "1": "file_000000009f048246ac6a1662917a3f74.png",
+      "2": "avatar_1.webp",
+      "3": "avatar_2.webp",
+      "4": "avatar_3.webp",
+      "5": "avatar_4.webp",
+      "6": "avatar_5.webp",
+      "7": "avatar_6.webp"
     }
   },
   "luck87": {

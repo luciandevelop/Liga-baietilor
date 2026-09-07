@@ -282,15 +282,16 @@ export default function WelcomeScreen({ user, profile, isAdmin, onOpenAdmin, onO
   // separată. Se reîncarcă natural ori de câte ori se schimbă lista de
   // meciuri sau etapa curentă.
   useEffect(() => {
-    if (!gameweek || matches.length === 0) { setNotifItems([]); return; }
+    const currentMatches = matchesRef.current;
+    if (!gameweek || currentMatches.length === 0) { setNotifItems([]); return; }
     let cancelled = false;
     setNotifLoading(true);
-    loadNotifications({ gameweekId: gameweek.id, matches, uid: user.uid, featuredMatchIds: gameweek.featuredMatchIds || [] })
+    loadNotifications({ gameweekId: gameweek.id, matches: currentMatches, uid: user.uid, featuredMatchIds: gameweek.featuredMatchIds || [] })
       .then(({ items }) => { if (!cancelled) setNotifItems(items); })
       .catch((err) => console.error("Eroare la încărcarea notificărilor:", err))
       .finally(() => { if (!cancelled) setNotifLoading(false); });
     return () => { cancelled = true; };
-  }, [gameweek, matches, user.uid]);
+  }, [gameweek?.id, user.uid]);
 
   // Teaser Surprizele Săptămânii — încărcat o dată per etapă, doar
   // starea publică (revealed/nu) + tipul, DACĂ e deja dezvăluit. Nu e
@@ -340,6 +341,17 @@ export default function WelcomeScreen({ user, profile, isAdmin, onOpenAdmin, onO
   }, [gameweek?.id]);
 
   const staticFeedRef = useRef(false);
+  // ── FIX P0 (audit Firestore reads) — matches/gameweek sunt folosite
+  // în efectele de mai jos DOAR ca dependințe de declanșare înainte;
+  // problema era că "matches" capătă o referință NOUĂ la fiecare
+  // declanșare a listener-ului (inclusiv la reconectări mobile, fără
+  // nicio schimbare reală de conținut), ceea ce remonta efectele de
+  // fiecare dată, nu doar la schimbare reală de etapă. Acum efectele
+  // depind STRICT de gameweek?.id (valoare stabilă) — citesc "matches"
+  // din acest ref, nu din closure, ca să tot vadă lista curentă, fără
+  // să se re-declanșeze la fiecare referință nouă a array-ului.
+  const matchesRef = useRef(matches);
+  useEffect(() => { matchesRef.current = matches; }, [matches]);
   useEffect(() => {
     if (staticFeedRef.current || !gameweek || matches.length === 0) return;
     staticFeedRef.current = true;
@@ -382,12 +394,14 @@ export default function WelcomeScreen({ user, profile, isAdmin, onOpenAdmin, onO
   // găsească ceva nou, fără nicio pierdere reală de prospețime (oricum
   // nu poate fi mai proaspăt decât ultima sincronizare server). ──
   useEffect(() => {
-    if (!gameweek || matches.length === 0) return;
-    const mappedMatches = matches.filter((m) => m.externalFixtureId);
-    if (mappedMatches.length === 0) return;
+    if (!gameweek) return;
 
     let cancelled = false;
     async function pollExternal() {
+      // Citit din ref, proaspăt la fiecare rulare (inclusiv la fiecare
+      // 10 minute) — nu mai e nevoie ca efectul să se remonteze când
+      // se schimbă meciurile, doar când se schimbă efectiv etapa.
+      const mappedMatches = matchesRef.current.filter((m) => m.externalFixtureId);
       for (const m of mappedMatches) {
         try {
           const snap = await getDoc(doc(db, "externalFootballCache", String(m.externalFixtureId)));
@@ -410,7 +424,7 @@ export default function WelcomeScreen({ user, profile, isAdmin, onOpenAdmin, onO
     pollExternal();
     const intervalId = setInterval(pollExternal, 10 * 60 * 1000);
     return () => { cancelled = true; clearInterval(intervalId); };
-  }, [gameweek, matches]);
+  }, [gameweek?.id]);
 
   // Meciul principal (hero) — prioritate STRICTĂ, cerută explicit:
   //   1. primul meci LIVE (sau Pauză — tot "în desfășurare")

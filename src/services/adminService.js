@@ -512,18 +512,82 @@ export async function bulkCreateMatches(gameweekId, text) {
 // fie refăcute; rămân intacte, redeschise manual din Admin pentru
 // sezonul nou, când vine momentul.
 // ══════════════════════════════════════════════════════════════════
+// ── Migrare, o singură dată, necesară după separarea seasonPoints de
+// specialPoints (repararea bug-ului "Reset nu duce la 0 Clasamentul
+// General" — puncte din Speciale REZOLVATE ÎNAINTE de acest fix erau
+// amestecate în seasonPoints, sursa lor originală, corectă, e
+// specialScores, care n-a fost niciodată ștearsă). Recalculează
+// specialPoints al fiecărui user STRICT din specialScores existente —
+// sigur de rulat oricând, oricâte ori (suprascrie cu suma corectă din
+// sursă, nu adaugă), nu inventează puncte, doar mută-le din locul greșit
+// în cel corect. NU atinge seasonPoints — acela rămâne treaba Reset-ului
+// obișnuit. ──
+export async function migrateSpecialPointsFromScores() {
+  const scoresSnap = await getDocs(collection(db, "specialScores"));
+  const totalsByUid = {};
+  scoresSnap.docs.forEach((d) => {
+    const { userId, points } = d.data();
+    if (!userId) return;
+    totalsByUid[userId] = (totalsByUid[userId] || 0) + (points || 0);
+  });
+  const uids = Object.keys(totalsByUid);
+  await Promise.all(uids.map((uid) => updateDoc(doc(db, "users", uid), { specialPoints: totalsByUid[uid] })));
+  return { usersUpdated: uids.length, totalsByUid };
+}
+
+// ── REPARAT — reordonare + raportare pe secțiuni. Cauza reală a
+// bug-ului "Clasamentul General nu se resetează": funcția făcea ZECI de
+// ștergeri secvențiale (fiecare document, unul câte unul, fără batch)
+// ÎNAINTE de pasul care pune users.seasonPoints/gameweeksPlayed pe 0 —
+// acela era ULTIMUL pas. Dacă orice ștergere de pe parcurs eșua (ex. o
+// singură operație din subcolecțiile weeklySurprises, care pot avea
+// zeci de documente per etapă), funcția arunca eroare ACOLO și ultimul
+// pas (cel de care Adminul are nevoie cel mai mult) nu se mai executa
+// NICIODATĂ — dovedit direct, live, în Firestore (gameweeksPlayed
+// rămăsese 4, nu 0, exact ca seasonPoints).
+//
+// Acum: pasul critic (clasamentul) rulează PRIMUL, nu ultimul — orice
+// eșuează mai departe nu mai poate împiedica resetarea clasamentului.
+// În plus, fiecare secțiune are propriul try/catch — o eroare izolată
+// (ex. o subcolecție a unei singure etape) nu mai oprește restul
+// secțiunilor, și raportul final spune EXACT ce a reușit și ce nu, nu
+// doar "Resetat — X documente" indiferent de ce s-a întâmplat de fapt. ──
 export async function resetAllTestData() {
   let deleted = 0;
+  const sectionErrors = [];
+
+  // ── PASUL 1, CRITIC, PRIMUL — clasamentul general. Indiferent ce
+  // eșuează mai departe, ăsta trebuie garantat. ──
+  try {
+    const usersSnap = await getDocs(collection(db, "users"));
+    for (const u of usersSnap.docs) {
+      await updateDoc(doc(db, "users", u.id), { seasonPoints: 0, gameweeksPlayed: 0 });
+      deleted++;
+    }
+  } catch (err) {
+    console.error("Reset — EȘEC la pasul critic (clasament):", err);
+    sectionErrors.push(`Clasament general: ${err.message || err.code}`);
+    // Nu continuăm restul dacă exact pasul critic a eșuat — Adminul
+    // trebuie să știe imediat, clar, nu ascuns într-un mesaj generic.
+    throw new Error(`Resetarea clasamentului general a eșuat: ${err.message || err.code}. Nimic altceva nu a fost șters — reîncearcă.`);
+  }
 
   const simpleCollections = [
     "matches", "gameweeks", "seasons", "gameweekLiveScores", "gameweekScores",
     "predictions", "jokers", "jokerExtra", "matchPoints", "feedEvents", "feedState",
   ];
   for (const name of simpleCollections) {
-    const snap = await getDocs(collection(db, name));
-    for (const d of snap.docs) {
-      await deleteDoc(doc(db, name, d.id));
-      deleted++;
+    try {
+      const snap = await getDocs(collection(db, name));
+      for (const d of snap.docs) {
+        await deleteDoc(doc(db, name, d.id));
+        deleted++;
+      }
+    } catch (err) {
+      console.error(`Reset — eroare la colecția "${name}":`, err);
+      sectionErrors.push(`${name}: ${err.message || err.code}`);
+      // continuăm cu restul colecțiilor — o eroare izolată nu mai
+      // blochează tot ce urmează.
     }
   }
 
@@ -536,25 +600,33 @@ export async function resetAllTestData() {
     "diceRolls", "diceStops", "sabotajChoices", "sabotajPicked", "sabotajTaken",
     "rouletteSpins", "triviaAnswers",
   ];
-  const wsSnap = await getDocs(collection(db, "weeklySurprises"));
-  for (const gwDoc of wsSnap.docs) {
-    for (const sub of WS_SUBCOLLECTIONS) {
-      const subSnap = await getDocs(collection(db, "weeklySurprises", gwDoc.id, sub));
-      for (const d of subSnap.docs) {
-        await deleteDoc(doc(db, "weeklySurprises", gwDoc.id, sub, d.id));
-        deleted++;
+  try {
+    const wsSnap = await getDocs(collection(db, "weeklySurprises"));
+    for (const gwDoc of wsSnap.docs) {
+      for (const sub of WS_SUBCOLLECTIONS) {
+        const subSnap = await getDocs(collection(db, "weeklySurprises", gwDoc.id, sub));
+        for (const d of subSnap.docs) {
+          await deleteDoc(doc(db, "weeklySurprises", gwDoc.id, sub, d.id));
+          deleted++;
+        }
       }
+      await deleteDoc(doc(db, "weeklySurprises", gwDoc.id));
+      deleted++;
     }
-    await deleteDoc(doc(db, "weeklySurprises", gwDoc.id));
-    deleted++;
+  } catch (err) {
+    console.error("Reset — eroare la weeklySurprises:", err);
+    sectionErrors.push(`weeklySurprises: ${err.message || err.code}`);
   }
 
-  // Clasamentul — la 0, pe fiecare cont existent. Contul în sine
-  // (nickname/avatar/status) rămâne neatins.
-  const usersSnap = await getDocs(collection(db, "users"));
-  for (const u of usersSnap.docs) {
-    await updateDoc(doc(db, "users", u.id), { seasonPoints: 0, gameweeksPlayed: 0 });
-    deleted++;
+  // Clasamentul general (users.seasonPoints/gameweeksPlayed) e DEJA
+  // resetat, la începutul funcției — nu se mai repetă aici.
+
+  if (sectionErrors.length > 0) {
+    // Clasamentul e garantat resetat (altfel am fi aruncat deja mai sus,
+    // înainte de orice altceva) — dar restul nu s-a terminat curat.
+    // Spunem exact ce a rămas neșters, nu ascundem în spatele unui
+    // mesaj generic de succes.
+    throw new Error(`Clasamentul general a fost resetat cu succes, dar au apărut erori la: ${sectionErrors.join("; ")}. Poți apăsa din nou Reset — pașii deja terminați se ignoră (idempotent), doar ce a rămas se termină.`);
   }
 
   return deleted;
@@ -1132,7 +1204,15 @@ export async function listGeneralLeaderboard() {
   const snap = await getDocs(collection(db, "users"));
   const rows = snap.docs
     .map((d) => d.data())
-    .filter((r) => getPlayerStatus(r) === "active");
+    .filter((r) => getPlayerStatus(r) === "active")
+    // Total afișat = puncte de etape (seasonPoints, resetabil curat) +
+    // puncte de Speciale (specialPoints, supraviețuiește Reset-ului
+    // intenționat) — separate la scriere acum, adunate DOAR aici, la
+    // citire, ca userul să vadă totalul combinat fără să știe că sunt
+    // 2 surse diferite. "seasonPoints" rămâne numele câmpului citit mai
+    // jos, ca să nu rupem restul aplicației (Player Card, header, etc.)
+    // — dar valoarea lui e acum explicit suma celor 2 componente.
+    .map((r) => ({ ...r, seasonPoints: (r.seasonPoints || 0) + (r.specialPoints || 0) }));
   rows.sort((a, b) => (b.seasonPoints || 0) - (a.seasonPoints || 0));
   return rows;
 }
@@ -1206,7 +1286,8 @@ export async function getPlayerCardStats(uid, seasonId, etapaGameweekId) {
   const seasonGwIds = new Set(seasonGameweeks.map((g) => g.id));
   const seasonScores = allScores.filter((s) => seasonGwIds.has(s.gameweekId));
   const seasonPoints = seasonScores.reduce((sum, s) => sum + (s.totalPoints || 0), 0);
-  const generalPoints = userSnap.exists() ? (userSnap.data().seasonPoints || 0) : 0;
+  // Total combinat (etape + Speciale) — vezi nota din listGeneralLeaderboard.
+  const generalPoints = userSnap.exists() ? ((userSnap.data().seasonPoints || 0) + (userSnap.data().specialPoints || 0)) : 0;
 
   const etapaScore = etapaGameweekId ? allScores.find((s) => s.gameweekId === etapaGameweekId) : null;
 
@@ -1359,7 +1440,10 @@ export async function getMatchPredictions(matchId) {
 // bug real, nu problemă de cache în telefon, cum părea la prima vedere.
 export async function getUserSeasonPoints(uid) {
   const snap = await getDoc(doc(db, "users", uid));
-  return snap.exists() ? snap.data().seasonPoints ?? 0 : 0;
+  if (!snap.exists()) return 0;
+  const d = snap.data();
+  // Total combinat (etape + Speciale) — vezi nota din listGeneralLeaderboard.
+  return (d.seasonPoints ?? 0) + (d.specialPoints ?? 0);
 }
 
 // Toți jokerii activi într-o etapă — pentru Feed (activitatea tuturor

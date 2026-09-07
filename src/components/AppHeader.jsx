@@ -91,9 +91,15 @@ const s = {
     alignItems: "center",
     justifyContent: "space-between",
     padding: "10px 16px",
-    background: color.headerBg,
-    borderBottom: `1px solid ${color.borderSubtle}`,
+    // ── O singură suprafață, cerut explicit: navy/charcoal foarte
+    // discret, NU negru plat — plus un glow auriu radial DOAR lângă
+    // mascotă (stânga), aproape imperceptibil ("simțit, nu văzut").
+    // Cele 2 straturi combinate ca fundal — glow-ul e primul (deasupra
+    // vizual), gradientul de bază al doilea. ──
+    background: "radial-gradient(circle at 10% 55%, rgba(212,175,55,0.05), transparent 50%), linear-gradient(135deg, #10141F 0%, #14161C 100%)",
     gap: 8,
+    // Fără linie de separare — culoarea trebuie să curgă direct în
+    // TopTabNav dedesubt, fără salt vizual.
   },
   // gap redus (12 -> 9) — imaginea și textul trebuie să se simtă un
   // singur bloc de identitate, nu "icon | text" separate.
@@ -108,7 +114,10 @@ const s = {
   // exact legătura vizuală cerută, fără card/dreptunghi nou. ──
   heroGlow: {
     borderRadius: radius.md, flexShrink: 0,
-    boxShadow: "0 0 22px 1px rgba(212,175,55,0.4), 0 0 8px 1px rgba(232,148,60,0.25)",
+    // Redus semnificativ — glow-ul ambiental din fundalul header-ului
+    // (mai sus) face deja treaba; ăsta rămâne doar o urmă foarte fină
+    // pe conturul imaginii, nu un inel vizibil.
+    boxShadow: "0 0 10px 0px rgba(212,175,55,0.18)",
   },
   heroWrap: {
     width: 80, height: 80, borderRadius: radius.md, flexShrink: 0, overflow: "hidden",

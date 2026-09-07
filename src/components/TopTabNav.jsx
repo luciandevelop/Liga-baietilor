@@ -49,8 +49,9 @@ export default function TopTabNav({ active, onChange }) {
 const s = {
   row: {
     display: "flex",
-    background: color.headerBg,
-    borderBottom: `1px solid ${color.borderSubtle}`,
+    // Continuă exact din culoarea unde s-a oprit header-ul (#14161C),
+    // fără linie de separare — aceeași suprafață, nu 2 bucăți alăturate.
+    background: "linear-gradient(180deg, #14161C 0%, #15181F 100%)",
     overflowX: "auto",
   },
   tab: {

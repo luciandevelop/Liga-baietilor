@@ -2,14 +2,29 @@ import { color, font, radius } from "../matchdayTheme";
 import PlayerAvatar from "./PlayerAvatar";
 import playLeagueHero from "../assets/playLeagueHeroSeason1.webp";
 
-// ── Identitatea PLAY LEAGUE — text pregătit ca să fie ușor de schimbat
-// la fiecare sezon nou (10 sezoane, 4 etape fiecare), fără să umbli
-// prin restul componentei. Doar aceste 2 constante se schimbă la
-// începutul fiecărui sezon nou — restul (imagine, layout) rămâne.
-// Imaginea de-aici e STRICT pentru Sezonul 1 ("Încălzirea") — dacă un
-// sezon viitor are altă imagine, se schimbă importul de mai sus.
+// ── Identitatea PLAY LEAGUE — cele 10 sezoane, nume definitive.
+// Pentru a trece la un sezon nou: schimbă DOAR CURRENT_SEASON_NUMBER,
+// mai jos, cu numărul potrivit (1-10) — titlul și subtitlul se
+// reconstruiesc singure din listă, nimic altceva de umblat. Dacă un
+// sezon viitor are și o imagine nouă, schimbă și importul de mai sus
+// (playLeagueHero) — imaginea de-acum e STRICT pentru Sezonul 1. ──
+const SEASONS = [
+  { emoji: "🔥", name: "Încălzirea" },
+  { emoji: "⚔️", name: "Se Separă Apele" },
+  { emoji: "🤡", name: "Experții de Serviciu" },
+  { emoji: "🎄", name: "Goana după Puncte" },
+  { emoji: "🍀", name: "Poate Anul Ăsta" },
+  { emoji: "💔", name: "Fără Iubire, Doar Puncte" },
+  { emoji: "😈", name: "Se Strânge Lațul" },
+  { emoji: "🍀💀", name: "Unii Speră, Alții Disperă" },
+  { emoji: "⚔️", name: "Care pe Care" },
+  { emoji: "🏆", name: "Ultimul Dans" },
+];
+const CURRENT_SEASON_NUMBER = 1;
+const CURRENT_SEASON = SEASONS[CURRENT_SEASON_NUMBER - 1];
+
 const SEASON_TITLE = "PLAY LEAGUE";
-const SEASON_SUBTITLE = "🔥 SEZONUL 1 · ÎNCĂLZIREA";
+const SEASON_SUBTITLE = `${CURRENT_SEASON.emoji} SEZONUL ${CURRENT_SEASON_NUMBER} · ${CURRENT_SEASON.name.toUpperCase()}`;
 
 function BellIcon({ size = 20 }) {
   return (
@@ -85,8 +100,11 @@ const s = {
   // ── Glow portocaliu discret pe subtitlu — ecoul focului din imagine
   // ("Sezonul 1 · Încălzirea"), fără nicio animație/particule — cerut
   // explicit: premium, nu kitsch, zero cost de performanță. ──
+  // Fără nowrap — unele nume de sezon (ex. Sezonul 8) sunt mai lungi
+  // decât "Încălzirea" și ar ieși din ecran forțate pe un singur rând;
+  // lasă să treacă pe 2 rânduri quando e nevoie, natural.
   eyebrow: {
-    fontSize: 9.5, fontWeight: 700, color: "#E8A455", letterSpacing: "0.03em", marginTop: 2, whiteSpace: "nowrap",
+    fontSize: 9.5, fontWeight: 700, color: "#E8A455", letterSpacing: "0.03em", marginTop: 2, lineHeight: 1.3,
     textShadow: "0 0 8px rgba(232,164,85,0.45)",
   },
 

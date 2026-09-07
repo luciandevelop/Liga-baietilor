@@ -138,6 +138,10 @@ export default {
       "6": "file_00000000e3ec82468ba34d2d00e0d082.png"
     }
   },
+  "sammy20": {
+    "nextIndex": 1,
+    "files": {}
+  },
   "sexu-ciobanu": {
     "nextIndex": 9,
     "files": {

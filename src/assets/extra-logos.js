@@ -105,6 +105,7 @@ export const EXTRA_CLUB_ALIASES = {
   "uta-arad": "uta",
   "fc-voluntari": "voluntari",
   "sabah-fk": "sabah-baku",
+  "sabah": "sabah-baku",
   "braga": "sc-braga",
   "n-e-c": "nec-nijmegen",
   "viktoria-plze": "viktoria-plzen",

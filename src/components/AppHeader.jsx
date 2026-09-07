@@ -1,16 +1,15 @@
 import { color, font, radius } from "../matchdayTheme";
 import PlayerAvatar from "./PlayerAvatar";
+import playLeagueHero from "../assets/playLeagueHeroSeason1.webp";
 
-function CrownIcon({ size = 12 }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none">
-      <path
-        d="M3 18L2 8L7.5 12L12 5L16.5 12L22 8L21 18H3Z"
-        fill={color.goldOn}
-      />
-    </svg>
-  );
-}
+// ── Identitatea PLAY LEAGUE — text pregătit ca să fie ușor de schimbat
+// la fiecare sezon nou (10 sezoane, 4 etape fiecare), fără să umbli
+// prin restul componentei. Doar aceste 2 constante se schimbă la
+// începutul fiecărui sezon nou — restul (imagine, layout) rămâne.
+// Imaginea de-aici e STRICT pentru Sezonul 1 ("Încălzirea") — dacă un
+// sezon viitor are altă imagine, se schimbă importul de mai sus.
+const SEASON_TITLE = "PLAY LEAGUE";
+const SEASON_SUBTITLE = "🔥 SEZONUL 1 · ÎNCĂLZIREA";
 
 function BellIcon({ size = 20 }) {
   return (
@@ -31,13 +30,12 @@ export default function AppHeader({ nickname, points, avatarId, hasNotification,
   return (
     <div style={s.row}>
       <div style={s.logoGroup}>
-        <div style={s.badge}>
-          <div style={s.crownWrap}><CrownIcon /></div>
-          <span style={s.badgeText}>LB</span>
+        <div style={s.heroWrap}>
+          <img src={playLeagueHero} alt="Play League" style={s.heroImg} />
         </div>
         <div>
-          <div style={s.title}>Liga Băieților</div>
-          <div style={s.eyebrow}>Matchday Experience</div>
+          <div style={s.title}>{SEASON_TITLE}</div>
+          <div style={s.eyebrow}>{SEASON_SUBTITLE}</div>
         </div>
       </div>
 
@@ -67,26 +65,30 @@ const s = {
     display: "flex",
     alignItems: "center",
     justifyContent: "space-between",
-    padding: "16px 16px",
+    padding: "14px 16px",
     background: color.headerBg,
     borderBottom: `1px solid ${color.borderSubtle}`,
   },
-  logoGroup: { display: "flex", alignItems: "center", gap: 10 },
-  badge: {
-    position: "relative",
-    width: 38,
-    height: 38,
-    borderRadius: radius.sm,
-    background: color.goldGradient,
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-    flexShrink: 0,
+  logoGroup: { display: "flex", alignItems: "center", gap: 12 },
+  // ── Mărit moderat față de vechiul pătrățel de 38px (cerut explicit —
+  // personajul trebuie să aibă prezență, fără să devină banner). Colț
+  // rotunjit + inel auriu + glow discret, ca imaginea originală (care
+  // are deja un cadru auriu) să se integreze natural în temă, nu să
+  // pară "lipită". ──
+  heroWrap: {
+    width: 62, height: 62, borderRadius: radius.md, flexShrink: 0, overflow: "hidden",
+    border: `1.5px solid ${color.goldBorder}`,
+    boxShadow: "0 0 14px -2px rgba(212,175,55,0.5)",
   },
-  crownWrap: { position: "absolute", top: -6, left: "50%", transform: "translateX(-50%)" },
-  badgeText: { fontFamily: font.display, fontWeight: 700, fontSize: 15, color: color.goldOn },
-  title: { fontFamily: font.body, fontWeight: 800, fontSize: 14.5, color: color.textPrimary, letterSpacing: "0.01em" },
-  eyebrow: { fontSize: 9, fontWeight: 700, color: color.textFaint, letterSpacing: "0.12em", marginTop: 1 },
+  heroImg: { width: "100%", height: "100%", objectFit: "cover", display: "block" },
+  title: { fontFamily: font.display, fontWeight: 800, fontSize: 16.5, color: color.textPrimary, letterSpacing: "0.02em" },
+  // ── Glow portocaliu discret pe subtitlu — ecoul focului din imagine
+  // ("Sezonul 1 · Încălzirea"), fără nicio animație/particule — cerut
+  // explicit: premium, nu kitsch, zero cost de performanță. ──
+  eyebrow: {
+    fontSize: 9.5, fontWeight: 700, color: "#E8A455", letterSpacing: "0.03em", marginTop: 2, whiteSpace: "nowrap",
+    textShadow: "0 0 8px rgba(232,164,85,0.45)",
+  },
 
   right: { display: "flex", alignItems: "center", gap: 10 },
   profileBtn: {

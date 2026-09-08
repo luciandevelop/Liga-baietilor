@@ -1652,8 +1652,15 @@ export async function isGameweekReadyToResolve(gameweekId) {
   return matches.every((m) => isMatchClosed(m));
 }
 
-export async function getLiveGameweekPoints(gameweekId) {
-  const { pointsByUid, breakdownByUid } = await getLiveGameweekPointsDiagnostic(gameweekId);
+// ── knownMatches (opțional) — dacă apelantul are deja lista de meciuri
+// a etapei (ex. din magazinul comun matchesStore, populat de Home/LIVE
+// dacă au fost active în sesiune), o poate transmite aici ca să evităm
+// o citire nouă, identică, a acelorași documente. Dacă nu e transmis
+// (implicit null), comportamentul rămâne EXACT cel de dinainte — citire
+// proprie, ca până acum. Aditiv, retro-compatibil 100%, niciun apelant
+// existent (Admin etc.) nu trebuie schimbat. ──
+export async function getLiveGameweekPoints(gameweekId, knownMatches = null) {
+  const { pointsByUid, breakdownByUid } = await getLiveGameweekPointsDiagnostic(gameweekId, knownMatches);
   return { pointsByUid, breakdownByUid };
 }
 
@@ -1666,7 +1673,7 @@ export async function getLiveGameweekPoints(gameweekId) {
 // gameweekId între matches și matchPoints — dacă matchId există în
 // matches dar niciun document matchPoints nu are exact acel matchId,
 // asta iese explicit în diagnostic, nu doar "0 rezultate". ──
-export async function getLiveGameweekPointsDiagnostic(gameweekId) {
+export async function getLiveGameweekPointsDiagnostic(gameweekId, knownMatches = null) {
   const diag = {
     gameweekId, totalMatches: 0, finalMatches: 0, matchPointsFound: 0,
     usersComputed: 0, source: "matchPoints", status: "OK", errorMessage: null,
@@ -1679,13 +1686,19 @@ export async function getLiveGameweekPointsDiagnostic(gameweekId) {
   activeUids.forEach((uid) => { pointsByUid[uid] = 0; breakdownByUid[uid] = {}; });
 
   let matches;
-  try {
-    matches = await listMatches(gameweekId);
-  } catch (err) {
-    diag.status = "ERROR";
-    diag.errorMessage = `listMatches: ${err.message || err}`;
-    diag.state = "error";
-    return { pointsByUid, breakdownByUid, diagnostic: diag };
+  if (knownMatches) {
+    // Reutilizare — exact aceleași date pe care le-ar fi întors
+    // listMatches (aceeași colecție, același gameweekId), fără citire nouă.
+    matches = knownMatches;
+  } else {
+    try {
+      matches = await listMatches(gameweekId);
+    } catch (err) {
+      diag.status = "ERROR";
+      diag.errorMessage = `listMatches: ${err.message || err}`;
+      diag.state = "error";
+      return { pointsByUid, breakdownByUid, diagnostic: diag };
+    }
   }
   diag.totalMatches = matches.length;
 

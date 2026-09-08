@@ -5,6 +5,7 @@ import { ensureUserProfile, translateAuthError, logout, consumePendingNickname, 
 import { checkIsAdmin, getPlayerStatus } from "./services/adminService";
 import AuthScreen from "./screens/AuthScreen";
 import WelcomeScreen from "./screens/WelcomeScreen";
+import LiveScreen from "./screens/LiveScreen";
 import AdminScreen from "./screens/AdminScreen";
 import PredictionsScreen from "./screens/PredictionsScreen";
 import LeaderboardScreen from "./screens/LeaderboardScreen";
@@ -264,6 +265,13 @@ export default function App() {
     );
   }
 
+  // Reutilizează exact tiparul lui "feed"/"rules" (fără BottomTabBar) —
+  // LIVE se accesează din bara de SUS (nu are un tab propriu jos, iar
+  // Clasamentul rămâne neschimbat, tot în bara de jos).
+  if (view === "live") {
+    return <LiveScreen onBack={goBack} />;
+  }
+
   if (view === "specials") {
     return (
       <>
@@ -313,6 +321,7 @@ export default function App() {
         onOpenAdmin={() => navigateTo("admin")}
         onOpenPredictions={(matchId) => navigateTo("predictions", { predictionsTarget: matchId || null })}
         onOpenLeaderboard={() => navigateTo("leaderboard")}
+        onOpenLive={() => navigateTo("live")}
         onOpenSpecials={() => navigateTo("specials")}
         onOpenFeed={() => navigateTo("feed")}
         onOpenSurprises={() => navigateTo("surprises")}

@@ -94,35 +94,26 @@ export async function getCurrentGameweek(seasonId) {
 
 // Predicțiile existente ale userului pentru un set de meciuri — citire
 // directă pe ID determinist (matchId_uid), fără query, deci fără index.
-// ── REPARAT (audit Firestore reads, P0, aprobat explicit) — înainte
-// făcea o citire INDIVIDUALĂ per meci (matchIds.length citiri, chiar și
-// pentru meciuri nepronosticate încă). Acum: O SINGURĂ interogare, pe
-// un singur câmp simplu (userId==) — indexat AUTOMAT de Firestore
-// dintotdeauna, deci ZERO risc de index compus lipsă la prima rulare
-// (spre deosebire de o interogare userId+matchId combinată, care ar
-// necesita un index nou, netestat, riscant într-o zi de concurs real).
-// Filtrarea la EXACT meciurile cerute (matchIds) se face local, în
-// memorie, după citire — echivalent matematic garantat cu varianta
-// veche: fiecare document de predicție are câmpul matchId setat
-// EXACT la componenta din ID-ul lui determinist (matchId_uid, verificat
-// direct în savePredictionForMatch), deci filtrarea locală găsește
-// exact aceleași predicții pe care le-ar fi găsit citirea individuală,
-// nici mai multe, nici mai puține.
 //
-// Notă pentru viitor (comunicată explicit, nu rezolvată acum — Reset-ul
-// golește "predictions" complet, deci acum, la începutul ediției, users
-// au doar predicțiile etapei curente; pe termen lung, peste multe
-// etape, userId== va reveni tot mai multe documente istorice; rămâne
-// totuși un singur query, cost crescător dar liniar, nu un risc de
-// stabilitate acum).
+// ── ROLLBACK URGENT (P0 live, regresie confirmată) — optimizarea
+// anterioară (o singură interogare where userId==) a fost respinsă de
+// regulile Firestore REALE pentru useri normali ("Missing or
+// insufficient permissions"), deși funcționa pentru admin — semn clar
+// că regula permite `get` individual dar restricționează `list`/query
+// diferit. Nu am relaxat regulile (risc de securitate, competiție
+// live) — am revenit STRICT la varianta dovedită funcțională dinainte,
+// citire individuală per meci. Cost: ~20 citiri/deschidere, acceptat
+// explicit ca preț temporar pentru stabilitate. NIMIC altceva din
+// optimizările Firestore (matchesStore, Surprize, Featured Match,
+// football-sync) nu a fost atins — izolat strict la această funcție. ──
 export async function loadUserPredictions(uid, matchIds) {
-  const matchIdSet = new Set(matchIds);
-  const snap = await getDocs(query(collection(db, "predictions"), where("userId", "==", uid)));
   const results = {};
-  snap.docs.forEach((d) => {
-    const data = d.data();
-    if (matchIdSet.has(data.matchId)) results[data.matchId] = data;
-  });
+  await Promise.all(
+    matchIds.map(async (matchId) => {
+      const snap = await getDoc(doc(db, "predictions", `${matchId}_${uid}`));
+      if (snap.exists()) results[matchId] = snap.data();
+    })
+  );
   return results;
 }
 

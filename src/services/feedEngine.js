@@ -294,7 +294,38 @@ export function detectRankChangeEvents(prevState, currentRows, opts = {}) {
   const idPrefix = opts.idPrefix || "rank";
   const scopeLabel = opts.scopeLabel || "";
   const recentVariants = opts.recentVariants || {}; // { [subtype]: Set<index> }
-  if (!prevState) return [];
+
+  // ── PRIMUL LIDER / PRIMII LIDERI — cazul special, cerut explicit —
+  // fără nicio stare anterioară (chiar primul rezultat al competiției
+  // sau al etapei), nu există "schimbare" de raportat în sensul normal,
+  // dar ESTE cea mai importantă știre posibilă: cine conduce acum,
+  // pentru prima dată. Se generează O SINGURĂ dată — starea următoare
+  // se salvează oricum mai jos (la apelant), deci a doua rulare va avea
+  // deja prevState și nu mai intră pe ramura asta niciodată. ──
+  if (!prevState) {
+    if (currentRows.length === 0) return [];
+    const topPoints = currentRows[0].seasonPoints || 0;
+    if (topPoints <= 0) return []; // toată lumea la 0 — nimic de anunțat încă
+    const leaders = currentRows.filter((r) => (r.seasonPoints || 0) === topPoints);
+    const names = leaders.map((r) => r.nickname);
+    const namesJoined = names.length === 1 ? names[0]
+      : names.length === 2 ? `${names[0]} și ${names[1]}`
+      : `${names.slice(0, -1).join(", ")} și ${names[names.length - 1]}`;
+    const title = leaders.length === 1
+      ? `🏆 Avem primul lider${scopeLabel}! ${namesJoined} este primul lider, cu ${topPoints} PCT.`
+      : `🏆 Avem primii lideri${scopeLabel}! ${namesJoined} împart primul loc, cu câte ${topPoints} PCT.`;
+    return [{
+      id: `${idPrefix}_first_leader`, type: TYPE.RANK, subtype: "first_leader",
+      ts: Date.now(), importance: IMPORTANCE.NEW_LEADER, actors: leaders.map((r) => r.uid),
+      metadata: { leaders: leaders.map((r) => ({ uid: r.uid, nickname: r.nickname })), points: topPoints },
+      narrativeKey: `${idPrefix}_first_leader`, version: 2,
+      icon: "up", important: true,
+      title, subtitle: null,
+      category: "clasament", priority: IMPORTANCE.NEW_LEADER, variantIndex: 0,
+      detail: { points: topPoints, leaderUids: leaders.map((r) => r.uid) },
+    }];
+  }
+
   const totalPlayers = currentRows.length;
   const raw = [];
 
@@ -496,20 +527,38 @@ export function buildMatchFinalEvent(match, exactScorers = [], recentVariants = 
         `🎯 O etapă bună pentru clarvăzători: ${exactScorers.length} scoruri exacte la ${sc}.`,
       ], id);
 
-  return {
-    id, type: TYPE.MATCH, subtype: exactScorers.length > 0 ? "final_with_exact" : "final",
-    ts: Date.now(), importance: exactScorers.length > 0 ? IMPORTANCE.MATCH_FINAL_WITH_EXACT : IMPORTANCE.MATCH_FINAL,
-    actors: exactScorers, metadata: { homeTeam: match.homeTeam, awayTeam: match.awayTeam, scoreA: match.realScoreA, scoreB: match.realScoreB, exactScorers },
+  const finalCard = {
+    id, type: TYPE.MATCH, subtype: "final",
+    ts: Date.now(), importance: IMPORTANCE.MATCH_FINAL,
+    actors: [], metadata: { homeTeam: match.homeTeam, awayTeam: match.awayTeam, scoreA: match.realScoreA, scoreB: match.realScoreB },
     narrativeKey: id, version: 2,
-    icon: "whistle", important: exactScorers.length > 0,
-    title: resultLine, subtitle: scorersText, exactScoreVariantIndex: scorersVariantIndex,
-    category: "meciuri", priority: exactScorers.length > 0 ? IMPORTANCE.MATCH_FINAL_WITH_EXACT : IMPORTANCE.MATCH_FINAL,
+    icon: "whistle", important: false,
+    title: `⚽ FINAL: ${resultLine}`, subtitle: null,
+    category: "meciuri", priority: IMPORTANCE.MATCH_FINAL,
     detail: {
       competitionName: match.competitionName, status: match.status,
       kickoffAt: match.kickoffAt?.toMillis ? match.kickoffAt.toMillis() : null,
-      matchId: match.id, exactScorers,
+      matchId: match.id,
     },
   };
+
+  // ── Card SEPARAT pentru pronostic exact — cerut explicit, punctul D:
+  // "Nu combina totul într-un card gigantic". Rezultatul final rămâne
+  // compact, de sine stătător; pronosticul exact e o poveste proprie,
+  // publicată alături, nu în subtitle-ul aceluiași card. ──
+  const exactCard = exactScorers.length === 0 ? null : {
+    id: `${id}_exact`, type: TYPE.MATCH, subtype: "exact_score",
+    ts: Date.now() + 1, // imediat după rezultatul final, nu înainte
+    importance: exactScorers.length <= 2 ? IMPORTANCE.EXACT_SCORE_RARE : IMPORTANCE.EXACT_SCORE,
+    actors: exactScorers, metadata: { matchId: match.id, exactScorers, score: sc },
+    narrativeKey: `${id}_exact`, version: 2,
+    icon: "medal", important: exactScorers.length > 0,
+    title: scorersText, subtitle: null, exactScoreVariantIndex: scorersVariantIndex,
+    category: "meciuri", priority: exactScorers.length <= 2 ? IMPORTANCE.EXACT_SCORE_RARE : IMPORTANCE.EXACT_SCORE,
+    detail: { matchId: match.id, exactScorers },
+  };
+
+  return exactCard ? [finalCard, exactCard] : [finalCard];
 }
 
 // ══════════════════════════════════════════════════════════════════
@@ -681,6 +730,29 @@ export function buildExternalLiveEvent(kind, match, snapshot, extra, internal) {
   const base = { home: match.homeTeam, away: match.awayTeam };
   const id = `live_${snapshot.fixtureId}_${kind}_${extra?.eventId || snapshot.minute || kind}`;
 
+  // ── REPARAT — cauza reală a ordinii greșite (11' apărea DUPĂ 19'/22').
+  // Cardurile foloseau ts: Date.now() — momentul în care football-sync
+  // PROCESEAZĂ evenimentul, nu momentul REAL din meci. Dacă un decalaj
+  // în cron (documentat, poate întârzia ore) face ca mai multe goluri să
+  // fie descoperite ÎN ACEEAȘI rulare, toate primeau Date.now() aproape
+  // identic — ordinea de afișare devenea practic întâmplătoare, nu
+  // cronologia reală a meciului.
+  //
+  // Acum: pentru evenimente cu minut real din meci (gol, cartonaș,
+  // penalty ratat), ts se calculează din ora REALĂ de start a meciului
+  // + minutul evenimentului — un moment de perete stabil, care nu mai
+  // depinde deloc de CÂND a rulat sincronizarea. 11' e mereu înaintea
+  // lui 19', indiferent când a fost procesat fiecare. Pentru meciuri
+  // simultane, aceleași minute reale se compară corect între ele (ora
+  // de kickoff diferă, deci timpul real diferă), nu doar cifra minutului.
+  //
+  // Alte tipuri de carduri (clasament, rezultat final, citate) NU sunt
+  // atinse — acelea reprezintă corect "acum", Date.now() rămâne corect
+  // pentru ele (cerut explicit, punctul K).
+  const kickoffMs = match.kickoffAt?.toMillis ? match.kickoffAt.toMillis() : null;
+  const eventMinute = typeof extra?.minute === "number" ? extra.minute : (typeof snapshot.minute === "number" ? snapshot.minute : null);
+  const ts = (kickoffMs != null && eventMinute != null) ? kickoffMs + eventMinute * 60000 : Date.now();
+
   function withCorrelation(bareTitle, richTitleFn) {
     if (!canCorrelate) return bareTitle;
     return richTitleFn(internal) || bareTitle;
@@ -736,7 +808,7 @@ export function buildExternalLiveEvent(kind, match, snapshot, extra, internal) {
   }
 
   return {
-    id, type: TYPE.MATCH, subtype: `live_${kind.toLowerCase()}`, ts: Date.now(),
+    id, type: TYPE.MATCH, subtype: `live_${kind.toLowerCase()}`, ts,
     importance, actors: [], version: 2, icon, important: kind === "GOAL" || kind === "FULLTIME",
     title, subtitle: null, category: "meciuri", priority: importance,
     detail: { matchId: match.id, fixtureId: snapshot.fixtureId, provider: "api-football" },

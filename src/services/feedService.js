@@ -8,7 +8,7 @@ import {
   buildUpcomingMatchEvent, buildLiveMatchEvent, buildExternalLiveEvent, attachBanter, mergeFeedEvents, TYPE,
   buildCityFactEvent, buildClubFactEvent, buildDailyFillerEvent, buildQuoteEvent, buildSurpriseCreatedEvent, buildSurpriseMatchupEvent,
   buildSurpriseProgressEvent, buildSurpriseResultEvent, buildSurpriseRewardEvent, pick,
-  buildLineupEvent, buildTeamDuelPulseEvent,
+  buildLineupEvent, buildTeamDuelPulseEvent, IMPORTANCE,
 } from "./feedEngine";
 import { canRevealPredictions } from "./matchLockRule";
 // Logică pură, PARTAJATĂ cu api/football-sync.js (sursă unică de
@@ -46,6 +46,48 @@ const MAX_RECENT_VARIANTS_PER_SUBTYPE = 3; // anti-repetiție — nu repeta ULTI
 
 export async function saveFeedEvents(events) {
   await Promise.all(events.map((e) => setDoc(doc(db, "feedEvents", e.id), { ...e }, { merge: true })));
+}
+
+// ══════════════════════════════════════════════════════════════════
+// ȘTIRE MANUALĂ, DIN ADMIN — plasă de siguranță, cerută explicit.
+// Scrie în ACEEAȘI colecție (feedEvents), cu ACEEAȘI formă de document
+// ca evenimentele automate — Home/Feed nu au nevoie de nicio logică
+// nouă ca s-o afișeze, apare exact prin listLiveFeedEvents/
+// getHomeFeedTop, deja existente, ordonată normal după ts.
+//
+// Regulile Firestore NU au fost atinse — folosește exact colecția și
+// mecanismul (Admin scrie/șterge, oricine autentificat citește) deja
+// dovedit funcțional azi, în producție, pentru evenimentele automate.
+// ══════════════════════════════════════════════════════════════════
+const MANUAL_NEWS_TYPES = {
+  clasament: { category: "clasament", icon: "crown", importance: IMPORTANCE.NEW_LEADER, emoji: "🏆" },
+  meci: { category: "meciuri", icon: "whistle", importance: IMPORTANCE.MATCH_FINAL, emoji: "⚽" },
+  pronostic: { category: "meciuri", icon: "medal", importance: IMPORTANCE.EXACT_SCORE_RARE, emoji: "🎯" },
+  breaking: { category: "clasament", icon: "star", importance: IMPORTANCE.NEW_LEADER + 10, emoji: "🔥" },
+  funny: { category: "fun", icon: "fun", importance: IMPORTANCE.FUN, emoji: "😄" },
+  general: { category: "meciuri", icon: "info", importance: 50, emoji: "📰" },
+};
+
+export async function publishManualFeedNews({ title, text, newsType, adminUid }) {
+  const cleanTitle = (title || "").trim();
+  if (!cleanTitle) throw new Error("Titlul e obligatoriu.");
+  const meta = MANUAL_NEWS_TYPES[newsType] || MANUAL_NEWS_TYPES.general;
+  const id = `manual_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+  const event = {
+    id, type: TYPE.FACT, subtype: "manual", ts: Date.now(),
+    importance: meta.importance, actors: [], version: 2,
+    icon: meta.icon, important: meta.importance >= IMPORTANCE.NEW_LEADER,
+    title: `${meta.emoji} ${cleanTitle}`, subtitle: (text || "").trim() || null,
+    category: meta.category, priority: meta.importance,
+    source: "admin", createdBy: adminUid || null, createdAt: serverTimestamp(),
+    detail: { manual: true, newsType: newsType || "general" },
+  };
+  await setDoc(doc(db, "feedEvents", id), event);
+  return event;
+}
+
+export async function deleteManualFeedNews(id) {
+  await deleteDoc(doc(db, "feedEvents", id));
 }
 
 export async function listLiveFeedEvents({ max = 150 } = {}) {
@@ -335,14 +377,17 @@ export async function processFinishedMatches(matches, allGwMatches) {
   const events = [];
   for (const m of matches) {
     const exactScorers = await getExactScorersForMatch(m.id).catch(() => []);
-    let ev = buildMatchFinalEvent(m, exactScorers, recentVariants);
-    if (!ev) continue;
-    if (ev.exactScoreVariantIndex != null) await markVariantUsed("exact_score_single", ev.exactScoreVariantIndex, recentVariants);
+    const built = buildMatchFinalEvent(m, exactScorers, recentVariants);
+    if (!built) continue;
+    const [finalEv, exactEv] = built; // buildMatchFinalEvent întoarce acum [final, exact?] — carduri separate
+    if (exactEv?.exactScoreVariantIndex != null) await markVariantUsed("exact_score_single", exactEv.exactScoreVariantIndex, recentVariants);
+    let ev = finalEv;
     if (exactScorers.length >= 4) {
       ev = attachBanter(ev, recentBanter);
       if (ev.banterKey) usedThisRun.push(ev.banterKey);
     }
     events.push(ev);
+    if (exactEv) events.push(exactEv);
 
     try {
       const [predSnap, mpSnap] = await Promise.all([

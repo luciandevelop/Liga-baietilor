@@ -1,10 +1,9 @@
 import { useEffect, useState } from "react";
 import { doc, onSnapshot } from "firebase/firestore";
 import { db } from "../firebase";
-import { listPredictionsForMatch } from "../services/predictionsService";
-import { getUserPublicProfiles } from "../services/profilesService";
+import { getRevealData } from "../services/revealDataCache";
 import { computeMainScore, computeMatchPoints } from "../services/scoringEngine";
-import { listJokersForMatch, listJokerExtraForMatch } from "../services/adminService";
+import { tierFor, TIER_ORDER } from "../utils/liveTiers";
 import PlayerAvatar from "./PlayerAvatar";
 import ClubLogo from "./ClubLogo";
 import { color, font, radius } from "../matchdayTheme";
@@ -13,7 +12,9 @@ import { color, font, radius } from "../matchdayTheme";
 // Home (👁 pe hero, dacă meciul e LIVE) și din PredictionsScreen (👁 pe
 // un meci live din listă, SAU accordion-ul de meciuri blocate). Nicio
 // logică duplicată — un singur loc care citește predicțiile, calculează
-// stările și le sortează.
+// stările și le sortează. Sursa de date (getRevealData) e ACUM
+// împărțită și cu ecranul LIVE, cu cache în sesiune — a doua deschidere
+// a aceluiași meci, în aceeași sesiune, e gratuită.
 //
 // Date încărcate STRICT la deschidere (lazy) — niciodată la Home sau la
 // lista de meciuri. onSnapshot pe matches/{id} DOAR cât panoul e deschis,
@@ -23,11 +24,7 @@ export default function PredictionsRevealSheet({ match, isFeatured, currentUserI
   const [error, setError] = useState("");
   const [rows, setRows] = useState([]); // { uid, nickname, avatarId, scoreA, scoreB, corners, cards }
   const [liveMatch, setLiveMatch] = useState(match); // se actualizează realtime dacă e LIVE
-  // Cine are Joker/Joker Extra pe ACEST meci — seturi de uid, calculate
-  // din interogări pe etapă, filtrate local la matchId. NU modifică
-  // Jokerul normal (doar citire, funcție deja existentă, neapelată de
-  // nicăieri până acum) — Joker Extra citit inline, aceeași formă de
-  // interogare, nicio funcție nouă adăugată.
+  // Cine are Joker/Joker Extra pe ACEST meci — seturi de uid.
   const [jokerUids, setJokerUids] = useState(new Set());
   const [jokerExtraUids, setJokerExtraUids] = useState(new Set());
 
@@ -36,52 +33,20 @@ export default function PredictionsRevealSheet({ match, isFeatured, currentUserI
     setLoading(true);
     setError("");
 
-    (async () => {
-      try {
-        const preds = await listPredictionsForMatch(match.id);
-        const profiles = await getUserPublicProfiles(preds.map((p) => p.userId));
+    getRevealData(match.id)
+      .then(({ rows: r, jokerUids: ju, jokerExtraUids: jeu }) => {
         if (cancelled) return;
-        setRows(preds.map((p) => ({
-          uid: p.userId,
-          nickname: profiles[p.userId]?.nickname || p.userId,
-          avatarId: profiles[p.userId]?.avatarId ?? null,
-          scoreA: p.scoreA, scoreB: p.scoreB,
-        })));
-      } catch (err) {
+        setRows(r);
+        setJokerUids(ju);
+        setJokerExtraUids(jeu);
+      })
+      .catch((err) => {
         // Cauza cea mai probabilă, dacă apare: meciul nu e de fapt blocat
         // încă — regula Firestore respinge corect interogarea (nu un bug).
         console.error("Eroare la încărcarea pronosticurilor:", err);
         if (!cancelled) setError("Pronosticurile nu sunt încă vizibile pentru acest meci.");
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    })();
-
-    // Cine are Jokerul (normal/Extra) pe acest meci — best-effort, separat
-    // de eroarea de mai sus. Interogare filtrată direct pe matchId (nu
-    // gameweekId) — se potrivește exact cu ce verifică regula Firestore
-    // pentru citirea unui joker de către alt user (isAfterLock pe
-    // matchId), deci se dezvăluie corect PE MĂSURĂ ce fiecare meci se
-    // blochează, nu abia când s-au blocat toate meciurile etapei. Dacă
-    // eșuează oricum (ex. meci nedezvăluit încă), seturile rămân goale —
-    // comportamentul e identic cu "nimeni nu are Joker aici", nu o
-    // eroare vizibilă în plus.
-    (async () => {
-      try {
-        const jokers = await listJokersForMatch(match.id);
-        if (cancelled) return;
-        setJokerUids(new Set(jokers.map((j) => j.userId)));
-      } catch (err) {
-        console.error("Eroare la încărcarea Jokerelor meciului:", err);
-      }
-      try {
-        const jokersExtra = await listJokerExtraForMatch(match.id);
-        if (cancelled) return;
-        setJokerExtraUids(new Set(jokersExtra.map((j) => j.userId)));
-      } catch (err) {
-        console.error("Eroare la încărcarea Jokerelor Extra ale meciului:", err);
-      }
-    })();
+      })
+      .finally(() => { if (!cancelled) setLoading(false); });
 
     return () => { cancelled = true; };
   }, [match.id, match.gameweekId]);
@@ -102,19 +67,9 @@ export default function PredictionsRevealSheet({ match, isFeatured, currentUserI
   const isLive = match.status === "live";
   const isFinished = match.status === "finished";
 
-  // ── Categorizare + sortare — DOAR pentru LIVE. Regula matematică
-  // exactă cerută: poți mai ajunge la scorul exact doar dacă predA>=liveA
-  // ȘI predB>=liveB (golurile nu pot scădea). ──
-  function tierFor(row) {
-    if (!isLive || liveA == null || liveB == null) return null;
-    if (row.scoreA === liveA && row.scoreB === liveB) return "exact";
-    if (row.scoreA >= liveA && row.scoreB >= liveB) return "alive";
-    return "dead";
-  }
-
   const decorated = rows.map((r) => ({
     ...r,
-    tier: tierFor(r),
+    tier: tierFor(r, isLive, liveA, liveB),
     sameAsMine: ownPrediction ? (r.scoreA === ownPrediction.scoreA && r.scoreB === ownPrediction.scoreB) : false,
     hasJoker: jokerUids.has(r.uid),
     hasJokerExtra: jokerExtraUids.has(r.uid),
@@ -124,7 +79,6 @@ export default function PredictionsRevealSheet({ match, isFeatured, currentUserI
     })?.finalMatchPoints ?? 0 : null,
   }));
 
-  const TIER_ORDER = { exact: 0, alive: 1, dead: 2 };
   const sorted = isLive
     ? [...decorated].sort((a, b) => (TIER_ORDER[a.tier] - TIER_ORDER[b.tier]) || a.nickname.localeCompare(b.nickname))
     : isFinished

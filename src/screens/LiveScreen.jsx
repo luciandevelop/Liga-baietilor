@@ -127,7 +127,7 @@ function LiveMatchCard({ match, now, reveal, isFeatured, onOpenFeatured }) {
           style={{ ...s.featuredStrip, cursor: onOpenFeatured ? "pointer" : "default" }}
           onClick={onOpenFeatured}
         >
-          ⭐ Meciul Săptămânii{onOpenFeatured ? " · Vezi meciul →" : ""}
+          ⭐ Meciul Săptămânii{onOpenFeatured ? " · VEZI DETALII →" : ""}
         </div>
       )}
       <div style={s.teamsRow}>

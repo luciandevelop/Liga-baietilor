@@ -535,7 +535,7 @@ export default function WelcomeScreen({ user, profile, isAdmin, onOpenAdmin, onO
                           style={{ ...s.motwBadge, cursor: onOpenFeaturedMatch ? "pointer" : "default" }}
                           onClick={() => onOpenFeaturedMatch?.(heroMatch, gameweek?.id)}
                         >
-                          ⭐ Meciul Săptămânii · Punctaj Dublu{onOpenFeaturedMatch ? " · Vezi meciul →" : ""}
+                          ⭐ Meciul Săptămânii · Punctaj Dublu{onOpenFeaturedMatch ? " · VEZI DETALII →" : ""}
                         </span>
                       )}
                       {heroStatus === "live" && <Pill tone="green">● LIVE{heroMatch.liveMinute != null ? ` · ${heroMatch.liveMinute}'` : ""}</Pill>}

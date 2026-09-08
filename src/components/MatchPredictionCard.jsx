@@ -69,7 +69,7 @@ export default function MatchPredictionCard({
           <span style={s.motwBadgeIcon}>⭐</span>
           <div style={s.motwTextCol}>
             <span style={s.motwTag}>Meci al săptămânii{featuredIndex ? ` · ${featuredIndex} din 3` : ""}</span>
-            <span style={s.motwSub}>Punctaj dublat ×2{onOpenFeatured ? " · Vezi meciul →" : ""}</span>
+            <span style={s.motwSub}>Punctaj dublat ×2{onOpenFeatured ? " · VEZI DETALII →" : ""}</span>
           </div>
         </div>
       ) : (

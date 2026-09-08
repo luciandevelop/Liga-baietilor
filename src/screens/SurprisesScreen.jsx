@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { getCurrentSeason, getCurrentGameweek } from "../services/predictionsService";
 import { getLiveGameweekPoints } from "../services/adminService";
+import { getLastKnownMatches } from "../services/matchesStore";
 import { getUserPublicProfiles } from "../services/profilesService";
 import {
   getWeeklySurprise, getSecretMain, getSecretBonus, getSurpriseResult, getAllSurpriseResults,
@@ -111,7 +112,7 @@ export default function SurprisesScreen({ user, onBack }) {
         // loading/error, separată de valoarea 0 reală — vezi
         // liveScoresStatus, verificat mai jos în randare (gate-ul
         // LiveScoresGate) înainte să ajungă la orice componentă de Duel.
-        getLiveGameweekPoints(gw.id)
+        getLiveGameweekPoints(gw.id, getLastKnownMatches(gw.id))
           .then(({ pointsByUid }) => { setLiveScores(pointsByUid); setLiveScoresStatus("ready"); })
           .catch((err) => {
             console.error("Eroare la încărcarea scorurilor live pentru Surprize (gameweekId=" + gw.id + "):", err);

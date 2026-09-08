@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { getCurrentSeason, getCurrentGameweek, loadUserPredictions, loadUserJoker, loadUserJokerExtra, isMatchLocked } from "../services/predictionsService";
-import { listenMatches, listenLiveGameweekScores, listGameweekScores, getUserSeasonPoints } from "../services/adminService";
+import { listenLiveGameweekScores, listGameweekScores, getUserSeasonPoints } from "../services/adminService";
+import { subscribeToGameweekMatches } from "../services/matchesStore";
 import { getUserPublicProfiles } from "../services/profilesService";
 import { processFinishedMatches, processJokerActivation, processUpcomingMatches, getHomeFeedTop, processSurpriseCreated, processSurpriseMatchup, processSurpriseResult, processExternalMatchDelta, processMatchIntelligence, processDailyFillerIfQuiet, processClubFactsForMatch } from "../services/feedService";
 import { doc, getDoc } from "firebase/firestore";
@@ -141,7 +142,7 @@ export default function WelcomeScreen({ user, profile, isAdmin, onOpenAdmin, onO
       // ca scorul/minutul/evenimentele LIVE să nu mai poată "îngheța" la
       // momentul deschiderii ecranului. BUG P0 reparat aici. ──
       const predictionsLoadedRef = { current: false };
-      unsubMatches = listenMatches(gw.id, (m) => {
+      unsubMatches = subscribeToGameweekMatches(gw.id, (m) => {
         setMatches(m);
 
         const finished = m.filter((x) => x.status === "finished" && x.realScoreA != null && x.realScoreB != null);

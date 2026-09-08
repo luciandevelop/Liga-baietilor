@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { getCurrentSeason, getCurrentGameweek } from "../services/predictionsService";
-import { listenMatches } from "../services/adminService";
+import { subscribeToGameweekMatches } from "../services/matchesStore";
 import { getRevealData } from "../services/revealDataCache";
 import { groupByTier } from "../utils/liveTiers";
 import { getDisplayMatchState } from "../utils/matchStatus";
@@ -44,7 +44,7 @@ export default function LiveScreen({ onBack }) {
       setGameweek(gw);
       setLoadingGw(false);
       if (!gw) return;
-      unsubMatches = listenMatches(gw.id, (list) => { if (!cancelled) setMatches(list); });
+      unsubMatches = subscribeToGameweekMatches(gw.id, (list) => { if (!cancelled) setMatches(list); });
     })();
     return () => { cancelled = true; if (unsubMatches) unsubMatches(); };
   }, []);

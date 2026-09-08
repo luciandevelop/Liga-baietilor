@@ -145,6 +145,7 @@ export default function FeaturedMatchScreen({ match: initialMatch, gameweekId, o
                 {content.h2h.map((r, i) => (
                   <div key={i} style={s.h2hLine}>{r.home} {r.score} {r.away}</div>
                 ))}
+                {content.h2hSummary && <div style={s.h2hSummary}>{content.h2hSummary}</div>}
               </div>
             </Section>
           )}
@@ -232,7 +233,7 @@ const s = {
   pitchCircle: { position: "absolute", left: "50%", top: "50%", width: 38, height: 38, border: "1px solid rgba(255,255,255,0.14)", borderRadius: "50%", transform: "translate(-50%,-50%)" },
   pitchBox: { position: "absolute", left: "32%", right: "32%", top: "4%", height: "11%", border: "1px solid rgba(255,255,255,0.14)", borderTop: "none" },
   jersey: { width: 18, height: 18, clipPath: JERSEY_CLIP, margin: "0 auto 2px" },
-  jerseyName: { fontSize: 7.5, fontWeight: 600, color: "#fff", whiteSpace: "nowrap", fontFamily: font.body },
+  jerseyName: { fontSize: 7.3, fontWeight: 600, color: "#fff", whiteSpace: "normal", lineHeight: 1.15, fontFamily: font.body, maxWidth: 50, textAlign: "center" },
 
   emptyNote: { textAlign: "center", color: color.textFaint, fontSize: 12, padding: "24px 12px", fontFamily: font.body },
 
@@ -243,6 +244,7 @@ const s = {
 
   h2hBox: { background: color.surfaceInset, borderRadius: radius.sm, padding: "8px 10px" },
   h2hLine: { fontSize: 11, color: color.textSecondary, lineHeight: 1.9, fontFamily: font.body },
+  h2hSummary: { fontSize: 10.5, color: color.goldLight, fontWeight: 600, marginTop: 6, fontFamily: font.body },
 
   factCard: { background: color.surfaceInset, borderRadius: radius.sm, padding: "8px 10px", fontSize: 10.5, color: color.textSecondary, borderLeft: `2px solid ${color.gold}`, fontFamily: font.body },
 

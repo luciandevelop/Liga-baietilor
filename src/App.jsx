@@ -6,6 +6,7 @@ import { checkIsAdmin, getPlayerStatus } from "./services/adminService";
 import AuthScreen from "./screens/AuthScreen";
 import WelcomeScreen from "./screens/WelcomeScreen";
 import LiveScreen from "./screens/LiveScreen";
+import FeaturedMatchScreen from "./screens/FeaturedMatchScreen";
 import AdminScreen from "./screens/AdminScreen";
 import PredictionsScreen from "./screens/PredictionsScreen";
 import LeaderboardScreen from "./screens/LeaderboardScreen";
@@ -35,6 +36,21 @@ export default function App() {
   // Meciul-țintă când "Progres etapă" e apăsat — PredictionsScreen derulează
   // automat la el, în loc să deschidă mereu lista de la început.
   const [predictionsTarget, setPredictionsTarget] = useState(null);
+
+  // ── Meciul deschis din ⭐ Meciul Săptămânii — STRICT stare React, NU
+  // trece prin window.history.pushState (obiectul de meci conține un
+  // Timestamp Firestore, nu e serializabil curat) — evită orice risc de
+  // corupere a istoricului. "Înapoi" tot funcționează normal (revine la
+  // orice ecran era înainte), doar reîmprospătarea paginii EXACT pe acest
+  // ecran nu va reconstitui automat meciul (edge-case acceptabil, fără
+  // nicio citire suplimentară necesară pentru asta).
+  const [featuredMatchTarget, setFeaturedMatchTarget] = useState(null);
+  const [featuredMatchGameweekId, setFeaturedMatchGameweekId] = useState(null);
+  function openFeaturedMatch(match, gameweekId) {
+    setFeaturedMatchTarget(match);
+    setFeaturedMatchGameweekId(gameweekId || null);
+    navigateTo("featuredMatch");
+  }
 
   // ── Istoric real de navigare, pe window.history — NU un router nou,
   // doar API-ul nativ. O singură sursă de adevăr: butonul "Înapoi" din UI
@@ -250,7 +266,7 @@ export default function App() {
   if (view === "predictions") {
     return (
       <>
-        <PredictionsScreen user={user} isAdmin={isAdmin} onBack={goBack} scrollToMatchId={predictionsTarget} />
+        <PredictionsScreen user={user} isAdmin={isAdmin} onBack={goBack} scrollToMatchId={predictionsTarget} onOpenFeaturedMatch={openFeaturedMatch} />
         <BottomTabBar active="pronosticuri" onChange={handleBottomTabGlobal} />
       </>
     );
@@ -269,7 +285,21 @@ export default function App() {
   // LIVE se accesează din bara de SUS (nu are un tab propriu jos, iar
   // Clasamentul rămâne neschimbat, tot în bara de jos).
   if (view === "live") {
-    return <LiveScreen onBack={goBack} />;
+    return <LiveScreen onBack={goBack} onOpenFeaturedMatch={openFeaturedMatch} />;
+  }
+
+  // ⭐ Meciul Săptămânii — o singură pagină, accesibilă din Home/Urmează,
+  // hero-ul din Home, Pronosticuri și LIVE. Fără BottomTabBar (același
+  // tipar ca "live"/"feed"/"rules" — ecran secundar, nu o destinație de
+  // navigare de bază).
+  if (view === "featuredMatch" && featuredMatchTarget) {
+    return (
+      <FeaturedMatchScreen
+        match={featuredMatchTarget}
+        gameweekId={featuredMatchGameweekId}
+        onBack={goBack}
+      />
+    );
   }
 
   if (view === "specials") {
@@ -322,6 +352,7 @@ export default function App() {
         onOpenPredictions={(matchId) => navigateTo("predictions", { predictionsTarget: matchId || null })}
         onOpenLeaderboard={() => navigateTo("leaderboard")}
         onOpenLive={() => navigateTo("live")}
+        onOpenFeaturedMatch={openFeaturedMatch}
         onOpenSpecials={() => navigateTo("specials")}
         onOpenFeed={() => navigateTo("feed")}
         onOpenSurprises={() => navigateTo("surprises")}

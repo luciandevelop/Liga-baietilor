@@ -45,7 +45,8 @@ import PlayerRankRow from "../components/PlayerRankRow";
 import EmptyState from "../components/EmptyState";
 import {
   listRecentEventsForAdmin, listAdminFunItems, addFunItem, deleteFunItem, deleteAllLiveMatchEvents,
-  regenerateCurrentGameweekFeed, processLiveRankChangesCapped, processTeamDuelPulse,
+  regenerateCurrentGameweekFeed, processLiveRankChangesCapped, processTeamDuelPulse, processRankChanges,
+  publishManualFeedNews, deleteManualFeedNews,
 } from "../services/feedService";
 import { EDITORIAL_ARTICLES } from "../feedContent/editorialContent";
 import LiveEventPanel from "../components/LiveEventPanel";
@@ -449,6 +450,51 @@ export default function AdminScreen({ onBack }) {
   const [regeneratingFeed, setRegeneratingFeed] = useState(false);
   const [regenerateMessage, setRegenerateMessage] = useState("");
 
+  // ── Știre manuală în Feed — plasă de siguranță pentru Admin. Lista
+  // de știri manuale se derivă direct din feedEvents deja încărcate
+  // (subtype "manual") — NICIO interogare Firestore separată. ──
+  const [manualNewsTitle, setManualNewsTitle] = useState("");
+  const [manualNewsText, setManualNewsText] = useState("");
+  const [manualNewsType, setManualNewsType] = useState("clasament");
+  const [manualNewsPublishing, setManualNewsPublishing] = useState(false);
+  const [manualNewsMessage, setManualNewsMessage] = useState("");
+  const [manualNewsDeletingId, setManualNewsDeletingId] = useState(null);
+  const manualNewsList = feedEvents.filter((e) => e.subtype === "manual");
+
+  async function handlePublishManualNews() {
+    if (!manualNewsTitle.trim()) { setManualNewsMessage("Titlul e obligatoriu."); return; }
+    setManualNewsPublishing(true);
+    setManualNewsMessage("");
+    try {
+      await publishManualFeedNews({
+        title: manualNewsTitle, text: manualNewsText, newsType: manualNewsType, adminUid: user.uid,
+      });
+      setManualNewsMessage("✅ Publicată în Feed.");
+      setManualNewsTitle("");
+      setManualNewsText("");
+      loadFeedAdminData();
+    } catch (err) {
+      console.error("Eroare la publicarea știrii manuale:", err);
+      setManualNewsMessage("❌ Eroare la publicare: " + (err.message || String(err)));
+    } finally {
+      setManualNewsPublishing(false);
+    }
+  }
+
+  async function handleDeleteManualNews(id, title) {
+    if (!window.confirm(`Ștergi definitiv știrea "${title}"? Nu se poate anula.`)) return;
+    setManualNewsDeletingId(id);
+    try {
+      await deleteManualFeedNews(id);
+      loadFeedAdminData();
+    } catch (err) {
+      console.error("Eroare la ștergerea știrii manuale:", err);
+      window.alert("Eroare la ștergere: " + (err.message || String(err)));
+    } finally {
+      setManualNewsDeletingId(null);
+    }
+  }
+
   async function handleCleanupLiveEvents() {
     setCleaningLiveEvents(true);
     setCleanupMessage("");
@@ -551,6 +597,11 @@ export default function AdminScreen({ onBack }) {
 
   useEffect(() => {
     if (tab !== "feed") return;
+    loadFeedAdminData();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab]);
+
+  function loadFeedAdminData() {
     setFeedLoading(true);
     Promise.all([listRecentEventsForAdmin(), listAdminFunItems()])
       .then(([events, adminFun]) => {
@@ -559,7 +610,7 @@ export default function AdminScreen({ onBack }) {
       })
       .catch((err) => console.error("Eroare la încărcarea Feed-ului (admin):", err))
       .finally(() => setFeedLoading(false));
-  }, [tab]);
+  }
 
   async function handleAddFun() {
     if (!newFunLabel.trim() || !newFunText.trim()) return;
@@ -889,8 +940,15 @@ export default function AdminScreen({ onBack }) {
         // eliminat complet; acesta rămâne SINGURA sursă acum, rulează o
         // singură dată per validare, indiferent de câți useri sunt
         // conectați — mult mai ieftin, verificat.
-        processLiveRankChangesCapped(selectedGameweekId).catch((err) => console.error("Eroare la Feed (clasament):", err));
+        processLiveRankChangesCapped(selectedGameweekId).catch((err) => console.error("Eroare la Feed (clasament etapei):", err));
         processTeamDuelPulse(selectedGameweekId).catch((err) => console.error("Eroare la Feed (Duel de Echipe):", err));
+        // ── REPARAT — clasamentul GENERAL (Play League, seasonPoints+
+        // specialPoints) nu avea NICIUN apelant de când am optimizat
+        // citirile Firestore — de-asta n-a apărut nicio știre de
+        // clasament după primul meci real. Cost mic, o singură rulare
+        // per validare (1 citire clasament + 1 tranzacție mică),
+        // exact ca pentru etapa de mai sus — nu un mecanism nou. ──
+        processRankChanges().catch((err) => console.error("Eroare la Feed (clasament general):", err));
       }
 
       if (result.incompleteMatchIds.length > 0) {
@@ -2239,6 +2297,49 @@ export default function AdminScreen({ onBack }) {
                       </div>
                     ))}
                   </div>
+                </SectionCard>
+
+                <SectionCard title="📰 Adaugă știre în Feed">
+                  <p style={s.hint}>Plasă de siguranță — dacă generatorul automat nu prinde ceva important, publici tu direct.</p>
+                  <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 8 }}>
+                    {[
+                      { key: "clasament", label: "🏆 Clasament" }, { key: "meci", label: "⚽ Meci" },
+                      { key: "pronostic", label: "🎯 Pronostic" }, { key: "breaking", label: "🔥 Breaking" },
+                      { key: "funny", label: "😄 Funny" }, { key: "general", label: "📰 General" },
+                    ].map((t) => (
+                      <button
+                        key={t.key} type="button" onClick={() => setManualNewsType(t.key)}
+                        style={{ ...s.smallBtn, ...(manualNewsType === t.key ? { background: color.gold, color: "#12141C", borderColor: color.gold } : {}) }}
+                      >
+                        {t.label}
+                      </button>
+                    ))}
+                  </div>
+                  <input style={s.input} placeholder="Titlu (obligatoriu)" value={manualNewsTitle} onChange={(e) => setManualNewsTitle(e.target.value)} />
+                  <textarea style={s.textarea} rows={2} placeholder="Text (opțional)" value={manualNewsText} onChange={(e) => setManualNewsText(e.target.value)} />
+                  <button type="button" style={s.btn} disabled={manualNewsPublishing} onClick={handlePublishManualNews}>
+                    {manualNewsPublishing ? "Se publică…" : "Publică în Feed"}
+                  </button>
+                  {manualNewsMessage && <p style={s.hint}>{manualNewsMessage}</p>}
+
+                  {manualNewsList.length > 0 && (
+                    <div style={{ ...s.feedAdminList, marginTop: 10 }}>
+                      {manualNewsList.map((n) => (
+                        <div key={n.id} style={s.feedAdminRowBetween}>
+                          <div>
+                            <div style={s.feedAdminTitle}>{n.title}</div>
+                            <div style={s.feedAdminMeta}>{new Date(n.ts).toLocaleString("ro-RO")} · manual</div>
+                          </div>
+                          <button
+                            type="button" style={s.smallBtn} disabled={manualNewsDeletingId === n.id}
+                            onClick={() => handleDeleteManualNews(n.id, n.title)}
+                          >
+                            {manualNewsDeletingId === n.id ? "…" : "Șterge"}
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </SectionCard>
 
                 <SectionCard title="Bancă de conținut editorial (context)">

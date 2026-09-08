@@ -20,7 +20,7 @@ function formatCountdown(ms) {
 // "Se blochează în" + countdown ÎN LOC de oră.
 // `isFeatured` — meci din featuredMatchIds (Meciul Săptămânii/Punctaj
 // Dublu) — tratament vizual auriu distinct, imposibil de ratat.
-export default function MatchRailCard({ match, now, emphasizeCountdown = false, isFeatured = false, featuredIndex, onClick }) {
+export default function MatchRailCard({ match, now, emphasizeCountdown = false, isFeatured = false, featuredIndex, onClick, onOpenFeatured }) {
   const reduced = usePrefersReducedMotion();
   const display = getDisplayMatchState(match, now);
   const status = display.status;
@@ -54,11 +54,19 @@ export default function MatchRailCard({ match, now, emphasizeCountdown = false, 
       }}
     >
       {isFeatured ? (
-        <div style={s.motwStrip}>
+        // ── Doar insigna e apăsabilă spre pagina Meciului Săptămânii —
+        // restul cardului păstrează EXACT comportamentul de navigare
+        // existent (onClick de mai sus, către Pronosticuri), neatins.
+        // stopPropagation ca tap-ul pe insignă să NU declanșeze și
+        // onClick-ul butonului părinte. ──
+        <div
+          style={{ ...s.motwStrip, cursor: onOpenFeatured ? "pointer" : "default" }}
+          onClick={(e) => { if (onOpenFeatured) { e.stopPropagation(); onOpenFeatured(); } }}
+        >
           <span style={s.motwBadgeIcon}>⭐</span>
           <div style={s.motwTextCol}>
             <span style={s.motwTag}>Meci al săptămânii{featuredIndex ? ` · ${featuredIndex} din 3` : ""}</span>
-            <span style={s.motwSub}>Punctaj dublat ×2</span>
+            <span style={s.motwSub}>Punctaj dublat ×2{onOpenFeatured ? " · Vezi meciul →" : ""}</span>
           </div>
         </div>
       ) : (

@@ -7,7 +7,7 @@ import { doc, getDoc } from "firebase/firestore";
 import { db } from "../firebase";
 import useNow from "../hooks/useNow";
 import { usePrefersReducedMotion } from "../motion";
-import { getMatchStatus } from "../utils/matchStatus";
+import { getMatchStatus, getDisplayMatchState } from "../utils/matchStatus";
 import { color, font, radius, shadow } from "../matchdayTheme";
 import CinematicBackdrop from "../components/CinematicBackdrop";
 import AppHeader from "../components/AppHeader";
@@ -42,7 +42,7 @@ const CTA_LABEL = {
 // Home — Sprint 1 "Home Premium". Aceeași logică de date ca înainte
 // (niciun apel nou către Firestore) — doar experiența Home + navigarea
 // s-au schimbat, cum a fost cerut explicit.
-export default function WelcomeScreen({ user, profile, isAdmin, onOpenAdmin, onOpenPredictions, onOpenLeaderboard, onOpenSpecials, onOpenFeed, onOpenSurprises, onOpenProfile }) {
+export default function WelcomeScreen({ user, profile, isAdmin, onOpenAdmin, onOpenPredictions, onOpenLeaderboard, onOpenLive, onOpenSpecials, onOpenFeed, onOpenSurprises, onOpenProfile }) {
   const now = useNow(1000);
   const reduced = usePrefersReducedMotion();
 
@@ -472,7 +472,7 @@ export default function WelcomeScreen({ user, profile, isAdmin, onOpenAdmin, onO
 
   function handleTopTab(id) {
     if (id === "matchday") return;
-    if (id === "clasament") return onOpenLeaderboard();
+    if (id === "live") return onOpenLive();
     if (id === "profil") return onOpenProfile();
   }
 
@@ -513,7 +513,7 @@ export default function WelcomeScreen({ user, profile, isAdmin, onOpenAdmin, onO
           onAvatarClick={onOpenProfile}
           onBellClick={() => setNotifOpen(true)}
         />
-        <TopTabNav active="matchday" onChange={handleTopTab} />
+        <TopTabNav active="matchday" onChange={handleTopTab} hasLiveMatch={matches.some((m) => getDisplayMatchState(m, now).status === "live")} />
 
         {toast && <div style={s.toast}>{toast}</div>}
 

@@ -43,7 +43,7 @@ const CTA_LABEL = {
 // Home — Sprint 1 "Home Premium". Aceeași logică de date ca înainte
 // (niciun apel nou către Firestore) — doar experiența Home + navigarea
 // s-au schimbat, cum a fost cerut explicit.
-export default function WelcomeScreen({ user, profile, isAdmin, onOpenAdmin, onOpenPredictions, onOpenLeaderboard, onOpenLive, onOpenSpecials, onOpenFeed, onOpenSurprises, onOpenProfile }) {
+export default function WelcomeScreen({ user, profile, isAdmin, onOpenAdmin, onOpenPredictions, onOpenLeaderboard, onOpenLive, onOpenFeaturedMatch, onOpenSpecials, onOpenFeed, onOpenSurprises, onOpenProfile }) {
   const now = useNow(1000);
   const reduced = usePrefersReducedMotion();
 
@@ -530,7 +530,14 @@ export default function WelcomeScreen({ user, profile, isAdmin, onOpenAdmin, onO
                 <div style={s.heroCardBody}>
                   {(featuredMatch && heroMatch === featuredMatch) || heroStatus !== "scheduled" ? (
                     <div style={{ display: "flex", justifyContent: "center", gap: 6, marginBottom: 10, flexWrap: "wrap" }}>
-                      {featuredMatch && heroMatch === featuredMatch && <span style={s.motwBadge}>⭐ Meciul Săptămânii · Punctaj Dublu</span>}
+                      {featuredMatch && heroMatch === featuredMatch && (
+                        <span
+                          style={{ ...s.motwBadge, cursor: onOpenFeaturedMatch ? "pointer" : "default" }}
+                          onClick={() => onOpenFeaturedMatch?.(heroMatch, gameweek?.id)}
+                        >
+                          ⭐ Meciul Săptămânii · Punctaj Dublu{onOpenFeaturedMatch ? " · Vezi meciul →" : ""}
+                        </span>
+                      )}
                       {heroStatus === "live" && <Pill tone="green">● LIVE{heroMatch.liveMinute != null ? ` · ${heroMatch.liveMinute}'` : ""}</Pill>}
                       {heroStatus === "paused" && <Pill tone="gold">Pauză</Pill>}
                       {heroStatus === "finished" && <Pill tone="gold">Final</Pill>}
@@ -698,6 +705,7 @@ export default function WelcomeScreen({ user, profile, isAdmin, onOpenAdmin, onO
                     isFeatured={featuredIds.includes(m.id)}
                     featuredIndex={featuredIds.includes(m.id) ? featuredIds.indexOf(m.id) + 1 : null}
                     onClick={() => onOpenPredictions(m.id)}
+                    onOpenFeatured={featuredIds.includes(m.id) ? () => onOpenFeaturedMatch?.(m, gameweek?.id) : undefined}
                   />
                 ))}
               </div>

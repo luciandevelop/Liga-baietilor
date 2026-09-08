@@ -25,7 +25,7 @@ import { color, font, radius } from "../matchdayTheme";
 // Predicțiile fiecărui meci live vin din getRevealData — ACELAȘI cache
 // în memorie folosit și de "ochi" — a doua vizită la LIVE, în aceeași
 // sesiune, pentru un meci deja văzut, nu mai citește nimic din Firestore.
-export default function LiveScreen({ onBack }) {
+export default function LiveScreen({ onBack, onOpenFeaturedMatch }) {
   const now = useNow(30000);
   const [gameweek, setGameweek] = useState(null);
   const [matches, setMatches] = useState([]);
@@ -88,7 +88,14 @@ export default function LiveScreen({ onBack }) {
         {!loadingGw && liveMatches.length > 0 && (
           <div style={s.list}>
             {liveMatches.map((m) => (
-              <LiveMatchCard key={m.id} match={m} now={now} reveal={revealByMatch[m.id]} />
+              <LiveMatchCard
+                key={m.id}
+                match={m}
+                now={now}
+                reveal={revealByMatch[m.id]}
+                isFeatured={(gameweek?.featuredMatchIds || []).includes(m.id)}
+                onOpenFeatured={onOpenFeaturedMatch ? () => onOpenFeaturedMatch(m, gameweek?.id) : undefined}
+              />
             ))}
           </div>
         )}
@@ -97,7 +104,7 @@ export default function LiveScreen({ onBack }) {
   );
 }
 
-function LiveMatchCard({ match, now, reveal }) {
+function LiveMatchCard({ match, now, reveal, isFeatured, onOpenFeatured }) {
   const display = getDisplayMatchState(match, now);
   const liveA = display.scoreA;
   const liveB = display.scoreB;
@@ -115,6 +122,14 @@ function LiveMatchCard({ match, now, reveal }) {
         <span style={s.competition}>{match.competitionName || "Meci"}</span>
         <span style={s.minute}>● {minuteLabel}</span>
       </div>
+      {isFeatured && (
+        <div
+          style={{ ...s.featuredStrip, cursor: onOpenFeatured ? "pointer" : "default" }}
+          onClick={onOpenFeatured}
+        >
+          ⭐ Meciul Săptămânii{onOpenFeatured ? " · Vezi meciul →" : ""}
+        </div>
+      )}
       <div style={s.teamsRow}>
         <ClubLogo teamName={match.homeTeam} size={22} />
         <span style={s.scoreText}>
@@ -212,6 +227,11 @@ const s = {
   cardHead: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 },
   competition: { color: color.textFaint, fontSize: 10, fontWeight: 700, letterSpacing: "0.05em", textTransform: "uppercase", fontFamily: font.body },
   minute: { color: "#E24B4A", fontSize: 11, fontWeight: 700, fontFamily: font.body },
+  featuredStrip: {
+    background: "rgba(212,175,55,0.12)", border: `1px solid ${color.goldBorder}`, borderRadius: radius.sm,
+    padding: "5px 8px", fontSize: 10, fontWeight: 700, color: color.goldLight, textAlign: "center",
+    marginBottom: 8, fontFamily: font.body,
+  },
 
   teamsRow: { display: "flex", alignItems: "center", justifyContent: "center", gap: 8, marginBottom: 6 },
   scoreText: { color: color.textPrimary, fontSize: 14.5, fontWeight: 700, fontFamily: font.display, textAlign: "center" },

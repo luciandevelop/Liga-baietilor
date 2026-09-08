@@ -20,7 +20,7 @@ import PredictionsRevealSheet from "../components/PredictionsRevealSheet";
 import { color, font, radius } from "../matchdayTheme";
 import useNow from "../hooks/useNow";
 
-export default function PredictionsScreen({ user, isAdmin, onBack, scrollToMatchId }) {
+export default function PredictionsScreen({ user, isAdmin, onBack, scrollToMatchId, onOpenFeaturedMatch }) {
   // Re-render la fiecare 30s — face ca isMatchLocked(m) să reflecte mereu
   // ora reală curentă, fără refresh manual. Nu e sursa de securitate
   // (aceea rămâne firestore.rules), doar sincronizează UI-ul cu ea.
@@ -410,6 +410,7 @@ export default function PredictionsScreen({ user, isAdmin, onBack, scrollToMatch
                       locked={locked}
                       isFeatured={isFeatured}
                       featuredIndex={featuredIndex}
+                      onOpenFeatured={isFeatured ? () => onOpenFeaturedMatch?.(m, gameweek?.id) : undefined}
                       isJoker={isJoker}
                       onToggleJoker={() => (isJoker ? handleRemoveJoker() : handleSetJoker(m))}
                       jokerDisabled={jokerDisabled}

@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
-import { doc, onSnapshot } from "firebase/firestore";
+import { doc, onSnapshot, collection, query, where, getDocs } from "firebase/firestore";
 import { db } from "../firebase";
 import { getRevealData } from "../services/revealDataCache";
-import { computeMainScore, computeMatchPoints } from "../services/scoringEngine";
+import { computeMainScore } from "../services/scoringEngine";
 import { tierFor, TIER_ORDER } from "../utils/liveTiers";
 import PlayerAvatar from "./PlayerAvatar";
 import ClubLogo from "./ClubLogo";
@@ -23,6 +23,12 @@ export default function PredictionsRevealSheet({ match, isFeatured, currentUserI
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [rows, setRows] = useState([]); // { uid, nickname, avatarId, scoreA, scoreB, corners, cards }
+  // ── Totalul REAL de puncte per jucător, pentru meciul acesta — citit
+  // din matchPoints, NU recalculat în UI. matchPoints.points e valoarea
+  // deja calculată de motorul de scoring existent, incluzând scor +
+  // cornere + cartonașe + efectul Joker — sursa de adevăr, nu o
+  // aproximare locală. ──
+  const [matchPointsByUid, setMatchPointsByUid] = useState({});
   const [liveMatch, setLiveMatch] = useState(match); // se actualizează realtime dacă e LIVE
   // Cine are Joker/Joker Extra pe ACEST meci — seturi de uid.
   const [jokerUids, setJokerUids] = useState(new Set());
@@ -51,6 +57,29 @@ export default function PredictionsRevealSheet({ match, isFeatured, currentUserI
     return () => { cancelled = true; };
   }, [match.id, match.gameweekId]);
 
+  // ── Totalul real per jucător — citit STRICT când meciul e Final
+  // (înainte de asta, matchPoints nici nu are cum să existe). O singură
+  // interogare, filtrată pe matchId (~18 documente, câți jucători au
+  // predicții la acest meci) — deschidere de panou, nu live/repetat. ──
+  useEffect(() => {
+    if (match.status !== "finished") { setMatchPointsByUid({}); return; }
+    let cancelled = false;
+    getDocs(query(collection(db, "matchPoints"), where("matchId", "==", match.id)))
+      .then((snap) => {
+        if (cancelled) return;
+        const map = {};
+        snap.docs.forEach((d) => {
+          const data = d.data();
+          map[data.uid] = data.points || 0;
+        });
+        setMatchPointsByUid(map);
+      })
+      .catch((err) => {
+        console.error("Eroare la încărcarea punctajului real al meciului:", err);
+      });
+    return () => { cancelled = true; };
+  }, [match.id, match.status]);
+
   // Realtime STRICT cât panoul e deschis — doar pentru meciuri LIVE (un
   // meci FINISHED nu-și mai schimbă scorul; SCHEDULED n-are sens aici).
   useEffect(() => {
@@ -74,9 +103,13 @@ export default function PredictionsRevealSheet({ match, isFeatured, currentUserI
     hasJoker: jokerUids.has(r.uid),
     hasJokerExtra: jokerExtraUids.has(r.uid),
     finishedResult: isFinished ? computeMainScore(r.scoreA, r.scoreB, liveA, liveB) : null,
-    finishedPoints: isFinished ? computeMatchPoints({
-      prediction: { scoreA: r.scoreA, scoreB: r.scoreB }, match: liveMatch, isFeatured, isJoker: false,
-    })?.finalMatchPoints ?? 0 : null,
+    // ── REPARAT — folosea computeMatchPoints() recalculat local, cu doar
+    // scoreA/scoreB (fără cornere/cartonașe) și isJoker hardcodat false —
+    // arăta doar componenta de scor, niciodată totalul real. Acum: citit
+    // direct din matchPoints.points (matchPointsByUid, încărcat mai sus),
+    // exact valoarea calculată de motorul de scoring existent — scor +
+    // cornere + cartonașe + Joker, fără nicio recalculare în UI. ──
+    finishedPoints: isFinished ? (matchPointsByUid[r.uid] ?? 0) : null,
   }));
 
   const sorted = isLive

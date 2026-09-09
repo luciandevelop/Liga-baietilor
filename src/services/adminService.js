@@ -1301,31 +1301,41 @@ export async function getPlayerCardStats(uid, seasonId, etapaGameweekId) {
   const previousGw = etapaIdx > 0 ? seasonGwsSorted[etapaIdx - 1] : null;
   const previousScore = previousGw ? allScores.find((s) => s.gameweekId === previousGw.id) : null;
 
-  // Statistici agregate — pe toată istoria disponibilă a userului (toate
-  // gameweekScores, orice sezon), consecvent cu "General" ca sferă cea
-  // mai largă. Calculate PUR din valori deja existente (scorePoints /
-  // rankingBonus) — nicio recalculare a punctajului.
+  function matchOutcome(scoreA, scoreB) {
+    if (scoreA > scoreB) return "1";
+    if (scoreA < scoreB) return "2";
+    return "X";
+  }
+  function isGuessedOutcome(m) {
+    if (!m.prediction || !m.real) return false;
+    if (m.prediction.scoreA == null || m.prediction.scoreB == null) return false;
+    if (m.real.scoreA == null || m.real.scoreB == null) return false;
+    return matchOutcome(m.prediction.scoreA, m.prediction.scoreB) === matchOutcome(m.real.scoreA, m.real.scoreB);
+  }
+
+  // Istoricul deja PERSISTAT (toate gameweekScores ale userului, orice
+  // etapă/sezon finalizat vreodată) — baza statisticilor ALL-TIME. Se
+  // combină mai jos, DUPĂ ce etapaMatches e rezolvat, cu progresul LIVE
+  // al etapei curente — vezi acolo motivul exact pentru care nu se
+  // dublează nimic.
   const allBreakdownEntries = allScores.flatMap((s) => Object.values(s.breakdown || {}));
-  const scoredEntries = allBreakdownEntries.filter((m) => m.status === "scored");
-  const exactScores = scoredEntries.filter((m) => m.scorePoints === 120).length;
-  const correctPct = scoredEntries.length
-    ? Math.round((scoredEntries.filter((m) => m.scorePoints >= 50).length / scoredEntries.length) * 100)
-    : 0;
-  const noPointsCount = scoredEntries.filter((m) => m.finalMatchPoints === 0).length;
+
+  // Bonusurile (Duel/Surprize) — STRICT din istoricul persistat, NICIODATĂ
+  // anticipate pentru etapa curentă live (se acordă doar la finalizare,
+  // pe baza clasamentului final, care nu există încă). Dacă userul are
+  // deja bonusuri din etape finalizate anterior, rămân vizibile normal —
+  // nu se resetează la 0 doar pentru că o altă etapă e acum în desfășurare.
   const bonusWinsCount = allScores.filter((s) => (s.rankingBonus || 0) > 0).length;
 
-  // Puncte Speciale — categorie EXTENSIBILĂ, construită ca sumă de surse
-  // numite. Azi doar bonusul de poziție are valoare reală; dueluri/zaruri/
-  // misiuni sunt termeni pregătiți la 0, gata să primească o valoare reală
-  // când acele mecanici există — fără să schimbăm cardul sau formula
-  // vizibilă din afara acestei funcții.
-  const specialPointsBreakdown = {
-    bonus: allScores.reduce((sum, s) => sum + (s.rankingBonus || 0), 0),
-    duels: 0,
-    dice: 0,
-    missions: 0,
-  };
-  const specialPoints = Object.values(specialPointsBreakdown).reduce((a, b) => a + b, 0);
+  // ── REPARAT (verificare explicită cerută) — "Puncte speciale" folosea
+  // GREȘIT rankingBonus (bonusul de poziție Duel/Surprize) ca sursă,
+  // exact aceeași sursă ca "Bonusuri câștigate" — cele două statistici
+  // arătau, mascat, ACELAȘI număr sub etichete diferite. Sursa CORECTĂ
+  // pentru Specialele ediției (predicții pe termen lung, ex. câștigătoarea
+  // Champions League) e users.specialPoints — deja citit mai sus
+  // (userSnap), zero citire nouă. Statistică ALL-TIME a ediției, identică
+  // indiferent din ce scope (Etapă/Sezon/General) e deschis cardul. ──
+  const specialPoints = userSnap.exists() ? (userSnap.data().specialPoints || 0) : 0;
 
   // Meciurile de arătat sub card — DIN etapa cerută, dacă userul ăsta are
   // ceva acolo. Dacă nu (nu a jucat etapa curentă, sau etapa cerută nu
@@ -1369,6 +1379,32 @@ export async function getPlayerCardStats(uid, seasonId, etapaGameweekId) {
   }
   const etapaMatches = matchesSource ? Object.values(matchesSource.breakdown || {}) : [];
 
+  // ── REGULA FINALĂ (clarificată explicit) — statisticile de sub
+  // punctaj sunt ALL-TIME ÎNTOTDEAUNA, identice indiferent din ce scope
+  // (Etapă/Sezon/General) e deschis cardul. "ALL-TIME" = istoricul deja
+  // persistat (allBreakdownEntries) + progresul REAL din etapa curentă,
+  // DACĂ e încă live.
+  //
+  // Fără dublare: adăugăm etapaMatches la istoric DOAR când etapa cerută
+  // chiar NU are încă document persistat (`!etapaScore`) ȘI am folosit
+  // efectiv calea live (`liveEtapaPoints !== null`, exact aceeași
+  // condiție care mai jos determină `etapaPointsIsLive`). Dacă etapa
+  // cerută e deja finalizată, `etapaMatches` provine din etapaScore.breakdown
+  // — deja inclus o dată în allScores/allBreakdownEntries — a-l adăuga
+  // din nou ar dubla. Dacă am căzut pe fallback-ul istoric (altă etapă,
+  // deja finalizată), la fel — deja inclus, nu se adaugă din nou.
+  const shouldIncludeLiveEtapa = !etapaScore && liveEtapaPoints !== null;
+  const combinedBreakdownEntries = shouldIncludeLiveEtapa
+    ? allBreakdownEntries.concat(etapaMatches)
+    : allBreakdownEntries;
+  const scoredEntries = combinedBreakdownEntries.filter((m) => m.status === "scored");
+  const exactScores = scoredEntries.filter((m) => m.scorePoints === 120).length;
+  const guessedResultsCount = scoredEntries.filter(isGuessedOutcome).length;
+  const correctPct = scoredEntries.length
+    ? Math.round((scoredEntries.filter((m) => m.scorePoints >= 50).length / scoredEntries.length) * 100)
+    : 0;
+  const noPointsCount = scoredEntries.filter((m) => m.finalMatchPoints === 0).length;
+
   // Seria "Icon" e rezervată STRICT locului #1 din General — niciodată
   // din rangul contextual (Etapă/Sezon), ca să nu se schimbe seria unui
   // card doar pentru că a fost deschis din alt clasament. O singură
@@ -1399,6 +1435,7 @@ export async function getPlayerCardStats(uid, seasonId, etapaGameweekId) {
     seasonPoints,
     generalPoints,
     exactScores,
+    guessedResultsCount,
     correctPct,
     bonusWinsCount,
     noPointsCount,

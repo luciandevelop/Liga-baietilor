@@ -143,7 +143,11 @@ export default function FeaturedMatchScreen({ match: initialMatch, gameweekId, o
             <Section title="⚔️ ÎNTÂLNIRI DIRECTE">
               <div style={s.h2hBox}>
                 {content.h2h.map((r, i) => (
-                  <div key={i} style={s.h2hLine}>{r.home} {r.score} {r.away}</div>
+                  <div key={i} style={s.h2hLine}>
+                    {r.date && <span style={s.h2hDate}>{r.date} · </span>}
+                    {r.home} {r.score} {r.away}
+                    {r.note && <span style={s.h2hNote}> ({r.note})</span>}
+                  </div>
                 ))}
                 {content.h2hSummary && <div style={s.h2hSummary}>{content.h2hSummary}</div>}
               </div>
@@ -244,6 +248,8 @@ const s = {
 
   h2hBox: { background: color.surfaceInset, borderRadius: radius.sm, padding: "8px 10px" },
   h2hLine: { fontSize: 11, color: color.textSecondary, lineHeight: 1.9, fontFamily: font.body },
+  h2hDate: { color: color.textFaint, fontSize: 10, fontWeight: 600 },
+  h2hNote: { color: color.textFaint, fontSize: 10, fontStyle: "italic" },
   h2hSummary: { fontSize: 10.5, color: color.goldLight, fontWeight: 600, marginTop: 6, fontFamily: font.body },
 
   factCard: { background: color.surfaceInset, borderRadius: radius.sm, padding: "8px 10px", fontSize: 10.5, color: color.textSecondary, borderLeft: `2px solid ${color.gold}`, fontFamily: font.body },

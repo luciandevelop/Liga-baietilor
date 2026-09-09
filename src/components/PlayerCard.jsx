@@ -242,6 +242,7 @@ export default function PlayerCard({ uid, nickname, avatarId, rank, scope = "eta
 
                 <div style={s.realStatsList}>
                   <StatRow label="Scoruri exacte" value={stats.exactScores} accent={series.secondary} />
+                  <StatRow label="Rezultate ghicite" value={stats.guessedResultsCount} accent={series.secondary} />
                   <StatRow label="Procent pronosticuri corecte" value={`${stats.correctPct}%`} accent={series.secondary} />
                   <StatRow label="Bonusuri câștigate" value={stats.bonusWinsCount} accent={series.secondary} />
                   <StatRow label="Meciuri fără puncte" value={stats.noPointsCount} accent={series.secondary} />

@@ -61,10 +61,6 @@ export default function WelcomeScreen({ user, profile, isAdmin, onOpenAdmin, onO
   const [predictions, setPredictions] = useState({});
   const [ownJoker, setOwnJoker] = useState(null);
   const [ownRow, setOwnRow] = useState(null);
-  // Citit proaspăt, separat de `profile` (stale după login) — sursa
-  // reală pentru header. Pornește din `profile.seasonPoints` (ca să nu
-  // arate 0 o clipă la încărcare), apoi se suprascrie cu valoarea reală.
-  const [freshSeasonPoints, setFreshSeasonPoints] = useState(profile?.seasonPoints ?? null);
   const [profiles, setProfiles] = useState({});
 
   const [feedTop, setFeedTop] = useState([]);
@@ -502,13 +498,26 @@ export default function WelcomeScreen({ user, profile, isAdmin, onOpenAdmin, onO
     .sort((a, b) => b.kickoffAt.toMillis() - a.kickoffAt.toMillis())
     .slice(0, 5);
 
+  // ── REPARAT — header-ul arăta "0 PCT" pentru toată lumea. Cauza:
+  // freshSeasonPoints era cod mort (niciodată actualizat), iar restul
+  // lanțului cădea pe profile.seasonPoints (persistat, sezon, fără
+  // Specialele) sau pe ownRow.totalPoints (live, dar DOAR etapa, nu
+  // general). Acum: aceeași sursă ca GENERAL din Clasament
+  // (seasonPoints + specialPoints, persistat) + progresul LIVE al
+  // etapei curente — DAR doar dacă etapa încă nu e finalizată (altfel
+  // ownRow.totalPoints ar dubla ce e deja în seasonPoints persistat).
+  // Zero citiri noi — profile, ownRow și gameweek sunt deja încărcate.
+  const isCurrentGwCompleted = gameweek?.status === "completed";
+  const generalPointsLive = (profile?.seasonPoints || 0) + (profile?.specialPoints || 0)
+    + (isCurrentGwCompleted ? 0 : (ownRow?.totalPoints || 0));
+
   return (
     <div style={{ minHeight: "100vh", background: color.bgBase, paddingBottom: 96 }}>
       {/* ── HERO — comprimat, ~50% din ecran ── */}
       <CinematicBackdrop crowd rain style={{ minHeight: 480, display: "flex", flexDirection: "column" }}>
         <AppHeader
           nickname={profile?.nickname || "Jucător"}
-          points={(freshSeasonPoints ?? profile?.seasonPoints ?? ownRow?.totalPoints ?? 0).toLocaleString("ro-RO")}
+          points={generalPointsLive.toLocaleString("ro-RO")}
           avatarId={profile?.avatarId}
           hasNotification={feedTop.some((e) => e.important) || notifItems.length > 0}
           onAvatarClick={onOpenProfile}

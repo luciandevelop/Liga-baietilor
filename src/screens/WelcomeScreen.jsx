@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { getCurrentSeason, getCurrentGameweek, loadUserPredictions, loadUserJoker, loadUserJokerExtra, isMatchLocked } from "../services/predictionsService";
-import { listenLiveGameweekScores, listGameweekScores, getUserSeasonPoints } from "../services/adminService";
+import { listenLiveGameweekScores, listGameweekScores } from "../services/adminService";
 import { subscribeToGameweekMatches } from "../services/matchesStore";
 import { getUserPublicProfiles } from "../services/profilesService";
 import { processFinishedMatches, processJokerActivation, processUpcomingMatches, getHomeFeedTop, processSurpriseCreated, processSurpriseMatchup, processSurpriseResult, processExternalMatchDelta, processMatchIntelligence, processDailyFillerIfQuiet, processClubFactsForMatch } from "../services/feedService";
@@ -262,15 +262,6 @@ export default function WelcomeScreen({ user, profile, isAdmin, onOpenAdmin, onO
   }
 
   useEffect(load, [user.uid]);
-
-  // Punctajul general — reîmprospătat de fiecare dată când se deschide
-  // Home, nu doar la login. Fără asta, dacă o etapă se finalizează cât
-  // userul rămâne conectat, header-ul rămânea blocat la cifra veche.
-  useEffect(() => {
-    getUserSeasonPoints(user.uid)
-      .then(setFreshSeasonPoints)
-      .catch((err) => console.error("Eroare la reîmprospătarea punctajului din header:", err));
-  }, [user.uid]);
 
   // Notificări — derivate live din ce chiar mai are userul de făcut
   // (meciuri fără pronostic azi, surprize dezvăluite dar neacționate,

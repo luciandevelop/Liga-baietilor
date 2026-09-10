@@ -1,6 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import { getCurrentSeason, getCurrentGameweek, loadUserPredictions, loadUserJoker, loadUserJokerExtra, isMatchLocked } from "../services/predictionsService";
-import { listGameweekScores, getLiveGameweekPointsDiagnostic } from "../services/adminService";
+import { listGameweekScores, getLiveGameweekPointsDiagnostic, listSeasons } from "../services/adminService";
+import { markGwStorySeen, markSeasonStorySeen, storyKey } from "../services/storyService";
+import { slideUrl, seasonNumberFromList } from "../storyAssets";
+import StoryViewer from "../components/StoryViewer";
 import { subscribeToGameweekMatches } from "../services/matchesStore";
 import { getUserPublicProfiles } from "../services/profilesService";
 import { processFinishedMatches, processJokerActivation, processUpcomingMatches, getHomeFeedTop, processSurpriseCreated, processSurpriseMatchup, processSurpriseResult, processExternalMatchDelta, processMatchIntelligence, processDailyFillerIfQuiet, processClubFactsForMatch } from "../services/feedService";
@@ -43,7 +46,7 @@ const CTA_LABEL = {
 // Home — Sprint 1 "Home Premium". Aceeași logică de date ca înainte
 // (niciun apel nou către Firestore) — doar experiența Home + navigarea
 // s-au schimbat, cum a fost cerut explicit.
-export default function WelcomeScreen({ user, profile, isAdmin, onOpenAdmin, onOpenPredictions, onOpenLeaderboard, onOpenLive, onOpenFeaturedMatch, onOpenSpecials, onOpenFeed, onOpenSurprises, onOpenProfile }) {
+export default function WelcomeScreen({ user, profile, isAdmin, onOpenAdmin, onOpenPredictions, onOpenLeaderboard, onOpenLive, onOpenFeaturedMatch, onOpenSpecials, onOpenFeed, onOpenSurprises, onOpenProfile, onOpenStoriesArchive }) {
   const now = useNow(1000);
   const reduced = usePrefersReducedMotion();
 
@@ -54,6 +57,20 @@ export default function WelcomeScreen({ user, profile, isAdmin, onOpenAdmin, onO
   const [toast, setToast] = useState("");
 
   const [gameweek, setGameweek] = useState(null);
+  // ── Sezonul curent — folosit STRICT pentru Story de Sezon în header
+  // (storyActive/storyVersion, deja pe documentul deja preluat mai sus,
+  // zero citire nouă). ──
+  const [seasonState, setSeasonState] = useState(null);
+  // ── PLAY LEAGUE Stories — stare minimă, doar UI (deschis/închis),
+  // nimic persistat local. "Văzut" se scrie STRICT pe users/{uid},
+  // la finalul Story-ului, nicăieri altundeva. ──
+  const [storyView, setStoryView] = useState(null); // { slideUrls, kind, id, version, isSeasonStory } | null
+  const [storyLoading, setStoryLoading] = useState(false);
+  // Suprascriere LOCALĂ, doar pentru feedback imediat în sesiunea asta —
+  // "profile" e primit ca prop (deținut de App.jsx), nu se poate scrie
+  // direct aici. Scrierea reală merge pe users/{uid}; asta doar oprește
+  // vizual pulsația instant, fără să aștepte un reload complet.
+  const [locallySeenKeys, setLocallySeenKeys] = useState({});
   const [matches, setMatches] = useState([]);
   const [notifItems, setNotifItems] = useState([]);
   const [notifLoading, setNotifLoading] = useState(false);
@@ -122,6 +139,7 @@ export default function WelcomeScreen({ user, profile, isAdmin, onOpenAdmin, onO
       let season, gw;
       try {
         season = await getCurrentSeason();
+        setSeasonState(season);
         if (!season) { setGameweek(null); setLoading(false); return; }
         gw = await getCurrentGameweek(season.id);
         setGameweek(gw);
@@ -522,6 +540,70 @@ export default function WelcomeScreen({ user, profile, isAdmin, onOpenAdmin, onO
   const generalPointsLive = (profile?.seasonPoints || 0) + (profile?.specialPoints || 0)
     + (isCurrentGwCompleted ? 0 : (ownRow?.totalPoints || 0));
 
+  // ── PLAY LEAGUE Stories — determinare "nevăzut", STRICT din date deja
+  // încărcate (gameweek, seasonState, profile) — zero citire nouă doar
+  // ca să decidem dacă iconița pulsează. ──
+  const gwStoryUnseen = !!(gameweek?.storyActive && profile
+    && profile.lastSeenGwStoryKey !== storyKey(gameweek.id, gameweek.storyVersion || 1)
+    && locallySeenKeys.gw !== storyKey(gameweek.id, gameweek.storyVersion || 1));
+  const seasonStoryUnseen = !!(seasonState?.storyActive && profile
+    && profile.lastSeenSeasonStoryKey !== storyKey(seasonState.id, seasonState.storyVersion || 1)
+    && locallySeenKeys.season !== storyKey(seasonState.id, seasonState.storyVersion || 1));
+  const anyStoryUnseen = gwStoryUnseen || seasonStoryUnseen;
+
+  async function openGwStory() {
+    if (!gameweek?.storyActive || !gameweek.storySlideCount) return;
+    setStoryLoading(true);
+    try {
+      const seasons = await listSeasons();
+      const seasonNumber = seasonNumberFromList(gameweek.seasonId, seasons);
+      const slideUrls = Array.from({ length: gameweek.storySlideCount }, (_, i) =>
+        slideUrl({ seasonNumber, etapaNumber: gameweek.number, slideIndex: i + 1 }));
+      setStoryView({ slideUrls, kind: "gw", id: gameweek.id, version: gameweek.storyVersion || 1, isSeasonStory: false });
+    } catch (err) {
+      console.error("Eroare la deschiderea Story-ului de etapă:", err);
+    } finally {
+      setStoryLoading(false);
+    }
+  }
+
+  async function openSeasonStory() {
+    if (!seasonState?.storyActive || !seasonState.storySlideCount) return;
+    setStoryLoading(true);
+    try {
+      const seasons = await listSeasons();
+      const seasonNumber = seasonNumberFromList(seasonState.id, seasons);
+      const slideUrls = Array.from({ length: seasonState.storySlideCount }, (_, i) =>
+        slideUrl({ seasonNumber, etapaNumber: null, slideIndex: i + 1 }));
+      setStoryView({ slideUrls, kind: "season", id: seasonState.id, version: seasonState.storyVersion || 1, isSeasonStory: true });
+    } catch (err) {
+      console.error("Eroare la deschiderea Story-ului de sezon:", err);
+    } finally {
+      setStoryLoading(false);
+    }
+  }
+
+  function handleStoryIconClick() {
+    if (gwStoryUnseen) { openGwStory(); return; }
+    if (seasonStoryUnseen) { openSeasonStory(); return; }
+    onOpenStoriesArchive?.();
+  }
+
+  async function handleStoryComplete() {
+    if (!storyView) return;
+    try {
+      if (storyView.kind === "gw") {
+        await markGwStorySeen(user.uid, storyView.id, storyView.version);
+        setLocallySeenKeys((prev) => ({ ...prev, gw: storyKey(storyView.id, storyView.version) }));
+      } else {
+        await markSeasonStorySeen(user.uid, storyView.id, storyView.version);
+        setLocallySeenKeys((prev) => ({ ...prev, season: storyKey(storyView.id, storyView.version) }));
+      }
+    } catch (err) {
+      console.error("Eroare la marcarea Story-ului ca văzut:", err);
+    }
+  }
+
   return (
     <div style={{ minHeight: "100vh", background: color.bgBase, paddingBottom: 96 }}>
       {/* ── HERO — comprimat, ~50% din ecran ── */}
@@ -530,9 +612,9 @@ export default function WelcomeScreen({ user, profile, isAdmin, onOpenAdmin, onO
           nickname={profile?.nickname || "Jucător"}
           points={generalPointsLive.toLocaleString("ro-RO")}
           avatarId={profile?.avatarId}
-          hasNotification={feedTop.some((e) => e.important) || notifItems.length > 0}
+          storyPulse={anyStoryUnseen}
           onAvatarClick={onOpenProfile}
-          onBellClick={() => setNotifOpen(true)}
+          onStoryClick={handleStoryIconClick}
         />
         <TopTabNav active="matchday" onChange={handleTopTab} hasLiveMatch={matches.some((m) => getDisplayMatchState(m, now).status === "live")} />
 
@@ -790,6 +872,16 @@ export default function WelcomeScreen({ user, profile, isAdmin, onOpenAdmin, onO
           onClose={() => setNotifOpen(false)}
           onOpenPredictions={() => onOpenPredictions()}
           onOpenSurprises={onOpenSurprises}
+        />
+      )}
+      {storyView && (
+        <StoryViewer
+          slideUrls={storyView.slideUrls}
+          isSeasonStory={storyView.isSeasonStory}
+          onClose={() => setStoryView(null)}
+          onComplete={handleStoryComplete}
+          onOpenArchive={() => { setStoryView(null); onOpenStoriesArchive?.(); }}
+          onOpenLeaderboard={() => { setStoryView(null); onOpenLeaderboard?.(); }}
         />
       )}
     </div>

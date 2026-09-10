@@ -48,6 +48,9 @@ import {
   regenerateCurrentGameweekFeed, processLiveRankChangesCapped, processTeamDuelPulse, processRankChanges,
   publishManualFeedNews, deleteManualFeedNews,
 } from "../services/feedService";
+import { activateGameweekStory, deactivateGameweekStory, activateSeasonStory, deactivateSeasonStory, storyKey } from "../services/storyService";
+import { slideUrl, seasonNumberFromList } from "../storyAssets";
+import StoryViewer from "../components/StoryViewer";
 import { EDITORIAL_ARTICLES } from "../feedContent/editorialContent";
 import LiveEventPanel from "../components/LiveEventPanel";
 import {
@@ -133,6 +136,11 @@ export default function AdminScreen({ onBack }) {
   const [openMissingFor, setOpenMissingFor] = useState(null); // matchId deschis, sau null
   const [selectedSeasonId, setSelectedSeasonId] = useState("");
   const [selectedGameweekId, setSelectedGameweekId] = useState("");
+  // ── 📖 PLAY LEAGUE Stories — control minim în Admin. ──
+  const [gwStorySlideCount, setGwStorySlideCount] = useState(6);
+  const [seasonStorySlideCount, setSeasonStorySlideCount] = useState(6);
+  const [storyBusy, setStoryBusy] = useState(false);
+  const [storyPreview, setStoryPreview] = useState(null); // { slideUrls, isSeasonStory } | null
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState("");
 
@@ -701,6 +709,82 @@ export default function AdminScreen({ onBack }) {
     const data = await listGameweeks(seasonId);
     setGameweeks(data);
     return data;
+  }
+
+  // ── 📖 PLAY LEAGUE Stories ──────────────────────────────────────
+  function buildPreviewSlides(seasonNumber, etapaNumber, slideCount) {
+    return Array.from({ length: slideCount }, (_, i) =>
+      slideUrl({ seasonNumber, etapaNumber, slideIndex: i + 1 }));
+  }
+
+  async function handlePreviewGwStory() {
+    if (!currentGameweek) return;
+    const seasonNumber = seasonNumberFromList(currentGameweek.seasonId, seasons);
+    setStoryPreview({ slideUrls: buildPreviewSlides(seasonNumber, currentGameweek.number, gwStorySlideCount), isSeasonStory: false });
+  }
+
+  async function handleActivateGwStory() {
+    if (!currentGameweek) return;
+    if (!window.confirm(`Activezi Story-ul pentru Etapa ${currentGameweek.number} (${gwStorySlideCount} slide-uri)? Devine vizibil/pulsant pentru toți jucătorii care nu l-au văzut.`)) return;
+    setStoryBusy(true);
+    try {
+      await activateGameweekStory(currentGameweek.id, gwStorySlideCount);
+      await refreshGameweeks(selectedSeasonId);
+    } catch (err) {
+      window.alert("Eroare la activare: " + (err.message || String(err)));
+    } finally {
+      setStoryBusy(false);
+    }
+  }
+
+  async function handleDeactivateGwStory() {
+    if (!currentGameweek) return;
+    if (!window.confirm("Dezactivezi Story-ul acestei etape? Nu mai apare ca activ până îl reactivezi.")) return;
+    setStoryBusy(true);
+    try {
+      await deactivateGameweekStory(currentGameweek.id);
+      await refreshGameweeks(selectedSeasonId);
+    } catch (err) {
+      window.alert("Eroare la dezactivare: " + (err.message || String(err)));
+    } finally {
+      setStoryBusy(false);
+    }
+  }
+
+  const currentSeasonObj = seasons.find((s) => s.id === selectedSeasonId);
+
+  async function handlePreviewSeasonStory() {
+    if (!currentSeasonObj) return;
+    const seasonNumber = seasonNumberFromList(currentSeasonObj.id, seasons);
+    setStoryPreview({ slideUrls: buildPreviewSlides(seasonNumber, null, seasonStorySlideCount), isSeasonStory: true });
+  }
+
+  async function handleActivateSeasonStory() {
+    if (!currentSeasonObj) return;
+    if (!window.confirm(`Activezi Povestea Sezonului (${seasonStorySlideCount} slide-uri)?`)) return;
+    setStoryBusy(true);
+    try {
+      await activateSeasonStory(currentSeasonObj.id, seasonStorySlideCount);
+      await refreshSeasons();
+    } catch (err) {
+      window.alert("Eroare la activare: " + (err.message || String(err)));
+    } finally {
+      setStoryBusy(false);
+    }
+  }
+
+  async function handleDeactivateSeasonStory() {
+    if (!currentSeasonObj) return;
+    if (!window.confirm("Dezactivezi Povestea Sezonului?")) return;
+    setStoryBusy(true);
+    try {
+      await deactivateSeasonStory(currentSeasonObj.id);
+      await refreshSeasons();
+    } catch (err) {
+      window.alert("Eroare la dezactivare: " + (err.message || String(err)));
+    } finally {
+      setStoryBusy(false);
+    }
   }
 
   async function refreshMatches(gameweekId) {
@@ -1365,6 +1449,54 @@ export default function AdminScreen({ onBack }) {
                 </div>
                 {republishMessage && <div style={s.republishMsg}>{republishMessage}</div>}
               </div>
+            )}
+
+            {tab === "results" && currentGameweek && (
+              <SectionCard title="📖 Story PLAY LEAGUE — Etapa curentă">
+                <p style={s.hint}>
+                  Etapa {currentGameweek.number} · Story: <b>{currentGameweek.storyActive ? `ACTIV (v${currentGameweek.storyVersion || 1})` : "NEPUBLICAT"}</b>
+                  {currentGameweek.storyActive && ` · ${currentGameweek.storySlideCount || 0} slide-uri`}
+                </p>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+                  <span style={s.hint}>Slide-uri:</span>
+                  <input
+                    type="number" min={1} max={30} style={{ ...s.input, width: 70 }}
+                    value={gwStorySlideCount} onChange={(e) => setGwStorySlideCount(Math.max(1, Number(e.target.value) || 1))}
+                  />
+                </div>
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                  <button type="button" style={s.smallBtn} onClick={handlePreviewGwStory}>👁 Preview</button>
+                  <button type="button" style={s.btn} disabled={storyBusy} onClick={handleActivateGwStory}>
+                    ✨ Activează Story Etapa {currentGameweek.number}
+                  </button>
+                  {currentGameweek.storyActive && (
+                    <button type="button" style={s.smallBtn} disabled={storyBusy} onClick={handleDeactivateGwStory}>🚫 Dezactivează</button>
+                  )}
+                </div>
+              </SectionCard>
+            )}
+
+            {tab === "results" && currentSeasonObj && (
+              <SectionCard title="🏆 Story PLAY LEAGUE — Povestea Sezonului">
+                <p style={s.hint}>
+                  Story sezon: <b>{currentSeasonObj.storyActive ? `ACTIV (v${currentSeasonObj.storyVersion || 1})` : "NEPUBLICAT"}</b>
+                  {currentSeasonObj.storyActive && ` · ${currentSeasonObj.storySlideCount || 0} slide-uri`}
+                </p>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+                  <span style={s.hint}>Slide-uri:</span>
+                  <input
+                    type="number" min={1} max={30} style={{ ...s.input, width: 70 }}
+                    value={seasonStorySlideCount} onChange={(e) => setSeasonStorySlideCount(Math.max(1, Number(e.target.value) || 1))}
+                  />
+                </div>
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                  <button type="button" style={s.smallBtn} onClick={handlePreviewSeasonStory}>👁 Preview</button>
+                  <button type="button" style={s.btn} disabled={storyBusy} onClick={handleActivateSeasonStory}>✨ Activează Povestea Sezonului</button>
+                  {currentSeasonObj.storyActive && (
+                    <button type="button" style={s.smallBtn} disabled={storyBusy} onClick={handleDeactivateSeasonStory}>🚫 Dezactivează</button>
+                  )}
+                </div>
+              </SectionCard>
             )}
 
             {(tab === "results" || tab === "featured") && matches.length > 0 && (
@@ -2548,6 +2680,16 @@ export default function AdminScreen({ onBack }) {
           scope="etapa"
           stats={openPlayerStats}
           onClose={() => setOpenPlayerUid("")}
+        />
+      )}
+      {storyPreview && (
+        <StoryViewer
+          slideUrls={storyPreview.slideUrls}
+          isSeasonStory={storyPreview.isSeasonStory}
+          onClose={() => setStoryPreview(null)}
+          onComplete={() => {}}
+          onOpenArchive={() => setStoryPreview(null)}
+          onOpenLeaderboard={() => setStoryPreview(null)}
         />
       )}
     </div>

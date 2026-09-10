@@ -33,22 +33,36 @@ const SEASON_NUMBER_LABEL = `SEZONUL ${CURRENT_SEASON_NUMBER}`;
 // din ecran pe mobil. Restul (8 din 10) rămân la dimensiunea mare. ──
 const SEASON_NAME_SIZE = CURRENT_SEASON.name.length > 20 ? 11.5 : 14;
 
-function BellIcon({ size = 20 }) {
+// ── ▶ Story — înlocuiește complet clopoțelul (funcțional, dar rar
+// declanșat — verificat: loadNotifications() rămâne intact, doar
+// intrarea din header a fost redirecționată la Stories). Cerc auriu,
+// discret în stare normală; inel + puls continuu când există un Story
+// activ nevăzut — se oprește STRICT la terminarea Story-ului, nu la
+// timeout sau la simpla deschidere a aplicației. ──
+function PlayStoryIcon({ size = 20, lit }) {
+  const c = lit ? color.goldLight : color.textSecondary;
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none">
-      <path
-        d="M12 3C9.5 3 7.5 5 7.5 7.5V11C7.5 12.5 7 13.5 6 14.5C5.7 14.8 5.9 15.5 6.4 15.5H17.6C18.1 15.5 18.3 14.8 18 14.5C17 13.5 16.5 12.5 16.5 11V7.5C16.5 5 14.5 3 12 3Z"
-        stroke={color.textSecondary}
-        strokeWidth="1.6"
-      />
-      <path d="M10 18a2 2 0 004 0" stroke={color.textSecondary} strokeWidth="1.6" strokeLinecap="round" />
+      <circle cx="12" cy="12" r="9" stroke={c} strokeWidth="1.6" />
+      <path d="M10 8.5l6 3.5-6 3.5v-7z" fill={c} />
     </svg>
+  );
+}
+
+function StoryPulseKeyframes() {
+  return (
+    <style>{`
+      @keyframes storyRingPulse {
+        0%, 100% { box-shadow: 0 0 0 0 rgba(232,199,102,0.55); }
+        50% { box-shadow: 0 0 0 6px rgba(232,199,102,0); }
+      }
+    `}</style>
   );
 }
 
 // `points` deja formatat de apelant (ex. "3.450") — componenta nu face
 // formatare de numere, doar afișare.
-export default function AppHeader({ nickname, points, avatarId, hasNotification, onAvatarClick, onBellClick }) {
+export default function AppHeader({ nickname, points, avatarId, storyPulse, onAvatarClick, onStoryClick }) {
   return (
     <div style={s.row}>
       <div style={s.logoGroup}>
@@ -76,9 +90,9 @@ export default function AppHeader({ nickname, points, avatarId, hasNotification,
           <span style={s.chevron}>›</span>
         </button>
 
-        <button type="button" onClick={onBellClick} style={s.bellBtn} aria-label="Notificări">
-          <BellIcon />
-          {hasNotification && <span style={s.dot} />}
+        <StoryPulseKeyframes />
+        <button type="button" onClick={onStoryClick} style={{ ...s.bellBtn, ...(storyPulse ? s.storyBtnPulsing : null) }} aria-label="Poveștile PLAY LEAGUE">
+          <PlayStoryIcon lit={storyPulse} />
         </button>
       </div>
     </div>
@@ -157,7 +171,10 @@ const s = {
   points: { fontFamily: font.display, fontSize: 12.5, fontWeight: 700, color: color.goldLight },
   chevron: { fontSize: 16, color: color.textFaint, marginLeft: 2 },
 
-  bellBtn: { position: "relative", background: "none", border: "none", cursor: "pointer", padding: 4, display: "flex" },
+  bellBtn: { position: "relative", background: "none", border: "none", cursor: "pointer", padding: 4, display: "flex", borderRadius: "50%" },
+  storyBtnPulsing: {
+    border: `1.5px solid ${color.goldLight}`, animation: "storyRingPulse 1.8s ease-in-out infinite",
+  },
   dot: {
     position: "absolute", top: 2, right: 2, width: 7, height: 7, borderRadius: "50%",
     background: color.notification, border: `1.5px solid ${color.headerBg}`,

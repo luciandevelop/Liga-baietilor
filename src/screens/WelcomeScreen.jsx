@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { getCurrentSeason, getCurrentGameweek, loadUserPredictions, loadUserJoker, loadUserJokerExtra, isMatchLocked } from "../services/predictionsService";
-import { listenLiveGameweekScores, listGameweekScores } from "../services/adminService";
+import { listGameweekScores, getLiveGameweekPointsDiagnostic } from "../services/adminService";
 import { subscribeToGameweekMatches } from "../services/matchesStore";
 import { getUserPublicProfiles } from "../services/profilesService";
 import { processFinishedMatches, processJokerActivation, processUpcomingMatches, getHomeFeedTop, processSurpriseCreated, processSurpriseMatchup, processSurpriseResult, processExternalMatchDelta, processMatchIntelligence, processDailyFillerIfQuiet, processClubFactsForMatch } from "../services/feedService";
@@ -227,12 +227,32 @@ export default function WelcomeScreen({ user, profile, isAdmin, onOpenAdmin, onO
           const rows = await listGameweekScores(gw.id);
           await applyRows(rows.map((r) => ({ ...r, uid: r.userId })));
         } else {
-          unsubScores = listenLiveGameweekScores(gw.id, (rows) => {
-            applyRows(rows.map((r) => ({ ...r, uid: r.userId }))).catch((err) => {
+          // ── REPARAT — folosea listenLiveGameweekScores, care citește
+          // gameweekLiveScores: o colecție publicată MANUAL din Admin
+          // (butonul "Republică"), care poate rămâne stale dacă Admin
+          // corectează matchPoints separat, fără să republice explicit
+          // și acolo — exact cauza discrepanței Header ≠ Clasament,
+          // diagnosticată. Acum: ACEEAȘI sursă unică deja folosită de
+          // Clasament (getLiveGameweekPointsDiagnostic, din matchPoints,
+          // recalculat de la zero de fiecare dată — niciodată stale).
+          // Același interval de 2 minute, deja dovedit sigur pe cost
+          // acolo. Înlocuiește un LISTENER (onSnapshot) cu un fetch
+          // periodic — o sursă de citiri mai puțin, nu mai multe.
+          let cancelled = false;
+          async function refreshLivePoints() {
+            try {
+              const { pointsByUid } = await getLiveGameweekPointsDiagnostic(gw.id);
+              if (cancelled) return;
+              const rows = Object.entries(pointsByUid).map(([uid, totalPoints]) => ({ uid, totalPoints }));
+              await applyRows(rows);
+            } catch (err) {
               console.error("Eroare la procesarea clasamentului live:", err);
-              setStatsError("Clasamentul live nu s-a putut încărca complet.");
-            });
-          });
+              if (!cancelled) setStatsError("Clasamentul live nu s-a putut încărca complet.");
+            }
+          }
+          refreshLivePoints();
+          const interval = setInterval(refreshLivePoints, 120000);
+          unsubScores = () => { cancelled = true; clearInterval(interval); };
         }
       } catch (err) {
         console.error("Eroare la statisticile personale:", err);

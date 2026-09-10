@@ -4,6 +4,7 @@ import { computeRankingBonuses } from "../services/scoringEngine";
 import {
   listGameweekScores,
   listSeasonLeaderboard,
+  listSeasons,
   listGeneralLeaderboard,
   getLiveGameweekPoints,
   getLiveGameweekPointsDiagnostic,
@@ -40,9 +41,23 @@ export default function LeaderboardScreen({ onBack, user, isAdmin }) {
   const [error, setError] = useState("");
 
   const [season, setSeason] = useState(null);
+  // ── Selector de sezon pentru tab-ul SEZON — cerut explicit: sezoanele
+  // încheiate trebuie să rămână vizibile permanent, cu clasamentul lor
+  // final. listSeasons()/listSeasonLeaderboard(seasonId) există deja,
+  // parametrizate corect — doar conectate acum la un selector în UI,
+  // nicio structură nouă de stocare. ──
+  const [allSeasons, setAllSeasons] = useState([]);
+  const [selectedSeasonId, setSelectedSeasonId] = useState(null);
+  const [seasonRowsLoading, setSeasonRowsLoading] = useState(false);
   const [gameweek, setGameweek] = useState(null); // etapa curentă SAU ultima finalizată (fallback)
   const [usedFallback, setUsedFallback] = useState(false);
   const [gwRows, setGwRows] = useState([]);
+  // ── Puncte live ale etapei curente, per user — REUTILIZATE de mai jos
+  // pentru a îmbogăți SEZON și GENERAL cu progresul live (cerut explicit:
+  // toate 3 clasamentele trebuie să fie live). Aceeași sursă unică
+  // (getLiveGameweekPointsDiagnostic, matchPoints) deja folosită pentru
+  // Etapă — nicio citire nouă, doar reutilizare la afișare. ──
+  const [livePointsByUid, setLivePointsByUid] = useState({});
   const [surprisePointsByUid, setSurprisePointsByUid] = useState({});
 
   // Puncte din Surprizele Săptămânii pentru ETAPA afișată — DOAR citire
@@ -127,6 +142,10 @@ export default function LeaderboardScreen({ onBack, user, isAdmin }) {
       try {
         const s = await getCurrentSeason();
         setSeason(s);
+        // Lista tuturor sezoanelor — pentru selector, o singură dată.
+        const seasons = await listSeasons();
+        setAllSeasons(seasons);
+        setSelectedSeasonId(s?.id || (seasons[0]?.id ?? null));
 
         if (s) {
           let gw = await getCurrentGameweek(s.id);
@@ -155,11 +174,6 @@ export default function LeaderboardScreen({ onBack, user, isAdmin }) {
             .filter((g) => g.status === "completed" && g.id !== gw?.id)
             .sort((a, b) => Number(b.number) - Number(a.number));
           setPastGameweeks(past);
-
-          const sRows = await listSeasonLeaderboard(s.id);
-          setSeasonRows(sRows);
-          const p2 = await getUserPublicProfiles(sRows.map((r) => r.uid));
-          setProfiles((prev) => ({ ...prev, ...p2 }));
         }
 
         const general = await listGeneralLeaderboard();
@@ -172,6 +186,27 @@ export default function LeaderboardScreen({ onBack, user, isAdmin }) {
       }
     })();
   }, [user?.uid]);
+
+  // ── Rândurile SEZON — reîncărcate strict la schimbarea sezonului
+  // selectat, separat de efectul mare de mai sus (schimbarea sezonului
+  // nu trebuie să retragă tot: etapa curentă, general, etc.). Pentru un
+  // sezon ÎNCHEIAT, listSeasonLeaderboard(seasonId) întoarce direct
+  // clasamentul lui final, deja corect — nimic de reconstruit separat. ──
+  useEffect(() => {
+    if (!selectedSeasonId) return;
+    let cancelled = false;
+    setSeasonRowsLoading(true);
+    listSeasonLeaderboard(selectedSeasonId)
+      .then(async (sRows) => {
+        if (cancelled) return;
+        setSeasonRows(sRows);
+        const p = await getUserPublicProfiles(sRows.map((r) => r.uid));
+        if (!cancelled) setProfiles((prev) => ({ ...prev, ...p }));
+      })
+      .catch((err) => console.error("Eroare la încărcarea clasamentului sezonului:", err))
+      .finally(() => { if (!cancelled) setSeasonRowsLoading(false); });
+    return () => { cancelled = true; };
+  }, [selectedSeasonId]);
 
   // Clasament LIVE — sursă unică (getLiveGameweekPoints), STRICT meciuri,
   // NICIODATĂ bonus de poziție. BUG P0 REPARAT: înainte citea din
@@ -192,6 +227,7 @@ export default function LeaderboardScreen({ onBack, user, isAdmin }) {
         const { pointsByUid, diagnostic } = await getLiveGameweekPointsDiagnostic(gameweek.id);
         if (cancelled) return;
         setScoringDiagnostic(diagnostic);
+        setLivePointsByUid(pointsByUid);
         const rows = Object.entries(pointsByUid).map(([uid, pts]) => ({
           uid, pointsFromMatches: pts, rankingBonus: undefined, totalPoints: pts, rank: null,
         }));
@@ -293,6 +329,51 @@ export default function LeaderboardScreen({ onBack, user, isAdmin }) {
   }, []);
 
   const scoredCount = gwRows.length;
+
+  // ── ÎMBOGĂȚIRE LIVE — cerut explicit: SEZON și GENERAL trebuie să
+  // includă progresul live al etapei curente, nu doar etapele deja
+  // finalizate. Reutilizează STRICT livePointsByUid (deja calculat mai
+  // sus, din aceeași sursă ca Etapă — matchPoints) — zero citiri noi.
+  //
+  // FĂRĂ RISC DE DUBLARE: livePointsByUid rămâne gol ({}) exact atunci
+  // când etapa curentă e deja "completed" (efectul de mai sus se oprește
+  // explicit în acel caz) — moment în care punctele ei sunt deja incluse
+  // în listSeasonLeaderboard/listGeneralLeaderboard (surse persistate).
+  // Deci adăugarea de mai jos e mereu 0 exact quando ar risca să dubleze.
+  //
+  // Un user care are DEJA puncte live, dar ÎNCĂ nicio etapă finalizată
+  // în sezon, nu apare deloc în seasonRows (listSeasonLeaderboard îl
+  // exclude complet) — de-aia construim rândul din avatarId/nickname
+  // deja disponibile în `profiles`, nu doar "adunăm peste un rând
+  // existent". ──
+  function mergeLiveSeasonRows() {
+    const byUid = {};
+    seasonRows.forEach((r) => { byUid[r.uid] = { uid: r.uid, totalPoints: r.totalPoints || 0 }; });
+    // Progresul live se adaugă STRICT dacă sezonul afișat e cel curent —
+    // un sezon istoric, deja încheiat, rămâne fix, exact clasamentul lui
+    // final, fără nicio adăugare live (nu mai are nicio etapă în curs).
+    const isViewingCurrentSeason = selectedSeasonId === season?.id;
+    if (isViewingCurrentSeason) {
+      Object.entries(livePointsByUid).forEach(([uid, livePts]) => {
+        if (!byUid[uid]) byUid[uid] = { uid, totalPoints: 0 };
+        byUid[uid].totalPoints += livePts || 0;
+      });
+    }
+    return Object.values(byUid).sort((a, b) => b.totalPoints - a.totalPoints);
+  }
+
+  function mergeLiveGeneralRows() {
+    const byUid = {};
+    generalRows.forEach((r) => { byUid[r.uid] = { ...r, totalPoints: r.seasonPoints || 0 }; });
+    Object.entries(livePointsByUid).forEach(([uid, livePts]) => {
+      if (!byUid[uid]) byUid[uid] = { uid, totalPoints: 0 };
+      byUid[uid].totalPoints += livePts || 0;
+    });
+    return Object.values(byUid).sort((a, b) => b.totalPoints - a.totalPoints);
+  }
+
+  const liveSeasonRows = mergeLiveSeasonRows();
+  const liveGeneralRows = mergeLiveGeneralRows();
 
   return (
     <div style={{ ...layout.page, paddingBottom: 96 }}>
@@ -439,8 +520,22 @@ export default function LeaderboardScreen({ onBack, user, isAdmin }) {
 
         {!loading && !error && tab === "season" && (
           <div style={s.list}>
-            {seasonRows.length === 0 && <EmptyState icon="🏆" title="Sezonul ăsta nu are încă etape finalizate." />}
-            {seasonRows.map((r, i) => (
+            {allSeasons.length > 1 && (
+              <select
+                value={selectedSeasonId || ""}
+                onChange={(e) => setSelectedSeasonId(e.target.value)}
+                style={s.seasonSelect}
+              >
+                {allSeasons.map((sn) => (
+                  <option key={sn.id} value={sn.id}>
+                    {sn.name || sn.id}{sn.id === season?.id ? " (curent)" : ""}
+                  </option>
+                ))}
+              </select>
+            )}
+            {seasonRowsLoading && <div style={s.centerBox}>Se încarcă…</div>}
+            {!seasonRowsLoading && liveSeasonRows.length === 0 && <EmptyState icon="🏆" title="Sezonul ăsta nu are încă puncte." />}
+            {!seasonRowsLoading && liveSeasonRows.map((r, i) => (
               <PlayerRankRow
                 key={r.uid}
                 rank={i + 1}
@@ -456,14 +551,14 @@ export default function LeaderboardScreen({ onBack, user, isAdmin }) {
 
         {!loading && !error && tab === "general" && (
           <div style={s.list}>
-            {generalRows.length === 0 && <EmptyState icon="🏆" title="Niciun user încă." />}
-            {generalRows.map((r, i) => (
+            {liveGeneralRows.length === 0 && <EmptyState icon="🏆" title="Niciun user încă." />}
+            {liveGeneralRows.map((r, i) => (
               <PlayerRankRow
                 key={r.uid}
                 rank={i + 1}
                 nickname={r.nickname || r.uid}
                 avatarId={r.avatarId}
-                totalPoints={r.seasonPoints || 0}
+                totalPoints={r.totalPoints}
                 top3={i < 3}
                 onClick={() => handleOpenPlayer(r.uid, i + 1, undefined, "general")}
               />
@@ -495,6 +590,11 @@ const s = {
   },
   tabBtnActive: { background: color.goldGradient, color: color.goldOn, border: "none" },
   centerBox: { textAlign: "center", color: color.textMuted, fontSize: 13.5, padding: "30px 16px" },
+  seasonSelect: {
+    width: "100%", padding: "10px 12px", marginBottom: 10, borderRadius: 10,
+    background: color.surfaceInset, border: `1px solid ${color.border}`, color: color.textPrimary,
+    fontSize: 13.5, fontFamily: font.body,
+  },
   diagBox: {
     background: "rgba(255,255,255,0.04)", border: "1px dashed rgba(255,255,255,0.25)", borderRadius: radius.sm,
     padding: 12, marginBottom: 14, fontFamily: "monospace",

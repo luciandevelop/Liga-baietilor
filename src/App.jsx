@@ -7,6 +7,7 @@ import AuthScreen from "./screens/AuthScreen";
 import WelcomeScreen from "./screens/WelcomeScreen";
 import LiveScreen from "./screens/LiveScreen";
 import FeaturedMatchScreen from "./screens/FeaturedMatchScreen";
+import StoriesArchiveScreen from "./screens/StoriesArchiveScreen";
 import AdminScreen from "./screens/AdminScreen";
 import PredictionsScreen from "./screens/PredictionsScreen";
 import LeaderboardScreen from "./screens/LeaderboardScreen";
@@ -302,6 +303,11 @@ export default function App() {
     );
   }
 
+  // 📖 Poveștile PLAY LEAGUE — arhivă, ecran secundar, același tipar.
+  if (view === "storiesArchive") {
+    return <StoriesArchiveScreen onBack={goBack} onOpenLeaderboard={() => navigateTo("leaderboard")} />;
+  }
+
   if (view === "specials") {
     return (
       <>
@@ -353,6 +359,7 @@ export default function App() {
         onOpenLeaderboard={() => navigateTo("leaderboard")}
         onOpenLive={() => navigateTo("live")}
         onOpenFeaturedMatch={openFeaturedMatch}
+        onOpenStoriesArchive={() => navigateTo("storiesArchive")}
         onOpenSpecials={() => navigateTo("specials")}
         onOpenFeed={() => navigateTo("feed")}
         onOpenSurprises={() => navigateTo("surprises")}

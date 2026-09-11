@@ -6,6 +6,7 @@ import { checkIsAdmin, getPlayerStatus } from "./services/adminService";
 import AuthScreen from "./screens/AuthScreen";
 import WelcomeScreen from "./screens/WelcomeScreen";
 import LiveScreen from "./screens/LiveScreen";
+
 import FeaturedMatchScreen from "./screens/FeaturedMatchScreen";
 import StoriesArchiveScreen from "./screens/StoriesArchiveScreen";
 import AdminScreen from "./screens/AdminScreen";
@@ -52,6 +53,8 @@ export default function App() {
     setFeaturedMatchGameweekId(gameweekId || null);
     navigateTo("featuredMatch");
   }
+
+
 
   // ── Istoric real de navigare, pe window.history — NU un router nou,
   // doar API-ul nativ. O singură sursă de adevăr: butonul "Înapoi" din UI
@@ -286,7 +289,7 @@ export default function App() {
   // LIVE se accesează din bara de SUS (nu are un tab propriu jos, iar
   // Clasamentul rămâne neschimbat, tot în bara de jos).
   if (view === "live") {
-    return <LiveScreen onBack={goBack} onOpenFeaturedMatch={openFeaturedMatch} />;
+    return <LiveScreen onBack={goBack} onOpenFeaturedMatch={openFeaturedMatch} onOpenSurprises={() => navigateTo("surprises")} />;
   }
 
   // ⭐ Meciul Săptămânii — o singură pagină, accesibilă din Home/Urmează,

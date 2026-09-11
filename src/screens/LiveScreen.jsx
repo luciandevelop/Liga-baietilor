@@ -4,6 +4,7 @@ import { subscribeToGameweekMatches } from "../services/matchesStore";
 import { getRevealData } from "../services/revealDataCache";
 import { groupByTier } from "../utils/liveTiers";
 import { getDisplayMatchState } from "../utils/matchStatus";
+import { getSecretMain } from "../services/surprisesService";
 import PlayerAvatar from "../components/PlayerAvatar";
 import ClubLogo from "../components/ClubLogo";
 import PageHeader from "../components/PageHeader";
@@ -25,13 +26,20 @@ import { color, font, radius } from "../matchdayTheme";
 // Predicțiile fiecărui meci live vin din getRevealData — ACELAȘI cache
 // în memorie folosit și de "ochi" — a doua vizită la LIVE, în aceeași
 // sesiune, pentru un meci deja văzut, nu mai citește nimic din Firestore.
-export default function LiveScreen({ onBack, onOpenFeaturedMatch }) {
+export default function LiveScreen({ onBack, onOpenFeaturedMatch, onOpenSurprises }) {
   const now = useNow(30000);
   const [gameweek, setGameweek] = useState(null);
   const [matches, setMatches] = useState([]);
   const [loadingGw, setLoadingGw] = useState(true);
   // matchId -> { rows, jokerUids, jokerExtraUids } | "loading" | "error"
   const [revealByMatch, setRevealByMatch] = useState({});
+  // ── Bet Builder — NU un modul propriu, doar un CTA condiționat de
+  // Surpriza Săptămânii activă. Citit o dată per vizită (getSecretMain,
+  // aceeași sursă/mecanism folosit deja de SurprisesScreen pentru toate
+  // tipurile de surpriză — protejat prin regulile deja existente,
+  // vizibil abia după reveal). Dacă tipul nu e "betBuilder", CTA-ul nu
+  // apare deloc, pentru niciun meci. ──
+  const [secretMain, setSecretMain] = useState(null);
 
   useEffect(() => {
     let unsubMatches = null;
@@ -45,6 +53,7 @@ export default function LiveScreen({ onBack, onOpenFeaturedMatch }) {
       setLoadingGw(false);
       if (!gw) return;
       unsubMatches = subscribeToGameweekMatches(gw.id, (list) => { if (!cancelled) setMatches(list); });
+      getSecretMain(gw.id).then((sm) => { if (!cancelled) setSecretMain(sm); }).catch(() => {});
     })();
     return () => { cancelled = true; if (unsubMatches) unsubMatches(); };
   }, []);
@@ -87,16 +96,22 @@ export default function LiveScreen({ onBack, onOpenFeaturedMatch }) {
 
         {!loadingGw && liveMatches.length > 0 && (
           <div style={s.list}>
-            {liveMatches.map((m) => (
-              <LiveMatchCard
-                key={m.id}
-                match={m}
-                now={now}
-                reveal={revealByMatch[m.id]}
-                isFeatured={(gameweek?.featuredMatchIds || []).includes(m.id)}
-                onOpenFeatured={onOpenFeaturedMatch ? () => onOpenFeaturedMatch(m, gameweek?.id) : undefined}
-              />
-            ))}
+            {liveMatches.map((m) => {
+              const isFeaturedMatch = (gameweek?.featuredMatchIds || []).includes(m.id);
+              const showBetBuilderCta = secretMain?.type === "betBuilder" && isFeaturedMatch;
+              return (
+                <LiveMatchCard
+                  key={m.id}
+                  match={m}
+                  now={now}
+                  reveal={revealByMatch[m.id]}
+                  isFeatured={isFeaturedMatch}
+                  onOpenFeatured={onOpenFeaturedMatch ? () => onOpenFeaturedMatch(m, gameweek?.id) : undefined}
+                  hasMyBetBuilder={showBetBuilderCta}
+                  onOpenBetBuilder={showBetBuilderCta && onOpenSurprises ? () => onOpenSurprises() : undefined}
+                />
+              );
+            })}
           </div>
         )}
       </div>
@@ -104,7 +119,7 @@ export default function LiveScreen({ onBack, onOpenFeaturedMatch }) {
   );
 }
 
-function LiveMatchCard({ match, now, reveal, isFeatured, onOpenFeatured }) {
+function LiveMatchCard({ match, now, reveal, isFeatured, onOpenFeatured, hasMyBetBuilder, onOpenBetBuilder }) {
   const display = getDisplayMatchState(match, now);
   const liveA = display.scoreA;
   const liveB = display.scoreB;
@@ -128,6 +143,11 @@ function LiveMatchCard({ match, now, reveal, isFeatured, onOpenFeatured }) {
           onClick={onOpenFeatured}
         >
           ⭐ Meciul Săptămânii{onOpenFeatured ? " · VEZI DETALII →" : ""}
+        </div>
+      )}
+      {hasMyBetBuilder && (
+        <div style={{ ...s.betBuilderStrip, cursor: onOpenBetBuilder ? "pointer" : "default" }} onClick={onOpenBetBuilder}>
+          🎟️ BET BUILDER LIVE{onOpenBetBuilder ? " · VEZI BILETUL →" : ""}
         </div>
       )}
       <div style={s.teamsRow}>
@@ -230,6 +250,11 @@ const s = {
   featuredStrip: {
     background: "rgba(212,175,55,0.12)", border: `1px solid ${color.goldBorder}`, borderRadius: radius.sm,
     padding: "5px 8px", fontSize: 10, fontWeight: 700, color: color.goldLight, textAlign: "center",
+    marginBottom: 8, fontFamily: font.body,
+  },
+  betBuilderStrip: {
+    background: "rgba(194,68,68,0.14)", border: "1px solid #C24444", borderRadius: radius.sm,
+    padding: "5px 8px", fontSize: 10, fontWeight: 700, color: "#E8837A", textAlign: "center",
     marginBottom: 8, fontFamily: font.body,
   },
 

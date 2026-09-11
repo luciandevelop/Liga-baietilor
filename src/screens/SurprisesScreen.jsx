@@ -16,6 +16,7 @@ import TeamDuelMiniCard from "../components/TeamDuelMiniCard";
 import HalfHalfExperience from "../components/HalfHalfExperience";
 import TriviaExperience from "../components/TriviaExperience";
 import DiceExperience from "../components/DiceExperience";
+import BetBuilderScreen from "./BetBuilderScreen";
 import SabotajExperience from "../components/SabotajExperience";
 import RouletteExperience from "../components/RouletteExperience";
 import MysteryBoxExperience from "../components/MysteryBoxExperience";
@@ -318,6 +319,10 @@ export default function SurprisesScreen({ user, onBack }) {
                       opponentMatchScore={myResult?.mainOpponentMatchScore}
                       deadlinePassed={deadlinePassed}
                     />
+                  )}
+
+                  {secretMain?.type === "betBuilder" && (
+                    <BetBuilderScreen user={user} gameweekId={gameweek.id} embedded />
                   )}
 
                   {secretMain?.type === "sabotaj" && (

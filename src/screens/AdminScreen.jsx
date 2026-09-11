@@ -49,6 +49,11 @@ import {
   publishManualFeedNews, deleteManualFeedNews,
 } from "../services/feedService";
 import { activateGameweekStory, deactivateGameweekStory, activateSeasonStory, deactivateSeasonStory, storyKey } from "../services/storyService";
+import {
+  generateBetBuilderDuels, getBetBuilder, setMatchQuestions, activateBetBuilder,
+  resolveQuestion, resolveTiebreaker, resolveAllDuels,
+} from "../services/betBuilderService";
+import BetBuilderScreen from "./BetBuilderScreen";
 import { slideUrl, seasonNumberFromList } from "../storyAssets";
 import StoryViewer from "../components/StoryViewer";
 import { EDITORIAL_ARTICLES } from "../feedContent/editorialContent";
@@ -141,6 +146,133 @@ export default function AdminScreen({ onBack }) {
   const [seasonStorySlideCount, setSeasonStorySlideCount] = useState(6);
   const [storyBusy, setStoryBusy] = useState(false);
   const [storyPreview, setStoryPreview] = useState(null); // { slideUrls, isSeasonStory } | null
+
+  // ── 🎟️ Bet Builder ──────────────────────────────────────────────
+  const [betBuilder, setBetBuilder] = useState(null);
+  // ── 👁 Preview Bet Builder — 100% izolat, mock, ZERO Firestore.
+  // Nu atinge deloc betBuilder/surpriza reală de mai sus. ──
+  const [betBuilderPreviewOpen, setBetBuilderPreviewOpen] = useState(false);
+  const [betBuilderPreviewState, setBetBuilderPreviewState] = useState("A");
+  const [betBuilderBusy, setBetBuilderBusy] = useState(false);
+  const [betBuilderMsg, setBetBuilderMsg] = useState("");
+  const [questionDrafts, setQuestionDrafts] = useState({}); // { matchId: { questions:[{text,options:[a,b]}]x5, tiebreakerText } }
+
+  async function loadBetBuilder(gameweekId) {
+    if (!gameweekId) { setBetBuilder(null); return; }
+    try {
+      const bb = await getBetBuilder(gameweekId);
+      setBetBuilder(bb);
+      if (bb) {
+        const drafts = {};
+        bb.matchGroups.forEach((g) => {
+          drafts[g.matchId] = {
+            questions: g.questions.length ? g.questions.map((q) => ({ text: q.text, options: q.options })) : Array.from({ length: 5 }, () => ({ text: "", options: ["", ""] })),
+            tiebreakerText: g.tiebreakerText || "",
+          };
+        });
+        setQuestionDrafts(drafts);
+      }
+    } catch (err) {
+      console.error("Eroare la încărcarea Bet Builder:", err);
+    }
+  }
+
+  async function handleGenerateBetBuilder() {
+    if (!currentGameweek) return;
+    const featured = currentGameweek.featuredMatchIds || [];
+    if (featured.length !== 3) { window.alert(`Trebuie exact 3 Meciuri ale Săptămânii setate pentru această etapă — sunt ${featured.length}.`); return; }
+    if (!window.confirm("Generezi cele 9 dueluri Bet Builder ACUM? Se face o SINGURĂ DATĂ — nu se poate regenera după.")) return;
+    setBetBuilderBusy(true);
+    setBetBuilderMsg("");
+    try {
+      await generateBetBuilderDuels(currentGameweek.id, featured);
+      await loadBetBuilder(currentGameweek.id);
+      setBetBuilderMsg("✅ Dueluri generate.");
+    } catch (err) {
+      setBetBuilderMsg("❌ " + (err.message || String(err)));
+    } finally {
+      setBetBuilderBusy(false);
+    }
+  }
+
+  async function handleSaveQuestions(matchId) {
+    const draft = questionDrafts[matchId];
+    if (!draft) return;
+    const cleanQuestions = draft.questions.map((q, i) => ({ id: `q${i + 1}`, text: q.text, options: q.options }));
+    if (cleanQuestions.some((q) => !q.text || q.options.some((o) => !o))) {
+      window.alert("Completează toate cele 5 selecții (text + ambele opțiuni) pentru acest meci.");
+      return;
+    }
+    if (!draft.tiebreakerText) { window.alert("Completează întrebarea de baraj pentru acest meci."); return; }
+    setBetBuilderBusy(true);
+    try {
+      await setMatchQuestions(currentGameweek.id, matchId, cleanQuestions, draft.tiebreakerText);
+      await loadBetBuilder(currentGameweek.id);
+      setBetBuilderMsg("✅ Selecții salvate pentru meci.");
+    } catch (err) {
+      window.alert(err.message || String(err));
+    } finally {
+      setBetBuilderBusy(false);
+    }
+  }
+
+  async function handleActivateBetBuilder() {
+    if (!window.confirm("Activezi Bet Builder pentru toți cei 18 jucători repartizați?")) return;
+    setBetBuilderBusy(true);
+    try {
+      await activateBetBuilder(currentGameweek.id);
+      await loadBetBuilder(currentGameweek.id);
+      setBetBuilderMsg("✅ Bet Builder activat.");
+    } catch (err) {
+      window.alert(err.message || String(err));
+    } finally {
+      setBetBuilderBusy(false);
+    }
+  }
+
+  async function handleResolveQuestion(matchId, questionId, result) {
+    setBetBuilderBusy(true);
+    try {
+      await resolveQuestion(currentGameweek.id, matchId, questionId, result);
+      await loadBetBuilder(currentGameweek.id);
+    } catch (err) {
+      window.alert(err.message || String(err));
+    } finally {
+      setBetBuilderBusy(false);
+    }
+  }
+
+  async function handleResolveTiebreaker(matchId, value) {
+    setBetBuilderBusy(true);
+    try {
+      await resolveTiebreaker(currentGameweek.id, matchId, value);
+      await loadBetBuilder(currentGameweek.id);
+    } catch (err) {
+      window.alert(err.message || String(err));
+    } finally {
+      setBetBuilderBusy(false);
+    }
+  }
+
+  async function handleRecomputeAllDuels() {
+    setBetBuilderBusy(true);
+    setBetBuilderMsg("");
+    try {
+      const outcomes = await resolveAllDuels(currentGameweek.id);
+      const done = outcomes.filter((o) => o.computed).length;
+      setBetBuilderMsg(`✅ Recalculat — ${done}/9 dueluri au ambele bilete confirmate și au primit punctaj.`);
+    } catch (err) {
+      window.alert(err.message || String(err));
+    } finally {
+      setBetBuilderBusy(false);
+    }
+  }
+
+  useEffect(() => {
+    if (tab === "results" && selectedGameweekId) loadBetBuilder(selectedGameweekId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab, selectedGameweekId]);
+
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState("");
 
@@ -1499,6 +1631,117 @@ export default function AdminScreen({ onBack }) {
               </SectionCard>
             )}
 
+            {tab === "results" && currentGameweek && (
+              <SectionCard title="🎟️ Bet Builder — Surpriza Mare">
+                <button type="button" style={{ ...s.smallBtn, marginBottom: 10 }} onClick={() => setBetBuilderPreviewOpen(true)}>
+                  👁 Preview Bet Builder (mock, izolat, fără Firestore)
+                </button>
+                {!betBuilder ? (
+                  <>
+                    <p style={s.hint}>
+                      Necesită exact 3 ⭐ Meciuri ale Săptămânii setate pentru această etapă
+                      ({(currentGameweek.featuredMatchIds || []).length}/3 momentan) și exact 18 jucători activi.
+                    </p>
+                    <button type="button" style={s.btn} disabled={betBuilderBusy} onClick={handleGenerateBetBuilder}>
+                      🎲 Generează cele 9 dueluri
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <p style={s.hint}>Status: <b>{betBuilder.status === "active" ? "ACTIV" : "NEPUBLICAT (draft)"}</b> · {betBuilder.duels.length} dueluri generate.</p>
+                    {betBuilder.matchGroups.map((g) => {
+                      const match = matches.find((m) => m.id === g.matchId);
+                      const draft = questionDrafts[g.matchId] || { questions: [], tiebreakerText: "" };
+                      const duelsForMatch = betBuilder.duels.filter((d) => d.matchId === g.matchId);
+                      return (
+                        <div key={g.matchId} style={s.bbMatchBlock}>
+                          <div style={s.bbMatchTitle}>{match ? `${match.homeTeam} – ${match.awayTeam}` : g.matchId}</div>
+                          <div style={s.hint}>{duelsForMatch.length} dueluri · {duelsForMatch.flatMap((d) => [d.playerA, d.playerB]).length} jucători repartizați</div>
+
+                          {g.questions.length === 0 ? (
+                            <>
+                              {draft.questions.map((q, qi) => (
+                                <div key={qi} style={s.bbQuestionEdit}>
+                                  <input
+                                    style={s.input} placeholder={`Selecția ${qi + 1} — text`}
+                                    value={q.text}
+                                    onChange={(e) => setQuestionDrafts((prev) => {
+                                      const next = { ...prev };
+                                      next[g.matchId] = { ...next[g.matchId], questions: next[g.matchId].questions.map((qq, i) => i === qi ? { ...qq, text: e.target.value } : qq) };
+                                      return next;
+                                    })}
+                                  />
+                                  <div style={{ display: "flex", gap: 6 }}>
+                                    <input style={s.input} placeholder="Opțiune A (ex. Peste / DA)" value={q.options[0]}
+                                      onChange={(e) => setQuestionDrafts((prev) => {
+                                        const next = { ...prev };
+                                        next[g.matchId] = { ...next[g.matchId], questions: next[g.matchId].questions.map((qq, i) => i === qi ? { ...qq, options: [e.target.value, qq.options[1]] } : qq) };
+                                        return next;
+                                      })} />
+                                    <input style={s.input} placeholder="Opțiune B (ex. Sub / NU)" value={q.options[1]}
+                                      onChange={(e) => setQuestionDrafts((prev) => {
+                                        const next = { ...prev };
+                                        next[g.matchId] = { ...next[g.matchId], questions: next[g.matchId].questions.map((qq, i) => i === qi ? { ...qq, options: [qq.options[0], e.target.value] } : qq) };
+                                        return next;
+                                      })} />
+                                  </div>
+                                </div>
+                              ))}
+                              <input
+                                style={s.input} placeholder="Întrebare de baraj (ex. Câte goluri în total în etapă?)"
+                                value={draft.tiebreakerText}
+                                onChange={(e) => setQuestionDrafts((prev) => ({ ...prev, [g.matchId]: { ...prev[g.matchId], tiebreakerText: e.target.value } }))}
+                              />
+                              <button type="button" style={s.smallBtn} disabled={betBuilderBusy} onClick={() => handleSaveQuestions(g.matchId)}>💾 Salvează selecțiile</button>
+                            </>
+                          ) : (
+                            <div style={s.bbResolveList}>
+                              {g.questions.map((q) => (
+                                <div key={q.id} style={s.bbResolveRow}>
+                                  <span style={s.bbResolveText}>{q.text} ({q.options[0]} / {q.options[1]})</span>
+                                  <div style={{ display: "flex", gap: 4 }}>
+                                    {["pending", "hit", "miss"].map((r) => (
+                                      <button
+                                        key={r} type="button" disabled={betBuilderBusy}
+                                        style={{ ...s.bbResolveBtn, ...((g.results[q.id] || "pending") === r ? s.bbResolveBtnActive : {}) }}
+                                        onClick={() => handleResolveQuestion(g.matchId, q.id, r)}
+                                      >
+                                        {r === "pending" ? "⏳" : r === "hit" ? "✅" : "❌"}
+                                      </button>
+                                    ))}
+                                  </div>
+                                </div>
+                              ))}
+                              <div style={s.bbResolveRow}>
+                                <span style={s.bbResolveText}>🎯 Baraj: {g.tiebreakerText}</span>
+                                <input
+                                  type="number" style={{ ...s.input, width: 90 }} placeholder="Rezultat real"
+                                  defaultValue={g.tiebreakerRealAnswer ?? ""}
+                                  onBlur={(e) => { if (e.target.value !== "") handleResolveTiebreaker(g.matchId, e.target.value); }}
+                                />
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+
+                    {betBuilder.status !== "active" && (
+                      <button type="button" style={s.btn} disabled={betBuilderBusy} onClick={handleActivateBetBuilder}>
+                        ✨ Activează Bet Builder pentru toți jucătorii
+                      </button>
+                    )}
+                    {betBuilder.status === "active" && (
+                      <button type="button" style={s.btn} disabled={betBuilderBusy} onClick={handleRecomputeAllDuels}>
+                        🔄 Recalculează toate cele 9 dueluri
+                      </button>
+                    )}
+                  </>
+                )}
+                {betBuilderMsg && <p style={s.hint}>{betBuilderMsg}</p>}
+              </SectionCard>
+            )}
+
             {(tab === "results" || tab === "featured") && matches.length > 0 && (
               <input
                 style={s.searchInput}
@@ -2692,6 +2935,33 @@ export default function AdminScreen({ onBack }) {
           onOpenLeaderboard={() => setStoryPreview(null)}
         />
       )}
+      {betBuilderPreviewOpen && (
+        <div style={s.bbPreviewOverlay}>
+          <div style={s.bbPreviewBar}>
+            <span style={s.bbPreviewLabel}>👁 PREVIEW — mock, nimic salvat</span>
+            <button type="button" style={s.bbPreviewCloseBtn} onClick={() => setBetBuilderPreviewOpen(false)}>✕ Închide</button>
+          </div>
+          <div style={s.bbPreviewStates}>
+            {[
+              { id: "A", label: "📝 Completare" },
+              { id: "B", label: "🔒 Confirmat/Reveal" },
+              { id: "C", label: "🔴 Live" },
+              { id: "D", label: "🏁 Final" },
+            ].map((st) => (
+              <button
+                key={st.id} type="button"
+                style={{ ...s.bbPreviewStateBtn, ...(betBuilderPreviewState === st.id ? s.bbPreviewStateBtnActive : {}) }}
+                onClick={() => setBetBuilderPreviewState(st.id)}
+              >
+                {st.label}
+              </button>
+            ))}
+          </div>
+          <div style={s.bbPreviewBody}>
+            <BetBuilderScreen previewMode previewState={betBuilderPreviewState} embedded />
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -2740,6 +3010,34 @@ const s = {
     flexShrink: 0, background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.15)", borderRadius: 6,
     padding: "6px 10px", fontSize: 10.5, fontWeight: 700, color: "#fff", cursor: "pointer",
   },
+  bbMatchBlock: { marginTop: 12, marginBottom: 12, padding: 10, background: "rgba(255,255,255,0.03)", borderRadius: 8, border: "1px solid rgba(255,255,255,0.08)" },
+  bbMatchTitle: { fontSize: 12.5, fontWeight: 700, color: "#fff", marginBottom: 4 },
+  bbQuestionEdit: { display: "flex", flexDirection: "column", gap: 4, marginBottom: 8 },
+  bbResolveList: { display: "flex", flexDirection: "column", gap: 6, marginTop: 6 },
+  bbResolveRow: { display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 },
+  bbResolveText: { fontSize: 10.5, color: "#C7CAD4", flex: 1 },
+  bbResolveBtn: { width: 30, height: 26, borderRadius: 6, border: "1px solid rgba(255,255,255,0.15)", background: "rgba(255,255,255,0.05)", cursor: "pointer", fontSize: 12 },
+  bbResolveBtnActive: { background: "rgba(212,175,55,0.25)", borderColor: "#D4AF37" },
+  bbPreviewOverlay: {
+    position: "fixed", inset: 0, zIndex: 10000, background: "#0A0D14",
+    display: "flex", flexDirection: "column",
+  },
+  bbPreviewBar: {
+    display: "flex", justifyContent: "space-between", alignItems: "center",
+    padding: "10px 14px", background: "rgba(212,175,55,0.12)", borderBottom: "1px solid rgba(212,175,55,0.3)",
+  },
+  bbPreviewLabel: { fontSize: 11, fontWeight: 700, color: "#E8C766" },
+  bbPreviewCloseBtn: {
+    background: "rgba(255,255,255,0.08)", border: "1px solid rgba(255,255,255,0.2)", borderRadius: 6,
+    padding: "5px 10px", fontSize: 10.5, fontWeight: 700, color: "#fff", cursor: "pointer",
+  },
+  bbPreviewStates: { display: "flex", gap: 6, padding: "8px 14px", flexWrap: "wrap" },
+  bbPreviewStateBtn: {
+    flex: 1, minWidth: 70, padding: "8px 4px", borderRadius: 8, border: "1px solid rgba(255,255,255,0.15)",
+    background: "rgba(255,255,255,0.05)", color: "#C7CAD4", fontSize: 10, fontWeight: 700, cursor: "pointer",
+  },
+  bbPreviewStateBtnActive: { background: "rgba(212,175,55,0.25)", borderColor: "#D4AF37", color: "#E8C766" },
+  bbPreviewBody: { flex: 1, overflowY: "auto", padding: "0 16px 24px", maxWidth: 480, margin: "0 auto", width: "100%" },
   ghostBtnSmall: {
     display: "block", marginTop: 8, background: "transparent", border: "1px solid rgba(255,255,255,0.12)", borderRadius: 6,
     padding: "6px 10px", fontSize: 10, fontWeight: 600, color: "#8A93A6", cursor: "pointer",

@@ -35,14 +35,53 @@ export function normalizeFixture(f) {
   };
 }
 
-// ── Matching meci↔fixture — determinist, NU salvează dacă nu e sigur. ──
+// ── Matching meci↔fixture — determinist, NU salvează dacă nu e sigur.
+// Normalizare Unicode explicită — NFD (folosit pentru diacritice
+// combinabile: é→e, ă→a etc.) NU descompune literele scandinave/
+// speciale de mai jos (nu sunt diacritice combinabile în Unicode, sunt
+// litere de sine stătătoare) — fără această listă, ele erau ȘTERSE
+// silențios de filtrul [^a-z0-9], nu convertite (bug găsit concret:
+// "Bodø/Glimt" → "bodglimt", nu "bodoglimt", ruptor de matching). ──
+const SPECIAL_CHAR_MAP = {
+  ø: "o", å: "a", æ: "ae", œ: "oe", ł: "l", đ: "d", ð: "d", þ: "th", ß: "ss",
+};
+function replaceSpecialChars(s) {
+  return s.replace(/[øåæœłđðþß]/g, (c) => SPECIAL_CHAR_MAP[c] || c);
+}
 function slugTeam(name) {
-  return (name || "").toLowerCase().trim().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]/g, "");
+  return replaceSpecialChars((name || "").toLowerCase())
+    .trim().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]/g, "");
+}
+// ── Aliasuri EXPLICITE, controlate — NU fuzzy matching agresiv, cerut
+// explicit. Fiecare linie = un grup de forme echivalente ale ACELUIAȘI
+// club (deja slug-uite, fără spații/diacritice). Adaugă aici, pe
+// măsură ce apar cazuri noi confirmate — nu se ghicește nimic automat. ──
+const TEAM_ALIAS_GROUPS = [
+  ["manchesterunited", "manunited"],
+  ["manchestercity", "mancity"],
+  ["parissaintgermain", "psg"],
+  ["bodoglimt", "bodo"],
+  ["realmadrid", "madrid"],
+  ["internazionale", "inter", "intermilan"],
+  ["atleticomadrid", "atletico"],
+  ["bayernmunchen", "bayernmunich", "bayern", "fcbayernmunchen"],
+  ["borussiadortmund", "dortmund", "bvb"],
+  ["tottenhamhotspur", "tottenham", "spurs"],
+  ["newcastleunited", "newcastle"],
+  ["wolverhamptonwanderers", "wolves"],
+  ["brightonhovealbion", "brighton"],
+  ["westhamunited", "westham"],
+  ["leicestercity", "leicester"],
+  ["asroma", "roma"],
+  ["acmilan", "milan"],
+  ["napoli", "sscnapoli", "ssanapoli"],
+];
+function aliasCanonical(slug) {
+  const group = TEAM_ALIAS_GROUPS.find((g) => g.includes(slug));
+  return group ? group[0] : slug;
 }
 // Inițialele cuvintelor dintr-un nume — "Paris Saint Germain" → "psg".
-// Fallback pentru acronime pe care substring-ul simplu nu le prinde
-// (bug găsit concret: "PSG" nu apare ca subșir continuu în
-// "parissaintgermain", deci potrivirea eșua deși meciul chiar exista).
+// Fallback pentru acronime pe care substring-ul simplu nu le prinde.
 function nameInitials(name) {
   return (name || "").trim().split(/\s+/).filter(Boolean).map((w) => w[0]).join("").toLowerCase();
 }
@@ -50,6 +89,9 @@ function teamsLooselyMatch(ourName, apiName) {
   const a = slugTeam(ourName), b = slugTeam(apiName);
   if (!a || !b) return false;
   if (a === b || a.includes(b) || b.includes(a)) return true;
+  // Alias explicit — DOAR dacă ambele forme sunt în ACELAȘI grup
+  // cunoscut, nu o ghicire generică.
+  if (aliasCanonical(a) === aliasCanonical(b)) return true;
   // Fallback pe acronim — în oricare direcție (numele nostru scurt
   // faţă de inițialele celui lung de la API, sau invers).
   return a === nameInitials(apiName) || b === nameInitials(ourName);

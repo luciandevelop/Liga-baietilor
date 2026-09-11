@@ -77,6 +77,12 @@ export default {
         "1": "raiden_300x420.webp"
       }
     },
+    "sammy20": {
+      "nextIndex": 2,
+      "files": {
+        "1": "sammy20.webp"
+      }
+    },
     "sexu-ciobanu": {
       "nextIndex": 2,
       "files": {

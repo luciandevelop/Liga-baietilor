@@ -1640,19 +1640,6 @@ export default function AdminScreen({ onBack }) {
               </SectionCard>
             )}
 
-            {/* 🎟️ Bet Builder — mutat STRICT în Surpriza Săptămânii (tab "surprises"),
-                condiționat de mainType==="betBuilder". Nu mai există aici ca secțiune
-                permanentă — vezi mai jos, în blocul gameweeks.map() al tab-ului surprises.
-                Preview-ul (mock, zero Firestore) rămâne accesibil oricând, separat. */}
-            {tab === "results" && currentGameweek && (
-              <SectionCard title="🎟️ Bet Builder — Preview (dev)">
-                <p style={s.hint}>Demo izolat, mock, zero Firestore — independent de Surpriza activă a etapei.</p>
-                <button type="button" style={s.smallBtn} onClick={() => setBetBuilderPreviewOpen(true)}>
-                  👁 Preview Bet Builder
-                </button>
-              </SectionCard>
-            )}
-
             {(tab === "results" || tab === "featured") && matches.length > 0 && (
               <input
                 style={s.searchInput}
@@ -2504,6 +2491,16 @@ export default function AdminScreen({ onBack }) {
                     </>
                   );
                 })()}
+              </SectionCard>
+
+              <SectionCard title="🎟️ Preview Bet Builder — MOCK · ZERO FIRESTORE">
+                <p style={s.hint}>
+                  Demo izolat, 100% local — nu citește/scrie Firestore, nu schimbă Surpriza activă a etapei,
+                  nu face reveal, nu generează dueluri reale. Disponibil oricând, indiferent ce tip e ales/activ.
+                </p>
+                <button type="button" style={s.smallBtn} onClick={() => setBetBuilderPreviewOpen(true)}>
+                  👁 Preview Bet Builder
+                </button>
               </SectionCard>
 
               <SectionCard title="🥋 Preview Duel — doar în Admin, 100% local">

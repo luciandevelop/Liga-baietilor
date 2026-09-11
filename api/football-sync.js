@@ -37,7 +37,7 @@
 // ══════════════════════════════════════════════════════════════════
 import { getAdminDb } from "./_lib/firebaseAdmin.js";
 import { Timestamp } from "firebase-admin/firestore";
-import { normalizeFixture, matchFixture, detectDelta, normalizeLineup, leagueSupports } from "./_lib/footballLogic.js";
+import { normalizeFixture, matchFixture, detectDelta } from "./_lib/footballLogic.js";
 
 const DAILY_LIMIT = 100;
 const SAFETY_MARGIN = 85; // pentru matching (o singură dată/meci, nu urgent)
@@ -135,7 +135,7 @@ export default async function handler(req, res) {
     }
 
     let apiCallsThisRun = 0;
-    const results = { matched: 0, unmatched: 0, ambiguous: 0, live: 0, errors: [] };
+    const results = { matched: 0, unmatched: 0, ambiguous: 0, live: 0, updated: 0, errors: [] };
 
     // ── 4. Meciuri nemapate încă → o singură cerere /fixtures?date=
     // per dată unică necesară, DOAR dacă mai avem buget. ──
@@ -162,6 +162,12 @@ export default async function handler(req, res) {
             await db.collection("matches").doc(m.id).set({
               externalFixtureId: matchResult.fixtureId, externalProvider: "api-football",
               externalLeagueId: matchedFixture?.league?.id || null, externalSeason: matchedFixture?.league?.season || null,
+              // ── Câmpuri mici, doar pentru diagnostic vizual în Admin —
+              // ce a găsit API-ul, EXACT la momentul mapării, ca Adminul
+              // să poată verifica ÎNAINTE de meci, fără o citire nouă. ──
+              externalFixtureHomeTeam: matchedFixture?.teams?.home?.name || null,
+              externalFixtureAwayTeam: matchedFixture?.teams?.away?.name || null,
+              externalFixtureDate: matchedFixture?.fixture?.date || null,
             }, { merge: true });
             m.externalFixtureId = matchResult.fixtureId;
             m.externalLeagueId = matchedFixture?.league?.id || null;
@@ -244,6 +250,7 @@ export default async function handler(req, res) {
                 liveApiEvents: newSnapshot.events,
                 liveApiUpdatedAt: now,
               }, { merge: true });
+              results.updated++;
             }
 
             if (["1H", "2H", "HT", "ET"].includes(newSnapshot.status)) results.live++;
@@ -256,44 +263,11 @@ export default async function handler(req, res) {
       }
     }
 
-    // ── 7. LINEUP — max 3 încercări per fixture, în 3 ferestre fixe
-    // (neschimbat), dar acum folosind cache-ul DEJA citit la pasul 5,
-    // nu o citire nouă. ──
-    const MARGIN_LINEUP = 95;
-    const LINEUP_WINDOWS = [
-      [38, 50],  // încercarea 1 — 38 până la 50 min ÎNAINTE de kickoff
-      [18, 30],  // încercarea 2
-      [3, 15],   // încercarea 3, ultima șansă
-    ];
-
-    for (const m of mappedRelevant) {
-      const existing = cacheByFixtureId[m.externalFixtureId] || {};
-      const coverage = existing.coverage || null;
-      const kickoffMs = m.kickoffAt.toMillis();
-      const minutesToKickoff = (kickoffMs - now) / 60000;
-      const attempts = existing.lineupAttempts || 0;
-      const inAnyLineupWindow = LINEUP_WINDOWS.some(([from, to]) => minutesToKickoff >= from && minutesToKickoff <= to);
-
-      if (!existing.lineup && attempts < 3 && inAnyLineupWindow && leagueSupports(coverage, "lineups") && quota.requestsUsed + apiCallsThisRun < MARGIN_LINEUP) {
-        const cacheRef = db.collection("externalFootballCache").doc(String(m.externalFixtureId));
-        try {
-          const r = await fetch(`https://v3.football.api-sports.io/fixtures/lineups?fixture=${m.externalFixtureId}`, { headers: { "x-apisports-key": API_KEY } });
-          apiCallsThisRun++;
-          const newAttempts = attempts + 1;
-          if (r.ok) {
-            const d = await r.json();
-            const lineup = normalizeLineup(d.response);
-            if (lineup) await cacheRef.set({ lineup, lineupFoundAt: now, lineupAttempts: newAttempts }, { merge: true });
-            else await cacheRef.set({ lineupAttempts: newAttempts }, { merge: true });
-          } else {
-            await cacheRef.set({ lineupAttempts: newAttempts }, { merge: true });
-          }
-        } catch (err) {
-          results.errors.push(`lineup ${m.id}: ${String(err)}`);
-          await cacheRef.set({ lineupAttempts: attempts + 1 }, { merge: true }).catch(() => {});
-        }
-      }
-    }
+    // ── 7. LINEUP — ELIMINAT din sincronizarea automată (cerut explicit,
+    // pct. 7: "scoate consumul API inutil"). Admin introduce echipele
+    // manual. Codul de normalizare (normalizeLineup) rămâne neatins în
+    // footballLogic.js, doar neapelat de aici — dacă e nevoie vreodată,
+    // se poate reactiva fără nicio recuperare de logică pierdută. ──
 
     // ── 8. Quota — actualizată o singură dată, la final. ──
     quota.requestsUsed += apiCallsThisRun;
@@ -302,8 +276,21 @@ export default async function handler(req, res) {
     if (results.errors.length > 0) quota.lastError = results.errors[results.errors.length - 1];
     await quotaRef.set(quota, { merge: true });
 
+    // ── Sumar clar, cerut explicit — un 200 nu mai e singura informație
+    // utilă. eligibleMatches/alreadyMapped/liveFixtures arată direct
+    // dacă rularea a procesat efectiv ceva, nu doar că n-a crăpat. ──
     return res.status(200).json({
-      skipped: false, apiCallsThisRun, requestsUsedToday: quota.requestsUsed, ...results,
+      skipped: false,
+      eligibleMatches: relevant.length,
+      alreadyMapped: mappedRelevant.length - results.matched,
+      newlyMapped: results.matched,
+      unmatched: results.unmatched,
+      ambiguous: results.ambiguous,
+      liveFixtures: mappedIds.length,
+      updatedMatches: results.updated,
+      apiRequestsUsed: apiCallsThisRun,
+      requestsUsedToday: quota.requestsUsed,
+      errors: results.errors,
     });
   } catch (err) {
     // Eroare neașteptată — NU lăsăm cererea nescrisă; Feed-ul intern

@@ -14,6 +14,7 @@ import {
   writeBatch,
   onSnapshot,
   Timestamp,
+  increment,
 } from "firebase/firestore";
 import { db } from "../firebase";
 import { computeMatchPoints, computeRankingBonuses } from "./scoringEngine";
@@ -251,6 +252,15 @@ export async function updateMatchStatus(matchId, status) {
   }
   await updateDoc(doc(db, "matches", matchId), { status });
   await publishMatchPointsIfFinal(matchId);
+  if (status === "finished") {
+    const matchSnap = await getDoc(doc(db, "matches", matchId));
+    const gwId = matchSnap.exists() ? matchSnap.data().gameweekId : null;
+    if (gwId) {
+      await updateDoc(doc(db, "gameweeks", gwId), { resultsVersion: increment(1) }).catch((err) => {
+        console.error("Eroare la incrementarea resultsVersion:", err);
+      });
+    }
+  }
 }
 
 export async function listMatches(gameweekId) {
@@ -705,6 +715,15 @@ export async function saveMatchResult(matchId, { realScoreA, realScoreB, realCor
 
   await updateDoc(doc(db, "matches", matchId), { realScoreA, realScoreB, realCorners, realCards });
   await publishMatchPointsIfFinal(matchId);
+  // ── Marker de versiune, ATOMIC, pe același document deja citit mai
+  // sus — NU e scoring, doar un contor care spune "s-a validat ceva
+  // nou". Folosit STRICT de client, ca să detecteze cu certitudine
+  // dacă snapshot-ul clasamentului e depășit (vezi liveSnapshotStore.js
+  // și recomputeAndPublish din AdminScreen) — fără el, un write eșuat
+  // al snapshot-ului rămânea nedetectabil pentru useri. ──
+  await updateDoc(doc(db, "gameweeks", gameweekId), { resultsVersion: increment(1) }).catch((err) => {
+    console.error("Eroare la incrementarea resultsVersion:", err);
+  });
 }
 
 // Un meci are rezultat COMPLET dacă toate cele 4 valori sunt întregi >= 0.

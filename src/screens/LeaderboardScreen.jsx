@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { getCurrentSeason, getCurrentGameweek } from "../services/predictionsService";
+import { subscribeToLiveSnapshot, isSnapshotStale } from "../services/liveSnapshotStore";
 import { computeRankingBonuses } from "../services/scoringEngine";
 import {
   listGameweekScores,
@@ -208,57 +209,75 @@ export default function LeaderboardScreen({ onBack, user, isAdmin }) {
     return () => { cancelled = true; };
   }, [selectedSeasonId]);
 
-  // Clasament LIVE — sursă unică (getLiveGameweekPoints), STRICT meciuri,
-  // NICIODATĂ bonus de poziție. BUG P0 REPARAT: înainte citea din
-  // gameweekLiveScores, o colecție publicată MANUAL din Admin (bonus deja
-  // inclus acolo, plus rămânea învechită dacă Admin uita să republice după
-  // orice schimbare de scor) — asta producea EXACT genul de discrepanță
-  // semnalată (Clasament ≠ Player Card pentru același user, în același
-  // moment). Acum: calculat proaspăt de fiecare dată, nimic "publicat",
-  // nimic de uitat.
+  // ── Clasament LIVE — REARHITECTURAT (aprobat explicit, reducere masivă
+  // de citiri Firestore). Nu mai recalculează din matchPoints la fiecare
+  // 2 minute, per user — un singur listener partajat pe snapshot-ul deja
+  // calculat de Admin la validare (liveSnapshotStore.js). Diagnosticul
+  // detaliat (matchPointsFound, etc.) rămâne DOAR pentru Admin, o
+  // singură dată per etapă, NU mai polling — vezi efectul separat de
+  // mai jos. ──
   useEffect(() => {
     if (!gameweek || gameweek.status === "completed") return;
     setGwLive(true);
     setLiveRowsLoading(true);
     let cancelled = false;
+    let fallbackTried = false;
 
-    async function refresh(isFirst) {
+    async function applySnapshotRows(pointsByUid) {
+      setLivePointsByUid(pointsByUid);
+      const rows = Object.entries(pointsByUid).map(([uid, pts]) => ({
+        uid, pointsFromMatches: pts, rankingBonus: undefined, totalPoints: pts, rank: null,
+      }));
+      rows.sort((a, b) => b.pointsFromMatches - a.pointsFromMatches);
+      let rank = 0, prevPts = null;
+      rows.forEach((r, i) => {
+        if (prevPts === null || r.pointsFromMatches !== prevPts) { rank = i + 1; prevPts = r.pointsFromMatches; }
+        r.rank = rank;
+      });
+      setGwRows(rows);
+      const names = await getUserPublicProfiles(rows.map((r) => r.uid));
+      if (!cancelled) setProfiles((prev) => ({ ...prev, ...names }));
+    }
+
+    const unsub = subscribeToLiveSnapshot(gameweek.id, async (data) => {
+      if (cancelled) return;
+      if (!isSnapshotStale(data)) {
+        await applySnapshotRows(data.pointsByUid);
+        if (!cancelled) setLiveRowsLoading(false);
+        return;
+      }
+      // Fallback controlat — DOAR dacă snapshot-ul chiar nu există încă
+      // (nicio validare făcută vreodată în etapa asta). O SINGURĂ dată,
+      // NU polling.
+      if (fallbackTried) return;
+      fallbackTried = true;
       try {
         const { pointsByUid, diagnostic } = await getLiveGameweekPointsDiagnostic(gameweek.id);
         if (cancelled) return;
         setScoringDiagnostic(diagnostic);
-        setLivePointsByUid(pointsByUid);
-        const rows = Object.entries(pointsByUid).map(([uid, pts]) => ({
-          uid, pointsFromMatches: pts, rankingBonus: undefined, totalPoints: pts, rank: null,
-        }));
-        rows.sort((a, b) => b.pointsFromMatches - a.pointsFromMatches);
-        let rank = 0, prevPts = null;
-        rows.forEach((r, i) => {
-          if (prevPts === null || r.pointsFromMatches !== prevPts) { rank = i + 1; prevPts = r.pointsFromMatches; }
-          r.rank = rank;
-        });
-        setGwRows(rows);
-        const names = await getUserPublicProfiles(rows.map((r) => r.uid));
-        if (!cancelled) setProfiles((prev) => ({ ...prev, ...names }));
+        await applySnapshotRows(pointsByUid);
       } catch (err) {
-        // NU mai ascund eroarea într-un mesaj fals de "gol" — o păstrez
-        // explicit, vizibilă în diagnostic (doar pentru Admin).
-        console.error("Eroare la calculul live al etapei:", err);
+        console.error("Eroare la fallback-ul clasamentului live:", err);
         if (!cancelled) setScoringDiagnostic({ gameweekId: gameweek.id, status: "ERROR", errorMessage: err.message || String(err), state: "error" });
       } finally {
-        if (isFirst && !cancelled) setLiveRowsLoading(false);
+        if (!cancelled) setLiveRowsLoading(false);
       }
-    }
+    });
 
-    refresh(true);
-    // Interval mărit de la 30s la 2 minute — diagnosticul recalculează
-    // clasamentul live de la zero de fiecare dată (toți userii activi +
-    // toate meciurile etapei), cost real pe Firestore. Clasamentul
-    // rămâne suficient de proaspăt (scorurile reale nu se schimbă mai
-    // des de-atât oricum), dar de 4x mai puține citiri cât stai pe ecran.
-    const interval = setInterval(() => refresh(false), 120000);
-    return () => { cancelled = true; clearInterval(interval); };
+    return () => { cancelled = true; unsub(); };
   }, [gameweek?.id, gameweek?.status]);
+
+  // ── Diagnostic DETALIAT (matchPointsFound, totalMatches etc.) — STRICT
+  // pentru Admin, o singură dată per etapă, NU mai polling. Userii
+  // normali nu declanșează deloc acest apel scump acum. ──
+  useEffect(() => {
+    if (!isAdmin || !gameweek || gameweek.status === "completed") return;
+    let cancelled = false;
+    getLiveGameweekPointsDiagnostic(gameweek.id)
+      .then(({ diagnostic }) => { if (!cancelled) setScoringDiagnostic(diagnostic); })
+      .catch((err) => console.error("Eroare la diagnosticul Admin:", err));
+    return () => { cancelled = true; };
+  }, [isAdmin, gameweek?.id, gameweek?.status]);
 
   // Un singur card, indiferent din ce tab a fost apăsat — aceleași
   // statistici (etapă/sezon/general), citite din aceeași sursă.

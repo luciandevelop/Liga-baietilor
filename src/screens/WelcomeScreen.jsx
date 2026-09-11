@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { getCurrentSeason, getCurrentGameweek, loadUserPredictions, loadUserJoker, loadUserJokerExtra, isMatchLocked } from "../services/predictionsService";
 import { listGameweekScores, getLiveGameweekPointsDiagnostic, listSeasons } from "../services/adminService";
+import { subscribeToLiveSnapshot, isSnapshotStale } from "../services/liveSnapshotStore";
 import { markGwStorySeen, markSeasonStorySeen, storyKey } from "../services/storyService";
 import { slideUrl, seasonNumberFromList } from "../storyAssets";
 import StoryViewer from "../components/StoryViewer";
@@ -245,32 +246,39 @@ export default function WelcomeScreen({ user, profile, isAdmin, onOpenAdmin, onO
           const rows = await listGameweekScores(gw.id);
           await applyRows(rows.map((r) => ({ ...r, uid: r.userId })));
         } else {
-          // ── REPARAT — folosea listenLiveGameweekScores, care citește
-          // gameweekLiveScores: o colecție publicată MANUAL din Admin
-          // (butonul "Republică"), care poate rămâne stale dacă Admin
-          // corectează matchPoints separat, fără să republice explicit
-          // și acolo — exact cauza discrepanței Header ≠ Clasament,
-          // diagnosticată. Acum: ACEEAȘI sursă unică deja folosită de
-          // Clasament (getLiveGameweekPointsDiagnostic, din matchPoints,
-          // recalculat de la zero de fiecare dată — niciodată stale).
-          // Același interval de 2 minute, deja dovedit sigur pe cost
-          // acolo. Înlocuiește un LISTENER (onSnapshot) cu un fetch
-          // periodic — o sursă de citiri mai puțin, nu mai multe.
+          // ── REPARAT (arhitectură nouă) — nu mai recalculăm din
+          // matchPoints la fiecare 2 minute, per user. Un singur listener
+          // partajat pe snapshot-ul deja calculat de Admin la validare
+          // (liveSnapshotStore.js) — actualizare instant, fără polling,
+          // fără recitire de sute de documente. ──
           let cancelled = false;
-          async function refreshLivePoints() {
+          let fallbackTried = false;
+          unsubScores = subscribeToLiveSnapshot(gw.id, async (data) => {
+            if (cancelled) return;
+            if (!isSnapshotStale(data)) {
+              const rows = Object.entries(data.pointsByUid).map(([uid, totalPoints]) => ({ uid, totalPoints }));
+              await applyRows(rows);
+              return;
+            }
+            // ── Fallback controlat — DOAR dacă snapshot-ul chiar nu
+            // există încă (ex. nicio validare făcută vreodată în etapa
+            // asta). O SINGURĂ dată, NU polling — următoarea validare a
+            // Adminului populează snapshot-ul real, iar listenerul de
+            // mai sus preia automat, fără nicio acțiune suplimentară. ──
+            if (fallbackTried) return;
+            fallbackTried = true;
             try {
               const { pointsByUid } = await getLiveGameweekPointsDiagnostic(gw.id);
               if (cancelled) return;
               const rows = Object.entries(pointsByUid).map(([uid, totalPoints]) => ({ uid, totalPoints }));
               await applyRows(rows);
             } catch (err) {
-              console.error("Eroare la procesarea clasamentului live:", err);
+              console.error("Eroare la fallback-ul clasamentului live:", err);
               if (!cancelled) setStatsError("Clasamentul live nu s-a putut încărca complet.");
             }
-          }
-          refreshLivePoints();
-          const interval = setInterval(refreshLivePoints, 120000);
-          unsubScores = () => { cancelled = true; clearInterval(interval); };
+          });
+          const origUnsub = unsubScores;
+          unsubScores = () => { cancelled = true; origUnsub(); };
         }
       } catch (err) {
         console.error("Eroare la statisticile personale:", err);

@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { doc, getDoc, collection, getDocs, query, where } from "firebase/firestore";
+import { doc, getDoc, collection, getDocs, query, where, updateDoc, serverTimestamp } from "firebase/firestore";
 import { db, auth } from "../firebase";
 import { listAllSpecialCompetitions, listSpecialPhases, openSpecialPhase, resolveSpecialPhase, listAllSpecialPicksForPhases, SPECIALS_EDITION_ID, migrateSpecialPhasesToEdition } from "../services/specialsService";
 import { PICK_TYPES, getPhaseDefinition } from "../specialDefinitions";
@@ -844,6 +844,36 @@ export default function AdminScreen({ onBack }) {
   const [previewLoading, setPreviewLoading] = useState(false);
   const [republishLoading, setRepublishLoading] = useState(false);
   const [republishMessage, setRepublishMessage] = useState("");
+  const [snapshotRegenLoading, setSnapshotRegenLoading] = useState(false);
+  const [snapshotRegenMessage, setSnapshotRegenMessage] = useState("");
+
+  // ── Buton separat, pentru cazul rar în care scrierea automată a
+  // snapshot-ului (din recomputeAndPublish) a eșuat — reface EXACT
+  // același calcul, din aceeași sursă (previewGameweekResults), fără
+  // risc de dublare (e o recalculare completă, nu un increment). ──
+  async function handleRegenerateSnapshot() {
+    if (!selectedGameweekId) return;
+    setSnapshotRegenLoading(true);
+    setSnapshotRegenMessage("");
+    try {
+      const result = await previewGameweekResults(selectedGameweekId);
+      const freshGwSnap = await getDoc(doc(db, "gameweeks", selectedGameweekId));
+      const currentResultsVersion = freshGwSnap.exists() ? (freshGwSnap.data().resultsVersion || 0) : 0;
+      const pointsByUid = {};
+      result.rows.forEach((r) => { pointsByUid[r.uid] = r.pointsFromMatches || 0; });
+      await updateDoc(doc(db, "gameweeks", selectedGameweekId), {
+        liveSnapshotPointsByUid: pointsByUid,
+        liveSnapshotUpdatedAt: serverTimestamp(),
+        liveSnapshotResultsVersion: currentResultsVersion,
+      });
+      setSnapshotRegenMessage("✅ Snapshot regenerat cu succes.");
+    } catch (err) {
+      console.error("Eroare la regenerarea snapshot-ului:", err);
+      setSnapshotRegenMessage("❌ " + (err.message || String(err)));
+    } finally {
+      setSnapshotRegenLoading(false);
+    }
+  }
 
   async function handleRepublishMatchPoints() {
     if (!currentGameweek) return;
@@ -1200,6 +1230,40 @@ export default function AdminScreen({ onBack }) {
         // per validare (1 citire clasament + 1 tranzacție mică),
         // exact ca pentru etapa de mai sus — nu un mecanism nou. ──
         processRankChanges().catch((err) => console.error("Eroare la Feed (clasament general):", err));
+
+        // ── SNAPSHOT LIVE AL CLASAMENTULUI — cerut explicit, ca Header/
+        // Clasament să nu mai recalculeze fiecare din matchPoints, la
+        // fiecare 2 minute, per user. Reutilizează result.rows, DEJA
+        // calculat mai sus (previewGameweekResults) — ZERO citire nouă.
+        // pointsFromMatches, NU totalPoints — totalPoints include și
+        // rankingBonus-ul PROVIZORIU ("dacă etapa s-ar termina acum"),
+        // care NU trebuie amestecat în punctajul live afișat în
+        // Etapă/Sezon/General (rămâne separat, exact ca azi). Scris pe
+        // gameweeks/{id} — colecție deja citibilă de toți userii și
+        // scriibilă de Admin, exact ca la Story — zero regulă nouă.
+        //
+        // REPARAT — garanție împotriva snapshot-ului învechit nedetectat.
+        // saveMatchResult/updateMatchStatus incrementează ATOMIC
+        // resultsVersion, PE ACELAȘI document, exact când se validează un
+        // rezultat — indiferent dacă scrierea de mai jos a snapshot-ului
+        // reușește sau nu. Snapshot-ul își reține versiunea PENTRU CARE a
+        // fost calculat. Clientul compară cele două — dacă diferă, știe
+        // SIGUR că snapshot-ul e depășit, fără nicio presupunere. ──
+        try {
+          const freshGwSnap = await getDoc(doc(db, "gameweeks", selectedGameweekId));
+          const currentResultsVersion = freshGwSnap.exists() ? (freshGwSnap.data().resultsVersion || 0) : 0;
+          const pointsByUid = {};
+          result.rows.forEach((r) => { pointsByUid[r.uid] = r.pointsFromMatches || 0; });
+          await updateDoc(doc(db, "gameweeks", selectedGameweekId), {
+            liveSnapshotPointsByUid: pointsByUid,
+            liveSnapshotUpdatedAt: serverTimestamp(),
+            liveSnapshotResultsVersion: currentResultsVersion,
+          });
+        } catch (err) {
+          console.error("Eroare la scrierea snapshot-ului live al clasamentului:", err);
+          setPreviewMessage((prev) => (prev ? prev + " " : "") +
+            "⚠️ Rezultatul a fost salvat corect, dar actualizarea clasamentului live a eșuat. Jucătorii vor vedea temporar un calcul de rezervă (mai lent, dar corect), nu date vechi — apasă „🔄 Regenerează snapshot clasament” mai jos, sau reîncearcă validarea.");
+        }
       }
 
       if (result.incompleteMatchIds.length > 0) {
@@ -1615,6 +1679,16 @@ export default function AdminScreen({ onBack }) {
                   Apasă O SINGURĂ DATĂ, dacă meciuri deja Final nu apar în Clasament pentru useri obișnuiți. Necesar doar pentru meciuri finalizate ÎNAINTE de acest sistem.
                 </div>
                 {republishMessage && <div style={s.republishMsg}>{republishMessage}</div>}
+                <button
+                  type="button" style={{ ...s.republishBtn, marginTop: 10 }}
+                  disabled={snapshotRegenLoading || !currentGameweek} onClick={handleRegenerateSnapshot}
+                >
+                  {snapshotRegenLoading ? "Se regenerează…" : "🔄 Regenerează snapshot clasament"}
+                </button>
+                <div style={s.republishHint}>
+                  Folosește doar dacă ai văzut avertismentul „actualizarea clasamentului live a eșuat" după o validare — reface exact același calcul, fără risc de dublare.
+                </div>
+                {snapshotRegenMessage && <div style={s.republishMsg}>{snapshotRegenMessage}</div>}
               </div>
             )}
 

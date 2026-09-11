@@ -177,16 +177,16 @@ export default function AdminScreen({ onBack }) {
     }
   }
 
-  async function handleGenerateBetBuilder() {
-    if (!currentGameweek) return;
-    const featured = currentGameweek.featuredMatchIds || [];
+  async function handleGenerateBetBuilder(gameweekId, featuredMatchIds) {
+    if (!gameweekId) return;
+    const featured = featuredMatchIds || [];
     if (featured.length !== 3) { window.alert(`Trebuie exact 3 Meciuri ale Săptămânii setate pentru această etapă — sunt ${featured.length}.`); return; }
     if (!window.confirm("Generezi cele 9 dueluri Bet Builder ACUM? Se face o SINGURĂ DATĂ — nu se poate regenera după.")) return;
     setBetBuilderBusy(true);
     setBetBuilderMsg("");
     try {
-      await generateBetBuilderDuels(currentGameweek.id, featured);
-      await loadBetBuilder(currentGameweek.id);
+      await generateBetBuilderDuels(gameweekId, featured);
+      await loadBetBuilder(gameweekId);
       setBetBuilderMsg("✅ Dueluri generate.");
     } catch (err) {
       setBetBuilderMsg("❌ " + (err.message || String(err)));
@@ -195,7 +195,7 @@ export default function AdminScreen({ onBack }) {
     }
   }
 
-  async function handleSaveQuestions(matchId) {
+  async function handleSaveQuestions(gameweekId, matchId) {
     const draft = questionDrafts[matchId];
     if (!draft) return;
     const cleanQuestions = draft.questions.map((q, i) => ({ id: `q${i + 1}`, text: q.text, options: q.options }));
@@ -206,8 +206,8 @@ export default function AdminScreen({ onBack }) {
     if (!draft.tiebreakerText) { window.alert("Completează întrebarea de baraj pentru acest meci."); return; }
     setBetBuilderBusy(true);
     try {
-      await setMatchQuestions(currentGameweek.id, matchId, cleanQuestions, draft.tiebreakerText);
-      await loadBetBuilder(currentGameweek.id);
+      await setMatchQuestions(gameweekId, matchId, cleanQuestions, draft.tiebreakerText);
+      await loadBetBuilder(gameweekId);
       setBetBuilderMsg("✅ Selecții salvate pentru meci.");
     } catch (err) {
       window.alert(err.message || String(err));
@@ -216,12 +216,12 @@ export default function AdminScreen({ onBack }) {
     }
   }
 
-  async function handleActivateBetBuilder() {
+  async function handleActivateBetBuilder(gameweekId) {
     if (!window.confirm("Activezi Bet Builder pentru toți cei 18 jucători repartizați?")) return;
     setBetBuilderBusy(true);
     try {
-      await activateBetBuilder(currentGameweek.id);
-      await loadBetBuilder(currentGameweek.id);
+      await activateBetBuilder(gameweekId);
+      await loadBetBuilder(gameweekId);
       setBetBuilderMsg("✅ Bet Builder activat.");
     } catch (err) {
       window.alert(err.message || String(err));
@@ -230,11 +230,11 @@ export default function AdminScreen({ onBack }) {
     }
   }
 
-  async function handleResolveQuestion(matchId, questionId, result) {
+  async function handleResolveQuestion(gameweekId, matchId, questionId, result) {
     setBetBuilderBusy(true);
     try {
-      await resolveQuestion(currentGameweek.id, matchId, questionId, result);
-      await loadBetBuilder(currentGameweek.id);
+      await resolveQuestion(gameweekId, matchId, questionId, result);
+      await loadBetBuilder(gameweekId);
     } catch (err) {
       window.alert(err.message || String(err));
     } finally {
@@ -242,11 +242,11 @@ export default function AdminScreen({ onBack }) {
     }
   }
 
-  async function handleResolveTiebreaker(matchId, value) {
+  async function handleResolveTiebreaker(gameweekId, matchId, value) {
     setBetBuilderBusy(true);
     try {
-      await resolveTiebreaker(currentGameweek.id, matchId, value);
-      await loadBetBuilder(currentGameweek.id);
+      await resolveTiebreaker(gameweekId, matchId, value);
+      await loadBetBuilder(gameweekId);
     } catch (err) {
       window.alert(err.message || String(err));
     } finally {
@@ -254,11 +254,11 @@ export default function AdminScreen({ onBack }) {
     }
   }
 
-  async function handleRecomputeAllDuels() {
+  async function handleRecomputeAllDuels(gameweekId) {
     setBetBuilderBusy(true);
     setBetBuilderMsg("");
     try {
-      const outcomes = await resolveAllDuels(currentGameweek.id);
+      const outcomes = await resolveAllDuels(gameweekId);
       const done = outcomes.filter((o) => o.computed).length;
       setBetBuilderMsg(`✅ Recalculat — ${done}/9 dueluri au ambele bilete confirmate și au primit punctaj.`);
     } catch (err) {
@@ -268,10 +268,17 @@ export default function AdminScreen({ onBack }) {
     }
   }
 
+  // ── Bet Builder e controlat DOAR din zona Surpriza Săptămânii — se
+  // încarcă STRICT pentru etapa care are efectiv "betBuilder" ca tip
+  // ales, nicăieri altundeva, niciodată automat pentru alt tip. ──
+  const betBuilderGwId = tab === "surprises"
+    ? Object.keys(surprisesData).find((gwId) => surprisesData[gwId]?.secretMain?.type === "betBuilder")
+    : null;
   useEffect(() => {
-    if (tab === "results" && selectedGameweekId) loadBetBuilder(selectedGameweekId);
+    if (betBuilderGwId) loadBetBuilder(betBuilderGwId);
+    else setBetBuilder(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tab, selectedGameweekId]);
+  }, [betBuilderGwId]);
 
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState("");
@@ -1631,114 +1638,16 @@ export default function AdminScreen({ onBack }) {
               </SectionCard>
             )}
 
+            {/* 🎟️ Bet Builder — mutat STRICT în Surpriza Săptămânii (tab "surprises"),
+                condiționat de mainType==="betBuilder". Nu mai există aici ca secțiune
+                permanentă — vezi mai jos, în blocul gameweeks.map() al tab-ului surprises.
+                Preview-ul (mock, zero Firestore) rămâne accesibil oricând, separat. */}
             {tab === "results" && currentGameweek && (
-              <SectionCard title="🎟️ Bet Builder — Surpriza Mare">
-                <button type="button" style={{ ...s.smallBtn, marginBottom: 10 }} onClick={() => setBetBuilderPreviewOpen(true)}>
-                  👁 Preview Bet Builder (mock, izolat, fără Firestore)
+              <SectionCard title="🎟️ Bet Builder — Preview (dev)">
+                <p style={s.hint}>Demo izolat, mock, zero Firestore — independent de Surpriza activă a etapei.</p>
+                <button type="button" style={s.smallBtn} onClick={() => setBetBuilderPreviewOpen(true)}>
+                  👁 Preview Bet Builder
                 </button>
-                {!betBuilder ? (
-                  <>
-                    <p style={s.hint}>
-                      Necesită exact 3 ⭐ Meciuri ale Săptămânii setate pentru această etapă
-                      ({(currentGameweek.featuredMatchIds || []).length}/3 momentan) și exact 18 jucători activi.
-                    </p>
-                    <button type="button" style={s.btn} disabled={betBuilderBusy} onClick={handleGenerateBetBuilder}>
-                      🎲 Generează cele 9 dueluri
-                    </button>
-                  </>
-                ) : (
-                  <>
-                    <p style={s.hint}>Status: <b>{betBuilder.status === "active" ? "ACTIV" : "NEPUBLICAT (draft)"}</b> · {betBuilder.duels.length} dueluri generate.</p>
-                    {betBuilder.matchGroups.map((g) => {
-                      const match = matches.find((m) => m.id === g.matchId);
-                      const draft = questionDrafts[g.matchId] || { questions: [], tiebreakerText: "" };
-                      const duelsForMatch = betBuilder.duels.filter((d) => d.matchId === g.matchId);
-                      return (
-                        <div key={g.matchId} style={s.bbMatchBlock}>
-                          <div style={s.bbMatchTitle}>{match ? `${match.homeTeam} – ${match.awayTeam}` : g.matchId}</div>
-                          <div style={s.hint}>{duelsForMatch.length} dueluri · {duelsForMatch.flatMap((d) => [d.playerA, d.playerB]).length} jucători repartizați</div>
-
-                          {g.questions.length === 0 ? (
-                            <>
-                              {draft.questions.map((q, qi) => (
-                                <div key={qi} style={s.bbQuestionEdit}>
-                                  <input
-                                    style={s.input} placeholder={`Selecția ${qi + 1} — text`}
-                                    value={q.text}
-                                    onChange={(e) => setQuestionDrafts((prev) => {
-                                      const next = { ...prev };
-                                      next[g.matchId] = { ...next[g.matchId], questions: next[g.matchId].questions.map((qq, i) => i === qi ? { ...qq, text: e.target.value } : qq) };
-                                      return next;
-                                    })}
-                                  />
-                                  <div style={{ display: "flex", gap: 6 }}>
-                                    <input style={s.input} placeholder="Opțiune A (ex. Peste / DA)" value={q.options[0]}
-                                      onChange={(e) => setQuestionDrafts((prev) => {
-                                        const next = { ...prev };
-                                        next[g.matchId] = { ...next[g.matchId], questions: next[g.matchId].questions.map((qq, i) => i === qi ? { ...qq, options: [e.target.value, qq.options[1]] } : qq) };
-                                        return next;
-                                      })} />
-                                    <input style={s.input} placeholder="Opțiune B (ex. Sub / NU)" value={q.options[1]}
-                                      onChange={(e) => setQuestionDrafts((prev) => {
-                                        const next = { ...prev };
-                                        next[g.matchId] = { ...next[g.matchId], questions: next[g.matchId].questions.map((qq, i) => i === qi ? { ...qq, options: [qq.options[0], e.target.value] } : qq) };
-                                        return next;
-                                      })} />
-                                  </div>
-                                </div>
-                              ))}
-                              <input
-                                style={s.input} placeholder="Întrebare de baraj (ex. Câte goluri în total în etapă?)"
-                                value={draft.tiebreakerText}
-                                onChange={(e) => setQuestionDrafts((prev) => ({ ...prev, [g.matchId]: { ...prev[g.matchId], tiebreakerText: e.target.value } }))}
-                              />
-                              <button type="button" style={s.smallBtn} disabled={betBuilderBusy} onClick={() => handleSaveQuestions(g.matchId)}>💾 Salvează selecțiile</button>
-                            </>
-                          ) : (
-                            <div style={s.bbResolveList}>
-                              {g.questions.map((q) => (
-                                <div key={q.id} style={s.bbResolveRow}>
-                                  <span style={s.bbResolveText}>{q.text} ({q.options[0]} / {q.options[1]})</span>
-                                  <div style={{ display: "flex", gap: 4 }}>
-                                    {["pending", "hit", "miss"].map((r) => (
-                                      <button
-                                        key={r} type="button" disabled={betBuilderBusy}
-                                        style={{ ...s.bbResolveBtn, ...((g.results[q.id] || "pending") === r ? s.bbResolveBtnActive : {}) }}
-                                        onClick={() => handleResolveQuestion(g.matchId, q.id, r)}
-                                      >
-                                        {r === "pending" ? "⏳" : r === "hit" ? "✅" : "❌"}
-                                      </button>
-                                    ))}
-                                  </div>
-                                </div>
-                              ))}
-                              <div style={s.bbResolveRow}>
-                                <span style={s.bbResolveText}>🎯 Baraj: {g.tiebreakerText}</span>
-                                <input
-                                  type="number" style={{ ...s.input, width: 90 }} placeholder="Rezultat real"
-                                  defaultValue={g.tiebreakerRealAnswer ?? ""}
-                                  onBlur={(e) => { if (e.target.value !== "") handleResolveTiebreaker(g.matchId, e.target.value); }}
-                                />
-                              </div>
-                            </div>
-                          )}
-                        </div>
-                      );
-                    })}
-
-                    {betBuilder.status !== "active" && (
-                      <button type="button" style={s.btn} disabled={betBuilderBusy} onClick={handleActivateBetBuilder}>
-                        ✨ Activează Bet Builder pentru toți jucătorii
-                      </button>
-                    )}
-                    {betBuilder.status === "active" && (
-                      <button type="button" style={s.btn} disabled={betBuilderBusy} onClick={handleRecomputeAllDuels}>
-                        🔄 Recalculează toate cele 9 dueluri
-                      </button>
-                    )}
-                  </>
-                )}
-                {betBuilderMsg && <p style={s.hint}>{betBuilderMsg}</p>}
               </SectionCard>
             )}
 
@@ -2229,6 +2138,118 @@ export default function AdminScreen({ onBack }) {
                               </>
                             );
                           })()}
+                        </div>
+                      )}
+
+                      {mainType === "betBuilder" && mainRevealed && (
+                        <div style={s.triviaBox}>
+                          {(!betBuilder || betBuilder.gameweekId !== gw.id) ? (
+                            <p style={s.hint}>Se încarcă…</p>
+                          ) : !betBuilder.duels || betBuilder.duels.length === 0 ? (
+                            <>
+                              <p style={s.hint}>
+                                ⭐ {(gw.featuredMatchIds || []).length}/3 Meciurile Săptămânii · 👥 18/18 jucători necesari
+                              </p>
+                              <button
+                                type="button" style={s.approveBtn} disabled={betBuilderBusy}
+                                onClick={() => handleGenerateBetBuilder(gw.id, gw.featuredMatchIds)}
+                              >
+                                🎲 Generează cele 9 dueluri
+                              </button>
+                            </>
+                          ) : (
+                            <>
+                              <p style={s.hint}>Status: <b>{betBuilder.status === "active" ? "ACTIV" : "NEPUBLICAT (draft)"}</b> · {betBuilder.duels.length} dueluri generate.</p>
+                              {betBuilder.matchGroups.map((g) => {
+                                const match = matches.find((m) => m.id === g.matchId);
+                                const draft = questionDrafts[g.matchId] || { questions: [], tiebreakerText: "" };
+                                const duelsForMatch = betBuilder.duels.filter((d) => d.matchId === g.matchId);
+                                return (
+                                  <div key={g.matchId} style={s.bbMatchBlock}>
+                                    <div style={s.bbMatchTitle}>{match ? `${match.homeTeam} – ${match.awayTeam}` : g.matchId}</div>
+                                    <div style={s.hint}>{duelsForMatch.length} dueluri · {duelsForMatch.flatMap((d) => [d.playerA, d.playerB]).length} jucători repartizați</div>
+
+                                    {g.questions.length === 0 ? (
+                                      <>
+                                        {draft.questions.map((q, qi) => (
+                                          <div key={qi} style={s.bbQuestionEdit}>
+                                            <input
+                                              style={s.input} placeholder={`Selecția ${qi + 1} — text`}
+                                              value={q.text}
+                                              onChange={(e) => setQuestionDrafts((prev) => {
+                                                const next = { ...prev };
+                                                next[g.matchId] = { ...next[g.matchId], questions: next[g.matchId].questions.map((qq, i) => i === qi ? { ...qq, text: e.target.value } : qq) };
+                                                return next;
+                                              })}
+                                            />
+                                            <div style={{ display: "flex", gap: 6 }}>
+                                              <input style={s.input} placeholder="Opțiune A (ex. Peste / DA)" value={q.options[0]}
+                                                onChange={(e) => setQuestionDrafts((prev) => {
+                                                  const next = { ...prev };
+                                                  next[g.matchId] = { ...next[g.matchId], questions: next[g.matchId].questions.map((qq, i) => i === qi ? { ...qq, options: [e.target.value, qq.options[1]] } : qq) };
+                                                  return next;
+                                                })} />
+                                              <input style={s.input} placeholder="Opțiune B (ex. Sub / NU)" value={q.options[1]}
+                                                onChange={(e) => setQuestionDrafts((prev) => {
+                                                  const next = { ...prev };
+                                                  next[g.matchId] = { ...next[g.matchId], questions: next[g.matchId].questions.map((qq, i) => i === qi ? { ...qq, options: [qq.options[0], e.target.value] } : qq) };
+                                                  return next;
+                                                })} />
+                                            </div>
+                                          </div>
+                                        ))}
+                                        <input
+                                          style={s.input} placeholder="Întrebare de baraj (ex. Câte goluri în total în etapă?)"
+                                          value={draft.tiebreakerText}
+                                          onChange={(e) => setQuestionDrafts((prev) => ({ ...prev, [g.matchId]: { ...prev[g.matchId], tiebreakerText: e.target.value } }))}
+                                        />
+                                        <button type="button" style={s.smallBtn} disabled={betBuilderBusy} onClick={() => handleSaveQuestions(gw.id, g.matchId)}>💾 Salvează selecțiile</button>
+                                      </>
+                                    ) : (
+                                      <div style={s.bbResolveList}>
+                                        {g.questions.map((q) => (
+                                          <div key={q.id} style={s.bbResolveRow}>
+                                            <span style={s.bbResolveText}>{q.text} ({q.options[0]} / {q.options[1]})</span>
+                                            <div style={{ display: "flex", gap: 4 }}>
+                                              {["pending", "hit", "miss"].map((r) => (
+                                                <button
+                                                  key={r} type="button" disabled={betBuilderBusy}
+                                                  style={{ ...s.bbResolveBtn, ...((g.results[q.id] || "pending") === r ? s.bbResolveBtnActive : {}) }}
+                                                  onClick={() => handleResolveQuestion(gw.id, g.matchId, q.id, r)}
+                                                >
+                                                  {r === "pending" ? "⏳" : r === "hit" ? "✅" : "❌"}
+                                                </button>
+                                              ))}
+                                            </div>
+                                          </div>
+                                        ))}
+                                        <div style={s.bbResolveRow}>
+                                          <span style={s.bbResolveText}>🎯 Baraj: {g.tiebreakerText}</span>
+                                          <input
+                                            type="number" style={{ ...s.input, width: 90 }} placeholder="Rezultat real"
+                                            defaultValue={g.tiebreakerRealAnswer ?? ""}
+                                            onBlur={(e) => { if (e.target.value !== "") handleResolveTiebreaker(gw.id, g.matchId, e.target.value); }}
+                                          />
+                                        </div>
+                                      </div>
+                                    )}
+                                  </div>
+                                );
+                              })}
+
+                              {betBuilder.status !== "active" && (
+                                <button type="button" style={s.btn} disabled={betBuilderBusy} onClick={() => handleActivateBetBuilder(gw.id)}>
+                                  ✨ Activează Bet Builder pentru toți jucătorii
+                                </button>
+                              )}
+                              {betBuilder.status === "active" && (
+                                <button type="button" style={s.btn} disabled={betBuilderBusy} onClick={() => handleRecomputeAllDuels(gw.id)}>
+                                  🔄 Recalculează toate cele 9 dueluri
+                                </button>
+                              )}
+                            </>
+                          )}
+                          {betBuilderMsg && <p style={s.hint}>{betBuilderMsg}</p>}
                         </div>
                       )}
 

@@ -1,11 +1,11 @@
 import { useState } from "react";
-import { PICK_TYPES, GOLGHETER_ENRICHMENT } from "../specialDefinitions";
+import { PICK_TYPES, PLAYER_PORTRAIT_ENRICHMENT, PHASES_WITH_PLAYER_PORTRAITS } from "../specialDefinitions";
 import { saveSpecialPick } from "../services/specialsService";
 import ClubLogo from "./ClubLogo";
 import { color, font, radius } from "../matchdayTheme";
 
 export default function SpecialPhasePicker({ phaseDef, phaseState, uid, ownPick, onSaved }) {
-  const showLogos = phaseDef.optionsSource === "teams" || phaseDef.id === "cl-golgheter";
+  const showLogos = phaseDef.optionsSource === "teams" || PHASES_WITH_PLAYER_PORTRAITS.includes(phaseDef.id);
   const [selection, setSelection] = useState(() => {
     if (phaseDef.type === PICK_TYPES.SINGLE) return ownPick?.choice || null;
     return ownPick?.choices || [];
@@ -62,14 +62,15 @@ export default function SpecialPhasePicker({ phaseDef, phaseState, uid, ownPick,
           const rankIndex = Array.isArray(selection) ? selection.indexOf(opt.id) : -1;
           const isMultiSelected = rankIndex >= 0;
           const isSelected = isSingleSelected || isMultiSelected;
-          const isGolgheter = phaseDef.id === "cl-golgheter";
+          const isGolgheter = PHASES_WITH_PLAYER_PORTRAITS.includes(phaseDef.id);
           const isAltul = opt.id === "altul" || opt.id === "alta";
 
-          // ── Cardul de portret — DOAR pentru Golgheter, DOAR pentru
-          // jucătorii reali (nu ALTUL). Restul fazelor (echipe) rămân
-          // exact cum erau — nimic schimbat pentru ele. ──
+          // ── Cardul de portret — pentru orice fază din
+          // PHASES_WITH_PLAYER_PORTRAITS (Golgheter, Balonul de Aur),
+          // DOAR pentru jucătorii reali (nu ALTUL). Restul fazelor
+          // (echipe) rămân exact cum erau — nimic schimbat pentru ele. ──
           if (isGolgheter && !isAltul) {
-            const enrichment = GOLGHETER_ENRICHMENT[opt.id] || null;
+            const enrichment = PLAYER_PORTRAIT_ENRICHMENT[opt.id] || null;
             return (
               <button
                 key={opt.id}

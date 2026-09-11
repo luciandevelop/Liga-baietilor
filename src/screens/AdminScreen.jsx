@@ -268,18 +268,6 @@ export default function AdminScreen({ onBack }) {
     }
   }
 
-  // ── Bet Builder e controlat DOAR din zona Surpriza Săptămânii — se
-  // încarcă STRICT pentru etapa care are efectiv "betBuilder" ca tip
-  // ales, nicăieri altundeva, niciodată automat pentru alt tip. ──
-  const betBuilderGwId = tab === "surprises"
-    ? Object.keys(surprisesData).find((gwId) => surprisesData[gwId]?.secretMain?.type === "betBuilder")
-    : null;
-  useEffect(() => {
-    if (betBuilderGwId) loadBetBuilder(betBuilderGwId);
-    else setBetBuilder(null);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [betBuilderGwId]);
-
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState("");
 
@@ -339,6 +327,20 @@ export default function AdminScreen({ onBack }) {
 
   // ── Surprizele Săptămânii (Admin) ──
   const [surprisesData, setSurprisesData] = useState({}); // gameweekId -> { public, secretMain, secretBonus }
+  // ── Bet Builder e controlat DOAR din zona Surpriza Săptămânii — se
+  // încarcă STRICT pentru etapa care are efectiv "betBuilder" ca tip
+  // ales, nicăieri altundeva, niciodată automat pentru alt tip.
+  // REPARAT — trebuie să vină DUPĂ declararea reală a surprisesData
+  // (mai sus), altfel aruncă "Cannot access before initialization"
+  // exact quando tab-ul Surprize randează (ecran negru confirmat). ──
+  const betBuilderGwId = tab === "surprises"
+    ? Object.keys(surprisesData).find((gwId) => surprisesData[gwId]?.secretMain?.type === "betBuilder")
+    : null;
+  useEffect(() => {
+    if (betBuilderGwId) loadBetBuilder(betBuilderGwId);
+    else setBetBuilder(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [betBuilderGwId]);
   const [surprisesLoading, setSurprisesLoading] = useState(false);
   const [surpriseActionKey, setSurpriseActionKey] = useState(""); // "{gwId}_{action}" cu acțiune în curs
   const [sabotajProgress, setSabotajProgress] = useState({}); // gameweekId -> { chosenPickers, takenTargets }

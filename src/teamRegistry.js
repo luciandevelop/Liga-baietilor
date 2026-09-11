@@ -13,6 +13,7 @@
 // Actualizare sezon viitor: se editează STRICT listele de mai jos —
 // niciun ecran, niciun component nu se schimbă.
 // ══════════════════════════════════════════════════════════════════
+import { BALLON_DOR_2026_OPTIONS } from "./specialDefinitions";
 
 function team(id, label) {
   return { id, label };
@@ -136,7 +137,14 @@ export function resolveTeamOptions(competitionId, phaseId) {
   if (competitionId === "uefa-champions-league") {
     if (phaseId === "cl-winner") return [...CL_LEAGUE_PHASE_TEAMS, ALTA_OPTION];
     if (phaseId === "cl-top8") return CL_LEAGUE_PHASE_TEAMS; // ordonare — ALTA nu are sens într-un clasament
-    return null; // cl-quarters / cl-semifinals / cl-final — admin introduce manual
+    return null; // cl-quarters / cl-semifinals / cl-final / cl-golgheter — admin introduce manual (NEATINS, cerut explicit — Golgheter e deja LIVE, cu predicții salvate)
+  }
+  // ── Balonul de Aur — Specială NOUĂ, izolată complet de tot ce
+  // există deja. Aceeași convenție ca la echipe: listă fixă + ALTUL,
+  // deja inclus în BALLON_DOR_2026_OPTIONS. Adminul apasă "📋
+  // Pre-completează", nu tastează nimic. ──
+  if (competitionId === "individual-awards" && phaseId === "ballon-dor-2026") {
+    return BALLON_DOR_2026_OPTIONS;
   }
   switch (competitionId) {
     case "uefa-europa-league":

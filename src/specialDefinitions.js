@@ -81,6 +81,62 @@ export const GOLGHETER_ENRICHMENT = Object.fromEntries(
   ])
 );
 
+// ══════════════════════════════════════════════════════════════════
+// 🏆 BALLON D'OR 2026 — Specială nouă, aceeași structură EXACTĂ ca
+// Golgheter (PICK_TYPES.SINGLE, optionsSource "players", ALTUL ca
+// opțiune normală, scorată identic — computeSpecialPoints e deja
+// generic, nu s-a schimbat nimic acolo). 10 candidați exacți, cerut
+// explicit — NU adăuga alții.
+//
+// Fotografii — verificate direct pe disc, în public/assets/scorers/,
+// ÎNAINTE de a scrie acest fișier. 5 din 10 EXISTĂ deja (reutilizate,
+// nu duplicate); 5 LIPSESC — rămân cu filename:null, PlayerPortrait
+// arată deja un fallback grațios (litera inițială) în acest caz, nu
+// se rupe nimic până se adaugă fișierele reale.
+// ══════════════════════════════════════════════════════════════════
+export const BALLON_DOR_2026_OPTIONS = [
+  { id: "kane", label: "Harry Kane", club: "Bayern München", image: "kane" },
+  { id: "yamal", label: "Lamine Yamal", club: "Barcelona", image: "yamal" },
+  { id: "mbappe", label: "Kylian Mbappé", club: "Real Madrid", image: "mbappe" },
+  { id: "rodri", label: "Rodri", club: "Barcelona", image: "rodri" },
+  { id: "kvaratskhelia", label: "Khvicha Kvaratskhelia", club: "Paris Saint-Germain", image: "kvaratskhelia" },
+  { id: "messi", label: "Lionel Messi", club: "Inter Miami", image: "messi" },
+  { id: "cubarsi", label: "Pau Cubarsí", club: "Barcelona", image: "cubarsi" },
+  { id: "fabian-ruiz", label: "Fabián Ruiz", club: "Paris Saint-Germain", image: "fabian-ruiz" },
+  { id: "dembele", label: "Ousmane Dembélé", club: "Paris Saint-Germain", image: "dembele" },
+  { id: "olise", label: "Michael Olise", club: "Bayern München", image: "olise" },
+  { id: "altul", label: "ALTUL" },
+];
+
+// ── DOAR cele 5 confirmate EXISTENTE pe disc — verificat exhaustiv,
+// nu presupus. Ceilalți 5 rămân fără intrare (filename:null mai jos),
+// PÂNĂ Lu confirmă fișierele — vezi lista exactă cerută în raport. ──
+export const BALLON_DOR_PORTRAIT_FILENAME = {
+  "harry-kane": "harry-kane.webp",
+  "lamine-yamal": "lamine-yamal.webp",
+  "kylian-mbappe": "kylian-mbappe.webp",
+  "khvicha-kvaratskhelia": "khvicha-kvaratskhelia.webp",
+  "ousmane-dembele": "ousmane-dembele.webp",
+};
+
+export const BALLON_DOR_ENRICHMENT = Object.fromEntries(
+  BALLON_DOR_2026_OPTIONS.filter((o) => o.id !== "altul").map((o) => [
+    slugifyLabel(o.label),
+    { club: o.club, filename: BALLON_DOR_PORTRAIT_FILENAME[slugifyLabel(o.label)] || null },
+  ])
+);
+
+// ── ID-urile fazelor cu portret de jucător (nu doar logo de club) —
+// sursă unică, folosită de SpecialPhasePicker.jsx pentru a decide
+// randarea de tip "card cu poză", generalizată minimal față de
+// verificarea inițială (hardcodată strict pe Golgheter). ──
+export const PHASES_WITH_PLAYER_PORTRAITS = ["cl-golgheter", "ballon-dor-2026"];
+
+// Hartă combinată — cheie = slug jucător, cere DOAR una dintre cele
+// două surse (id-urile de jucători nu se suprapun între cele două
+// Speciale, deci merge-ul e sigur, fără coliziuni).
+export const PLAYER_PORTRAIT_ENRICHMENT = { ...GOLGHETER_ENRICHMENT, ...BALLON_DOR_ENRICHMENT };
+
 // ── Speciale de tip "Top N cu poziții" — funcție comună (cerută
 // explicit, secțiunea 26), valorile configurabile per fază, NU
 // presupuse identice. Reutilizează exact PICK_TYPES.RANKED, deja
@@ -150,6 +206,22 @@ export const SPECIAL_COMPETITIONS = [
         requiresPhase: "cl-semifinals",
         // Independent de cl-winner — alegerea de dinainte de sezon NU se
         // suprascrie și nu se pierde dacă userul alege altă echipă aici.
+      },
+    ],
+  },
+  {
+    id: "individual-awards",
+    name: "Premii Individuale",
+    tier: "secondary",
+    phases: [
+      {
+        id: "ballon-dor-2026",
+        label: "Câștigător Balonul de Aur 2026",
+        icon: "🏆",
+        type: PICK_TYPES.SINGLE,
+        points: 500,
+        optionsSource: "players",
+        requiresPhase: null,
       },
     ],
   },

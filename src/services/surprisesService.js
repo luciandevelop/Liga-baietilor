@@ -19,6 +19,7 @@ export const MAIN_CATALOG = [
   { id: "trivia", label: "Trivia Etapei", active: true },
   { id: "zaruri", label: "Zarurile", active: true },
   { id: "sabotaj", label: "Sabotaj", active: true },
+  { id: "betBuilder", label: "🎟️ Bet Builder", active: true },
 ];
 
 export const BONUS_CATALOG = [
@@ -254,6 +255,9 @@ export async function revealMain(gameweekId) {
   // anterioară finalizată, rămâne null — tratat mai jos ca fallback random.
   const previousRanking = await getPreviousGameweekRanking(gameweekId);
   const previousRankingTieBreak = await getPreviousGameweekRankingWithTieBreak(gameweekId);
+  // Pentru Bet Builder — citit ÎNAINTE de tranzacție, la fel ca restul.
+  const gwSnapForFeatured = await getDoc(doc(db, "gameweeks", gameweekId));
+  const featuredMatchIdsForBetBuilder = gwSnapForFeatured.exists() ? (gwSnapForFeatured.data().featuredMatchIds || []) : [];
 
   await runTransaction(db, async (tx) => {
     const pubSnap = await tx.get(publicRef);
@@ -383,6 +387,14 @@ export async function revealMain(gameweekId) {
         : activeUids;
       const usedRandomFallback = !previousRankingTieBreak || previousRankingTieBreak.length === 0;
       config = { order, usedRandomFallback };
+    } else if (type === "betBuilder") {
+      // ── La fel ca "sabotaj" — reveal-ul DOAR marchează tipul ales și
+      // face vizibilă existența Bet Builder-ului; duelurile în sine
+      // (deja construite, testate, neatinse) se generează separat, prin
+      // generateBetBuilderDuels() din Admin — după reveal, când Admin
+      // are deja cele 3 ⭐ Meciuri ale Săptămânii confirmate. Nimic din
+      // mecanica Bet Builder existentă nu se modifică aici. ──
+      config = { featuredMatchIds: featuredMatchIdsForBetBuilder };
     }
 
     tx.set(secretRef, { ...secretData, type, config }, { merge: true });

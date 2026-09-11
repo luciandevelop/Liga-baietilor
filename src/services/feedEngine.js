@@ -1234,6 +1234,13 @@ export function mergeFeedEvents(matchesById, ...groups) {
   // IMPORTANCE existent (max 100) — azi bate mereu orice altceva;
   // mâine (60) rămâne sub azi, dar peste conținutul obișnuit. ──
   function dateRelevanceBoost(ev) {
+    // ── Știrea publicată manual de Admin nu are matchId (nu e legată
+    // neapărat de un meci anume) — dar e mereu "despre acum", exact ca
+    // un meci de azi. Fără asta, orice rezultat de meci al zilei
+    // (+200) o îngroapă complet, indiferent cât de mare îi e
+    // importanța nominală — contrar scopului ei explicit, de "plasă
+    // de siguranță" vizibilă. Același boost, aceeași regulă. ──
+    if (ev.subtype === "manual") return 200;
     const matchId = ev.detail?.matchId || ev.metadata?.matchId;
     if (!matchId) return 0;
     const match = matchesById[matchId];

@@ -589,6 +589,32 @@ export default function AdminScreen({ onBack }) {
   const [liveDataLoading, setLiveDataLoading] = useState(false);
   const [testingConnection, setTestingConnection] = useState(false);
   const [testConnectionResult, setTestConnectionResult] = useState("");
+  // ── 🔄 Verifică API meciurile — diagnostic on-demand de mapping,
+  // per meci al etapei curente. Nicio citire/scriere automată — DOAR
+  // la apăsarea butonului. ──
+  const [fixtureCheckLoading, setFixtureCheckLoading] = useState(false);
+  const [fixtureCheckResults, setFixtureCheckResults] = useState(null); // { totalMatches, alreadyMapped, checkedNow, apiRequestsUsed, results:[...] } | null
+  const [fixtureCheckError, setFixtureCheckError] = useState("");
+
+  async function handleCheckFixtures() {
+    if (!selectedGameweekId) { setFixtureCheckError("Alege o etapă întâi."); return; }
+    setFixtureCheckLoading(true);
+    setFixtureCheckError("");
+    try {
+      const idToken = await auth.currentUser.getIdToken();
+      const resp = await fetch(`/api/football-diagnose?gameweekId=${encodeURIComponent(selectedGameweekId)}`, {
+        headers: { Authorization: `Bearer ${idToken}` },
+      });
+      const data = await resp.json();
+      if (!resp.ok) { setFixtureCheckError(data.error || `Eroare ${resp.status}`); return; }
+      setFixtureCheckResults(data);
+    } catch (err) {
+      setFixtureCheckError("Eroare — vezi consola.");
+      console.error("Eroare la verificarea fixture-urilor:", err);
+    } finally {
+      setFixtureCheckLoading(false);
+    }
+  }
   const [feedAdminFun, setFeedAdminFun] = useState([]);
   const [feedLoading, setFeedLoading] = useState(false);
   const [newFunLabel, setNewFunLabel] = useState("");
@@ -2669,6 +2695,52 @@ export default function AdminScreen({ onBack }) {
                   {testConnectionResult && <p style={s.hint}>{testConnectionResult}</p>}
                 </SectionCard>
 
+                <SectionCard title="🎯 Fixture Mapping — verificare per meci">
+                  <p style={s.hint}>
+                    Verifică, pentru cele 20 de meciuri ale etapei selectate mai sus, dacă sunt legate corect
+                    de un fixture real API-Football — ÎNAINTE de kickoff. Nu remapează meciurile deja conectate
+                    (0 request API pentru ele). Consumă request-uri API STRICT la apăsare, niciodată automat.
+                  </p>
+                  <button type="button" style={s.smallBtn} disabled={fixtureCheckLoading} onClick={handleCheckFixtures}>
+                    {fixtureCheckLoading ? "Se verifică…" : "🔄 Verifică API meciurile"}
+                  </button>
+                  {fixtureCheckError && <p style={s.hint}>❌ {fixtureCheckError}</p>}
+                  {fixtureCheckResults && (
+                    <>
+                      <p style={s.hint}>
+                        {fixtureCheckResults.totalMatches} meciuri · {fixtureCheckResults.alreadyMapped} deja conectate ·
+                        {" "}{fixtureCheckResults.checkedNow} verificate acum · {fixtureCheckResults.apiRequestsUsed} request-uri API folosite ·
+                        {" "}cotă azi: {fixtureCheckResults.requestsUsedToday}/100
+                      </p>
+                      <div style={s.bbResolveList}>
+                        {fixtureCheckResults.results.map((r) => (
+                          <div key={r.matchId} style={s.bbResolveRow}>
+                            <span style={s.bbResolveText}>
+                              {r.status === "CONNECTED" ? "🟢" : r.status === "AMBIGUOUS" ? "🔴" : r.status === "ERROR" ? "⚠️" : "🟡"}
+                              {" "}{r.homeTeam} – {r.awayTeam}
+                              {r.status === "CONNECTED" && (
+                                <><br /><span style={s.fixtureDetail}>
+                                  fixture #{r.fixtureId} · API: {r.apiHomeTeam} – {r.apiAwayTeam}
+                                  {r.apiDate ? ` · ${new Date(r.apiDate).toLocaleString("ro-RO")}` : ""}
+                                </span></>
+                              )}
+                              {r.status === "AMBIGUOUS" && (
+                                <><br /><span style={s.fixtureDetail}>{r.candidateIds?.length || 0} variante posibile — neconectat, intenționat</span></>
+                              )}
+                              {r.status === "UNMATCHED" && (
+                                <><br /><span style={s.fixtureDetail}>niciun fixture găsit în ziua respectivă</span></>
+                              )}
+                              {r.status === "ERROR" && (
+                                <><br /><span style={s.fixtureDetail}>{r.error}</span></>
+                              )}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    </>
+                  )}
+                </SectionCard>
+
                 <SectionCard title="Evenimente recente (automate)">
                   <button type="button" style={s.smallBtn} disabled={cleaningLiveEvents} onClick={handleCleanupLiveEvents}>
                     {cleaningLiveEvents ? "Se curăță…" : "🧹 Șterge golurile/cartonașele vechi (text greșit)"}
@@ -3036,6 +3108,7 @@ const s = {
   bbResolveList: { display: "flex", flexDirection: "column", gap: 6, marginTop: 6 },
   bbResolveRow: { display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 },
   bbResolveText: { fontSize: 10.5, color: "#C7CAD4", flex: 1 },
+  fixtureDetail: { fontSize: 9.5, color: "#8A93A6" },
   bbResolveBtn: { width: 30, height: 26, borderRadius: 6, border: "1px solid rgba(255,255,255,0.15)", background: "rgba(255,255,255,0.05)", cursor: "pointer", fontSize: 12 },
   bbResolveBtnActive: { background: "rgba(212,175,55,0.25)", borderColor: "#D4AF37" },
   bbPreviewOverlay: {

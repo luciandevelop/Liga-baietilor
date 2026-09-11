@@ -616,7 +616,7 @@ export default function AdminScreen({ onBack }) {
     setManualNewsMessage("");
     try {
       await publishManualFeedNews({
-        title: manualNewsTitle, text: manualNewsText, newsType: manualNewsType, adminUid: user.uid,
+        title: manualNewsTitle, text: manualNewsText, newsType: manualNewsType, adminUid: auth.currentUser.uid,
       });
       setManualNewsMessage("✅ Publicată în Feed.");
       setManualNewsTitle("");

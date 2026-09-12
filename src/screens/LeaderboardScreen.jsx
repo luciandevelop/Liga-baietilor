@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { getCurrentSeason, getCurrentGameweek } from "../services/predictionsService";
-import { subscribeToLiveSnapshot, isSnapshotStale, shouldAttemptFallback } from "../services/liveSnapshotStore";
+import { subscribeToLiveSnapshot, isSnapshotStale, getOrRunFallback } from "../services/liveSnapshotStore";
 import { computeRankingBonuses } from "../services/scoringEngine";
 import {
   listGameweekScores,
@@ -245,12 +245,11 @@ export default function LeaderboardScreen({ onBack, user, isAdmin }) {
         if (!cancelled) setLiveRowsLoading(false);
         return;
       }
-      // Fallback controlat — guard partajat la nivel de modul (vezi
-      // liveSnapshotStore.js) — NU se repetă la fiecare navigare către
-      // Clasament, doar când resultsVersion chiar s-a schimbat.
-      if (!shouldAttemptFallback(gameweek.id, data.resultsVersion)) return;
+      // Promisiune PARTAJATĂ — REPARAT după regresia de producție din
+      // 12 sept. TOȚI consumatorii (Header ȘI Clasament) așteaptă și
+      // aplică ACELAȘI rezultat, indiferent cine a declanșat calculul.
       try {
-        const { pointsByUid, diagnostic } = await getLiveGameweekPointsDiagnostic(gameweek.id);
+        const { pointsByUid, diagnostic } = await getOrRunFallback(gameweek.id, data.resultsVersion, () => getLiveGameweekPointsDiagnostic(gameweek.id));
         if (cancelled) return;
         setScoringDiagnostic(diagnostic);
         await applySnapshotRows(pointsByUid);

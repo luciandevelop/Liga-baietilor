@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { getCurrentSeason, getCurrentGameweek, loadUserPredictions, loadUserJoker, loadUserJokerExtra, isMatchLocked } from "../services/predictionsService";
 import { listGameweekScores, getLiveGameweekPointsDiagnostic, listSeasons } from "../services/adminService";
-import { subscribeToLiveSnapshot, isSnapshotStale, shouldAttemptFallback } from "../services/liveSnapshotStore";
+import { subscribeToLiveSnapshot, isSnapshotStale, getOrRunFallback } from "../services/liveSnapshotStore";
 import { markGwStorySeen, markSeasonStorySeen, storyKey } from "../services/storyService";
 import { slideUrl, seasonNumberFromList } from "../storyAssets";
 import StoryViewer from "../components/StoryViewer";
@@ -260,14 +260,15 @@ export default function WelcomeScreen({ user, profile, isAdmin, onOpenAdmin, onO
               return;
             }
             // ── Fallback controlat — DOAR dacă snapshot-ul chiar nu
-            // există/e stale pentru versiunea CURENTĂ. Guard-ul e acum
-            // partajat la nivel de modul (liveSnapshotStore.js), NU
-            // local — supraviețuiește navigării, deci NU se repetă la
-            // fiecare re-montare a Home (bug real, găsit în producție:
-            // 20 navigări = 20 fallback-uri, ~6.000 citiri irosite). ──
-            if (!shouldAttemptFallback(gw.id, data.resultsVersion)) return;
+            // există/e stale pentru versiunea CURENTĂ. Promisiune
+            // PARTAJATĂ (liveSnapshotStore.js) — REPARAT după regresia
+            // de producție din 12 sept: varianta veche (semafor boolean)
+            // lăsa AL DOILEA consumator (Header sau Clasament, oricare
+            // venea al doilea) blocat, fără să aplice niciodată datele.
+            // Acum TOȚI consumatorii așteaptă și aplică ACELAȘI rezultat,
+            // calculul scump tot rulează o singură dată. ──
             try {
-              const { pointsByUid } = await getLiveGameweekPointsDiagnostic(gw.id);
+              const { pointsByUid } = await getOrRunFallback(gw.id, data.resultsVersion, () => getLiveGameweekPointsDiagnostic(gw.id));
               if (cancelled) return;
               const rows = Object.entries(pointsByUid).map(([uid, totalPoints]) => ({ uid, totalPoints }));
               await applyRows(rows);

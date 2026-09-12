@@ -171,7 +171,7 @@ function PlayerPortrait({ filename, label }) {
 const s = {
   wrap: { display: "flex", flexDirection: "column", gap: 10 },
   hint: { fontSize: 11.5, color: color.textMuted, fontFamily: font.body, lineHeight: 1.4 },
-  optionsList: { display: "flex", flexDirection: "column", gap: 6, maxHeight: 340, overflowY: "auto" },
+  optionsList: { display: "flex", flexDirection: "column", gap: 6 },
   optionBtn: {
     display: "flex", alignItems: "center", justifyContent: "space-between", width: "100%",
     background: color.surfaceInset, border: `1px solid ${color.border}`, borderRadius: radius.sm,

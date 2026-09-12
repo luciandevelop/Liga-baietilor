@@ -889,9 +889,17 @@ async function computeGameweekResults(gameweekId) {
     predictionsByUser[p.userId].push(p);
   });
 
-  // TOȚI userii — sursa participanților, nu doar cei cu predicții.
+  // TOȚI userii ACTIVI — sursa participanților competiției, nu doar cei
+  // cu predicții. HOTFIX PRODUCȚIE — un user cu status !== "active"
+  // (deactivateUser, deja semantic "scos din competiție", comentariul
+  // original al funcției) NU mai intră aici — deci nici în rank, nici
+  // în Top3/bottom2 (computeRankingBonuses rulează mai jos, pe EXACT
+  // acest set). Istoricul lui (predictions, gameweekScores anterioare)
+  // NU se atinge — doar participarea VIITOARE la ranking. Aceeași
+  // regulă (getPlayerStatus === "active") deja folosită de
+  // listActiveUserIds() — nu un sistem nou, doar aplicat și aici. ──
   const usersSnap = await getDocs(collection(db, "users"));
-  const allUids = usersSnap.docs.map((d) => d.id);
+  const allUids = usersSnap.docs.filter((d) => getPlayerStatus(d.data()) === "active").map((d) => d.id);
 
   // Breakdown COMPLET, per user per meci — nu doar meciurile cu predicție
   // și rezultat (cum era înainte). Fiecare meci al etapei apare mereu în

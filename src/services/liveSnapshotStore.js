@@ -20,30 +20,37 @@ import { db } from "../firebase";
 // ══════════════════════════════════════════════════════════════════
 const stores = new Map(); // gameweekId -> { unsubscribe, subscribers: Set, lastData }
 
-// ── BUG REAL, găsit în auditul de producție din 12 sept 2026 — fixul
-// anterior avea `fallbackTried` ca variabilă LOCALĂ în fiecare
-// componentă (WelcomeScreen/LeaderboardScreen), resetată la FIECARE
-// montare. Rezultat: dacă snapshot-ul lipsește/e stale, orice navigare
-// repetată către Home/Clasament repeta fallback-ul scump
-// (getLiveGameweekPointsDiagnostic, ~200-400 citiri), de fiecare dată.
-// Mutat aici, la nivel de MODUL — supraviețuiește montărilor/demontărilor
-// componentei cât timp tab-ul e deschis, deci fallback-ul rulează CEL
-// MULT o dată per gameweek per sesiune de tab, nu o dată per navigare.
-// Se resetează DOAR la resultsVersion nou (fallback-ul chiar TREBUIE
-// reîncercat atunci — datele chiar s-au schimbat). ──
-const fallbackAttempted = new Map(); // gameweekId -> resultsVersion pentru care s-a încercat deja
+// ── HOTFIX PRODUCȚIE, 12 sept 2026 — REGRESIE reparată. Varianta
+// anterioară (`shouldAttemptFallback`, semafor boolean "primul are
+// voie") avea un bug real, confirmat: al DOILEA consumator (Header sau
+// Clasament, oricare vine al doilea într-o navigare secvențială, ex.
+// Home → Clasament) primea `false` și făcea `return` imediat — fără să
+// aplice NICIODATĂ datele, fără să oprească NICIODATĂ starea de
+// "Se încarcă...". Rezultat exact: Clasament blocat permanent, Header
+// rămas la valorile persistate (0 PCT într-o etapă nouă).
+//
+// Fix: promisiune PARTAJATĂ, nu semafor. Primul consumator declanșează
+// calculul; oricâți alți consumatori vin în același interval, pentru
+// ACEEAȘI resultsVersion, primesc EXACT ACEEAȘI promisiune (deja în
+// desfășurare sau deja rezolvată) — TOȚI aplică rezultatul, nimeni nu
+// rămâne blocat. Calculul scump tot rulează o singură dată (scopul
+// inițial al optimizării rămâne intact). ──
+const fallbackPromises = new Map(); // gameweekId -> { version, promise }
 
-export function shouldAttemptFallback(gameweekId, resultsVersion) {
-  const lastAttemptedVersion = fallbackAttempted.get(gameweekId);
-  if (lastAttemptedVersion === resultsVersion) {
-    console.log(`[FS-TRACE] liveFallback SKIPPED (already attempted for v=${resultsVersion}) gw=${gameweekId}`);
-    return false;
+export function getOrRunFallback(gameweekId, resultsVersion, computeFn) {
+  const existing = fallbackPromises.get(gameweekId);
+  if (existing && existing.version === resultsVersion) {
+    console.log(`[FS-TRACE] liveFallback REUSED promise gw=${gameweekId} v=${resultsVersion}`);
+    return existing.promise;
   }
-  fallbackAttempted.set(gameweekId, resultsVersion);
   console.log(`[FS-TRACE] liveFallback START gw=${gameweekId} v=${resultsVersion}`);
-  return true;
+  const promise = computeFn();
+  fallbackPromises.set(gameweekId, { version: resultsVersion, promise });
+  // Dacă rulează cu eroare, nu blocăm PERMANENT versiunea asta — la
+  // următoarea încercare (ex. altă navigare) se poate reîncerca curat.
+  promise.catch(() => { fallbackPromises.delete(gameweekId); });
+  return promise;
 }
-
 
 export function subscribeToLiveSnapshot(gameweekId, callback) {
   if (!gameweekId) return () => {};

@@ -20,12 +20,38 @@ import { db } from "../firebase";
 // ══════════════════════════════════════════════════════════════════
 const stores = new Map(); // gameweekId -> { unsubscribe, subscribers: Set, lastData }
 
+// ── BUG REAL, găsit în auditul de producție din 12 sept 2026 — fixul
+// anterior avea `fallbackTried` ca variabilă LOCALĂ în fiecare
+// componentă (WelcomeScreen/LeaderboardScreen), resetată la FIECARE
+// montare. Rezultat: dacă snapshot-ul lipsește/e stale, orice navigare
+// repetată către Home/Clasament repeta fallback-ul scump
+// (getLiveGameweekPointsDiagnostic, ~200-400 citiri), de fiecare dată.
+// Mutat aici, la nivel de MODUL — supraviețuiește montărilor/demontărilor
+// componentei cât timp tab-ul e deschis, deci fallback-ul rulează CEL
+// MULT o dată per gameweek per sesiune de tab, nu o dată per navigare.
+// Se resetează DOAR la resultsVersion nou (fallback-ul chiar TREBUIE
+// reîncercat atunci — datele chiar s-au schimbat). ──
+const fallbackAttempted = new Map(); // gameweekId -> resultsVersion pentru care s-a încercat deja
+
+export function shouldAttemptFallback(gameweekId, resultsVersion) {
+  const lastAttemptedVersion = fallbackAttempted.get(gameweekId);
+  if (lastAttemptedVersion === resultsVersion) {
+    console.log(`[FS-TRACE] liveFallback SKIPPED (already attempted for v=${resultsVersion}) gw=${gameweekId}`);
+    return false;
+  }
+  fallbackAttempted.set(gameweekId, resultsVersion);
+  console.log(`[FS-TRACE] liveFallback START gw=${gameweekId} v=${resultsVersion}`);
+  return true;
+}
+
+
 export function subscribeToLiveSnapshot(gameweekId, callback) {
   if (!gameweekId) return () => {};
 
   let entry = stores.get(gameweekId);
   if (!entry) {
     entry = { subscribers: new Set(), lastData: null, unsubscribe: null };
+    console.log(`[FS-TRACE] liveSnapshot listener START gw=${gameweekId}`);
     entry.unsubscribe = onSnapshot(doc(db, "gameweeks", gameweekId), (snap) => {
       const data = snap.exists()
         ? {
@@ -49,6 +75,7 @@ export function subscribeToLiveSnapshot(gameweekId, callback) {
   return () => {
     entry.subscribers.delete(callback);
     if (entry.subscribers.size === 0) {
+      console.log(`[FS-TRACE] liveSnapshot listener STOP gw=${gameweekId}`);
       entry.unsubscribe();
       stores.delete(gameweekId);
     }

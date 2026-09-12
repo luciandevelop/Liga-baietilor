@@ -91,7 +91,9 @@ export async function deleteManualFeedNews(id) {
 }
 
 export async function listLiveFeedEvents({ max = 150 } = {}) {
+  console.log(`[FS-TRACE] feed query START max=${max}`);
   const snap = await getDocs(query(collection(db, "feedEvents"), orderBy("ts", "desc"), fbLimit(max)));
+  console.log(`[FS-TRACE] feed query RESULT docs=${snap.docs.length}`);
   return snap.docs.map((d) => d.data());
 }
 
@@ -1092,11 +1094,34 @@ function ensureQuotesInWindow(sorted, max, minQuotes = 2) {
 
 export async function getHomeFeedTop(matches = [], { max = 8 } = {}) {
   const buffer = Math.max(max * 3, 20);
-  const [live, adminFun] = await Promise.all([listLiveFeedEvents({ max: buffer }), getCachedFunItems()]);
+  // ── ROOT CAUSE găsit în auditul din 12 sept 2026 — bufferul de mai
+  // sus e strict "ultimele N evenimente, după ts brut". Boost-ul de
+  // importanță (dateRelevanceBoost) se aplică DOAR asupra a ce a fost
+  // deja citit — o știre manuală mai veche decât ultimele N
+  // evenimente automate (goluri, finaluri) devine structural
+  // invizibilă, indiferent de importanța ei. Query separat, mic,
+  // STRICT pentru subtype="manual" — fără orderBy pe alt câmp (evită
+  // nevoia unui index compus nou), volum natural mic (Admin publică
+  // ocazional, nu în flux), sortat client-side, ultimele 5 păstrate.
+  // Cost: câteva documente în plus, per mount — nu sute. ──
+  const [live, adminFun, manualRaw] = await Promise.all([
+    listLiveFeedEvents({ max: buffer }), getCachedFunItems(), listRecentManualNews(),
+  ]);
   const fun = buildSampledFunEvents(adminFun);
   const matchesById = Object.fromEntries(matches.map((m) => [m.id, m]));
-  const merged = mergeFeedEvents(matchesById, live, fun);
+  const merged = mergeFeedEvents(matchesById, live, fun, manualRaw);
   return { merged: ensureQuotesInWindow(merged, max).slice(0, max) };
+}
+
+// ── Plasă de siguranță GARANTATĂ pentru știrea manuală — vezi
+// comentariul din getHomeFeedTop. where() simplu, FĂRĂ orderBy pe alt
+// câmp, ca să nu ceară un index Firestore nou. ──
+async function listRecentManualNews(keep = 5) {
+  console.log("[FS-TRACE] feed manual-news query START");
+  const snap = await getDocs(query(collection(db, "feedEvents"), where("subtype", "==", "manual")));
+  const all = snap.docs.map((d) => d.data()).sort((a, b) => b.ts - a.ts);
+  console.log(`[FS-TRACE] feed manual-news query RESULT docs=${snap.docs.length} kept=${Math.min(keep, all.length)}`);
+  return all.slice(0, keep);
 }
 
 export async function listRecentEventsForAdmin({ max = 50 } = {}) {

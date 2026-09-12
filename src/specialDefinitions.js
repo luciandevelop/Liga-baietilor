@@ -117,6 +117,14 @@ export const BALLON_DOR_PORTRAIT_FILENAME = {
   "kylian-mbappe": "kylian-mbappe.webp",
   "khvicha-kvaratskhelia": "khvicha-kvaratskhelia.webp",
   "ousmane-dembele": "ousmane-dembele.webp",
+  // ── Adăugate după ce Lu a urcat cele 5 fotografii în
+  // public/assets/scorers/ — lipseau din hartă (erau null intenționat,
+  // fotografiile nu existau la momentul scrierii inițiale). ──
+  "rodri": "rodri.webp",
+  "lionel-messi": "lionel-messi.webp",
+  "pau-cubarsi": "pau-cubarsi.webp",
+  "fabian-ruiz": "fabian-ruiz.webp",
+  "michael-olise": "michael-olise.webp",
 };
 
 export const BALLON_DOR_ENRICHMENT = Object.fromEntries(

@@ -21,6 +21,7 @@ import {
   saveMatchResult,
   updateMatchStatus,
   previewGameweekResults,
+  listActiveUserIds,
   publishLiveScores,
   finalizeGameweek,
   listAllMatches,
@@ -566,6 +567,12 @@ export default function AdminScreen({ onBack }) {
   }, [tab]);
 
   async function handlePlayerAction(uid, action) {
+    if (action === "deactivate") {
+      const ok = window.confirm(
+        "Elimini definitiv acest jucător din PLAY LEAGUE? Nu va mai participa la clasamente, bonusuri sau jocurile viitoare."
+      );
+      if (!ok) return;
+    }
     setPlayerActionUid(uid);
     try {
       if (action === "approve") await approveUser(uid);
@@ -859,8 +866,9 @@ export default function AdminScreen({ onBack }) {
       const result = await previewGameweekResults(selectedGameweekId);
       const freshGwSnap = await getDoc(doc(db, "gameweeks", selectedGameweekId));
       const currentResultsVersion = freshGwSnap.exists() ? (freshGwSnap.data().resultsVersion || 0) : 0;
+      const activeUids = await listActiveUserIds();
       const pointsByUid = {};
-      result.rows.forEach((r) => { pointsByUid[r.uid] = r.pointsFromMatches || 0; });
+      result.rows.forEach((r) => { if (activeUids.has(r.uid)) pointsByUid[r.uid] = r.pointsFromMatches || 0; });
       await updateDoc(doc(db, "gameweeks", selectedGameweekId), {
         liveSnapshotPointsByUid: pointsByUid,
         liveSnapshotUpdatedAt: serverTimestamp(),
@@ -1252,8 +1260,21 @@ export default function AdminScreen({ onBack }) {
         try {
           const freshGwSnap = await getDoc(doc(db, "gameweeks", selectedGameweekId));
           const currentResultsVersion = freshGwSnap.exists() ? (freshGwSnap.data().resultsVersion || 0) : 0;
+          // ── HOTFIX PRODUCȚIE — REGRESIE reparată. computeGameweekResults
+          // include DELIBERAT toți userii din users/ (necesar pentru
+          // finalizare/bonusuri — NEATINS, nu se schimbă asta). DAR
+          // snapshot-ul LIVE afișat jucătorilor nu avea acest filtru —
+          // un user dezactivat (ex. Dragalin16) reapărea în Clasament,
+          // cu penalizarea de ultim loc, exact fiindcă fallback-ul VECHI
+          // (getLiveGameweekPointsDiagnostic, deja corect filtrat pe
+          // listActiveUserIds) rula aproape mereu — iar snapshot-ul,
+          // netfiltrat, abia acum a început să fie citit cu succes de
+          // ambii consumatori (Header+Clasament), după hotfix-ul de azi.
+          // Filtrul se aplică STRICT aici, la construirea snapshot-ului —
+          // NU în computeGameweekResults, NU în finalizare, NU în scoring. ──
+          const activeUids = await listActiveUserIds();
           const pointsByUid = {};
-          result.rows.forEach((r) => { pointsByUid[r.uid] = r.pointsFromMatches || 0; });
+          result.rows.forEach((r) => { if (activeUids.has(r.uid)) pointsByUid[r.uid] = r.pointsFromMatches || 0; });
           await updateDoc(doc(db, "gameweeks", selectedGameweekId), {
             liveSnapshotPointsByUid: pointsByUid,
             liveSnapshotUpdatedAt: serverTimestamp(),
@@ -2077,7 +2098,7 @@ export default function AdminScreen({ onBack }) {
                                 </div>
                               </div>
                               <button type="button" style={s.smallBtn} disabled={playerActionUid === p.uid} onClick={() => handlePlayerAction(p.uid, "deactivate")}>
-                                Dezactivează
+                                Elimină din competiție
                               </button>
                             </div>
                           ))}

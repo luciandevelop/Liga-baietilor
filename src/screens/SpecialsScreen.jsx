@@ -143,6 +143,15 @@ export default function SpecialsScreen({ user, onBack }) {
     <div style={s.page}>
       <style>{`
         @keyframes specialsPulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.55; } }
+        /* ── Secțiunile secundare (Premii Individuale / Europa League /
+           Conference League) — o coloană pe mobil (implicit, cerut
+           explicit), rând pe ecrane suficient de late unde 3 carduri
+           chiar încap lizibil. Punctul de rupere e ales generos (700px),
+           mult peste orice telefon (inclusiv S25 Ultra/S22), deci pe
+           orice telefon rămâne mereu coloană. ── */
+        @media (min-width: 700px) {
+          .specialsCompactRow { flex-direction: row !important; }
+        }
       `}</style>
       <div style={s.wrap}>
         <PageHeader title="🏆 Specialele Sezonului" onBack={onBack} />
@@ -163,7 +172,7 @@ export default function SpecialsScreen({ user, onBack }) {
         ))}
 
         {standard.length > 0 && (
-          <div style={s.compactRow}>
+          <div style={s.compactRow} className="specialsCompactRow">
             {standard.map((comp) => (
               <CompetitionCard
                 key={comp.id} comp={comp} compact
@@ -394,7 +403,7 @@ const s = {
     padding: 16, marginBottom: 14, boxShadow: shadow.card,
   },
   compCardCompact: { padding: 12, flex: 1, minWidth: 0 },
-  compactRow: { display: "flex", gap: 10, marginBottom: 14 },
+  compactRow: { display: "flex", flexDirection: "column", gap: 10, marginBottom: 14 },
 
   compHead: { display: "flex", alignItems: "center", gap: 8, marginBottom: 12 },
   compName: { fontWeight: 800, color: color.textPrimary, fontFamily: font.display, fontSize: 12.5 },
@@ -416,7 +425,7 @@ const s = {
   phaseIcon: { fontSize: 14, flexShrink: 0 },
   phaseLabel: {
     flex: 1, fontWeight: 600, color: color.textPrimary, fontFamily: font.body, textAlign: "left",
-    minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+    minWidth: 0, overflowWrap: "break-word",
   },
   phasePoints: { fontSize: 11.5, fontWeight: 800, color: color.goldLight, fontFamily: font.display, flexShrink: 0 },
   lockNote: { fontSize: 10, color: color.textFaint, fontFamily: font.body, textAlign: "left", lineHeight: 1.4 },

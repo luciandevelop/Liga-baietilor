@@ -151,6 +151,7 @@ export default function SpecialsScreen({ user, onBack }) {
            orice telefon rămâne mereu coloană. ── */
         @media (min-width: 700px) {
           .specialsCompactRow { flex-direction: row !important; }
+          .specialsLeagueGrid { grid-template-columns: 1fr 1fr !important; }
         }
       `}</style>
       <div style={s.wrap}>
@@ -188,7 +189,7 @@ export default function SpecialsScreen({ user, onBack }) {
         {leagues.length > 0 && (
           <>
             <div style={s.sectionLabel}>Campionate</div>
-            <div style={s.leagueGrid}>
+            <div style={s.leagueGrid} className="specialsLeagueGrid">
               {leagues.map((comp) => (
                 <CompetitionCard
                   key={comp.id} comp={comp} compact
@@ -412,7 +413,7 @@ const s = {
     fontSize: 10, fontWeight: 700, letterSpacing: "0.09em", textTransform: "uppercase",
     color: color.textFaint, marginBottom: 10, fontFamily: font.body,
   },
-  leagueGrid: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 4 },
+  leagueGrid: { display: "grid", gridTemplateColumns: "1fr", gap: 10, marginBottom: 4 },
 
   phaseList: { display: "flex", flexDirection: "column", gap: 8, position: "relative" },
   phaseBlock: {},

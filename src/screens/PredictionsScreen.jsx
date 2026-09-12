@@ -13,7 +13,7 @@ import {
   isMatchLocked,
 } from "../services/predictionsService";
 import { checkJokerExtraEligibility } from "../services/surprisesService";
-import { listenMatches } from "../services/adminService";
+import { subscribeToGameweekMatches } from "../services/matchesStore";
 import { getMatchStatus } from "../utils/matchStatus";
 import MatchPredictionCard from "../components/MatchPredictionCard";
 import PredictionsRevealSheet from "../components/PredictionsRevealSheet";
@@ -122,13 +122,15 @@ export default function PredictionsScreen({ user, isAdmin, onBack, scrollToMatch
       setJokerExtra(null);
     }
 
-    // ── REALTIME pe meciuri — aceeași sursă unică (listenMatches) ca Home.
-    // BUG P0 reparat aici: înainte, listMatches() era o citire O SINGURĂ
-    // DATĂ (getDocs), deci scorul rămânea "înghețat" la momentul deschiderii
-    // ecranului — de-aici valori diferite față de Admin/Home pentru
-    // ACELAȘI meci. ──
+    // ── REALTIME pe meciuri — acum prin magazinul comun partajat
+    // (matchesStore.js), NU un listener direct separat. Elimină
+    // duplicarea găsită în audit (root cause #4): înainte, acest ecran
+    // crea propriul onSnapshot, complet separat de cel al Home — dacă
+    // amândouă erau active, două citiri complete în paralel pentru
+    // aceleași date. Comportamentul rămâne identic (realtime, aceleași
+    // date) — se schimbă STRICT sursa. ──
     if (unsubMatchesRef.current) unsubMatchesRef.current();
-    unsubMatchesRef.current = listenMatches(gw.id, async (m) => {
+    unsubMatchesRef.current = subscribeToGameweekMatches(gw.id, async (m) => {
       setMatches(m);
 
       if (!formInitedRef.current) {

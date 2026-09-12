@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { getCurrentSeason, getCurrentGameweek, loadUserPredictions, loadUserJoker, loadUserJokerExtra, isMatchLocked } from "../services/predictionsService";
 import { listGameweekScores, getLiveGameweekPointsDiagnostic, listSeasons } from "../services/adminService";
-import { subscribeToLiveSnapshot, isSnapshotStale } from "../services/liveSnapshotStore";
+import { subscribeToLiveSnapshot, isSnapshotStale, shouldAttemptFallback } from "../services/liveSnapshotStore";
 import { markGwStorySeen, markSeasonStorySeen, storyKey } from "../services/storyService";
 import { slideUrl, seasonNumberFromList } from "../storyAssets";
 import StoryViewer from "../components/StoryViewer";
@@ -252,7 +252,6 @@ export default function WelcomeScreen({ user, profile, isAdmin, onOpenAdmin, onO
           // (liveSnapshotStore.js) — actualizare instant, fără polling,
           // fără recitire de sute de documente. ──
           let cancelled = false;
-          let fallbackTried = false;
           unsubScores = subscribeToLiveSnapshot(gw.id, async (data) => {
             if (cancelled) return;
             if (!isSnapshotStale(data)) {
@@ -261,17 +260,18 @@ export default function WelcomeScreen({ user, profile, isAdmin, onOpenAdmin, onO
               return;
             }
             // ── Fallback controlat — DOAR dacă snapshot-ul chiar nu
-            // există încă (ex. nicio validare făcută vreodată în etapa
-            // asta). O SINGURĂ dată, NU polling — următoarea validare a
-            // Adminului populează snapshot-ul real, iar listenerul de
-            // mai sus preia automat, fără nicio acțiune suplimentară. ──
-            if (fallbackTried) return;
-            fallbackTried = true;
+            // există/e stale pentru versiunea CURENTĂ. Guard-ul e acum
+            // partajat la nivel de modul (liveSnapshotStore.js), NU
+            // local — supraviețuiește navigării, deci NU se repetă la
+            // fiecare re-montare a Home (bug real, găsit în producție:
+            // 20 navigări = 20 fallback-uri, ~6.000 citiri irosite). ──
+            if (!shouldAttemptFallback(gw.id, data.resultsVersion)) return;
             try {
               const { pointsByUid } = await getLiveGameweekPointsDiagnostic(gw.id);
               if (cancelled) return;
               const rows = Object.entries(pointsByUid).map(([uid, totalPoints]) => ({ uid, totalPoints }));
               await applyRows(rows);
+              console.log(`[FS-TRACE] liveFallback DONE gw=${gw.id} users=${rows.length}`);
             } catch (err) {
               console.error("Eroare la fallback-ul clasamentului live:", err);
               if (!cancelled) setStatsError("Clasamentul live nu s-a putut încărca complet.");

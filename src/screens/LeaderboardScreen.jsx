@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { getCurrentSeason, getCurrentGameweek } from "../services/predictionsService";
-import { subscribeToLiveSnapshot, isSnapshotStale } from "../services/liveSnapshotStore";
+import { subscribeToLiveSnapshot, isSnapshotStale, shouldAttemptFallback } from "../services/liveSnapshotStore";
 import { computeRankingBonuses } from "../services/scoringEngine";
 import {
   listGameweekScores,
@@ -221,7 +221,6 @@ export default function LeaderboardScreen({ onBack, user, isAdmin }) {
     setGwLive(true);
     setLiveRowsLoading(true);
     let cancelled = false;
-    let fallbackTried = false;
 
     async function applySnapshotRows(pointsByUid) {
       setLivePointsByUid(pointsByUid);
@@ -246,16 +245,16 @@ export default function LeaderboardScreen({ onBack, user, isAdmin }) {
         if (!cancelled) setLiveRowsLoading(false);
         return;
       }
-      // Fallback controlat — DOAR dacă snapshot-ul chiar nu există încă
-      // (nicio validare făcută vreodată în etapa asta). O SINGURĂ dată,
-      // NU polling.
-      if (fallbackTried) return;
-      fallbackTried = true;
+      // Fallback controlat — guard partajat la nivel de modul (vezi
+      // liveSnapshotStore.js) — NU se repetă la fiecare navigare către
+      // Clasament, doar când resultsVersion chiar s-a schimbat.
+      if (!shouldAttemptFallback(gameweek.id, data.resultsVersion)) return;
       try {
         const { pointsByUid, diagnostic } = await getLiveGameweekPointsDiagnostic(gameweek.id);
         if (cancelled) return;
         setScoringDiagnostic(diagnostic);
         await applySnapshotRows(pointsByUid);
+        console.log(`[FS-TRACE] liveFallback DONE gw=${gameweek.id} users=${Object.keys(pointsByUid).length}`);
       } catch (err) {
         console.error("Eroare la fallback-ul clasamentului live:", err);
         if (!cancelled) setScoringDiagnostic({ gameweekId: gameweek.id, status: "ERROR", errorMessage: err.message || String(err), state: "error" });

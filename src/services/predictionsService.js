@@ -1,4 +1,4 @@
-import { collection, doc, getDoc, getDocs, query, where, setDoc, deleteDoc, serverTimestamp } from "firebase/firestore";
+import { collection, doc, getDoc, getDocs, query, where, setDoc, deleteDoc } from "firebase/firestore";
 import { db } from "../firebase";
 import { listMatches } from "./adminService";
 import { LOCK_MINUTES_BEFORE_KICKOFF, isMatchLocked } from "./matchLockRule";
@@ -142,12 +142,6 @@ export async function savePredictionForMatch({ matchId, uid, scoreA, scoreB, cor
   const k = parseNonNegativeInt(cards);
   if (c !== undefined) payload.corners = c;
   if (k !== undefined) payload.cards = k;
-  // Metadată pură — NU afectează scoring-ul, NU e citită de matchPoints/
-  // computeGameweekResults. Scop unic: să știm, pe viitor, când a avut loc
-  // ultima salvare reală a acestui document. Nicio restricție de schemă în
-  // firestore.rules pe acest câmp (regula pentru predictions verifică doar
-  // predictionId și userId) — deci nu necesită nicio modificare de Rules.
-  payload.updatedAt = serverTimestamp();
 
   const ref = doc(db, "predictions", `${matchId}_${uid}`);
   await setDoc(ref, payload, { merge: true });

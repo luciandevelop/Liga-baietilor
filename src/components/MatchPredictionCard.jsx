@@ -22,6 +22,8 @@ export default function MatchPredictionCard({
   saving,
   saveStatus, // "idle" | "success" | "error"
   saveError,
+  savedScoreA,
+  savedScoreB,
   isSaved,
   locked,
   isFeatured,
@@ -195,7 +197,13 @@ export default function MatchPredictionCard({
                 disabled={saving}
                 onClick={onSave}
               >
-                {saving ? "…" : saveStatus === "success" ? "✓ Salvat" : isSaved ? "Modifică" : "Salvează"}
+                {saving
+                  ? "…"
+                  : saveStatus === "success"
+                  ? `✓ Salvat ${savedScoreA}-${savedScoreB}`
+                  : isSaved
+                  ? "Modifică"
+                  : "Salvează"}
               </button>
             </div>
 

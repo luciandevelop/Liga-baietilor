@@ -192,6 +192,16 @@ export default function PredictionsScreen({ user, isAdmin, onBack, scrollToMatch
 
   function updateMatch(matchId, patch) {
     setPredictions((prev) => ({ ...prev, [matchId]: { ...prev[matchId], ...patch } }));
+    // Orice editare ulterioară unei salvări reușite invalidează imediat
+    // confirmarea "✓ Salvat X-Y" — starea locală tocmai a divergat de
+    // Firestore, până la următoarea salvare explicită. Nu atinge starea
+    // "error" (rămasă vizibilă ca înainte) și nu atinge nimic cât timp
+    // scrierea e în curs (inputurile sunt oricum disabled în timpul saving).
+    setSaveState((prev) => {
+      const current = prev[matchId];
+      if (!current || current.status !== "success") return prev;
+      return { ...prev, [matchId]: { saving: false, status: "idle", error: "" } };
+    });
   }
 
   async function handleSaveMatch(match) {
@@ -199,7 +209,7 @@ export default function PredictionsScreen({ user, isAdmin, onBack, scrollToMatch
     setSaveState((prev) => ({ ...prev, [matchId]: { saving: true, status: "idle", error: "" } }));
     try {
       const p = predictions[matchId] || {};
-      await savePredictionForMatch({
+      const saved = await savePredictionForMatch({
         matchId,
         uid: user.uid,
         scoreA: p.scoreA,
@@ -207,7 +217,14 @@ export default function PredictionsScreen({ user, isAdmin, onBack, scrollToMatch
         corners: p.corners,
         cards: p.cards,
       });
-      setSaveState((prev) => ({ ...prev, [matchId]: { saving: false, status: "success", error: "" } }));
+      // savedScoreA/savedScoreB vin STRICT din valoarea întoarsă de
+      // savePredictionForMatch (ce s-a scris cu adevărat), nu din
+      // `predictions` local — evită orice posibilitate ca textul de
+      // confirmare să arate altceva decât ce e realmente în Firestore.
+      setSaveState((prev) => ({
+        ...prev,
+        [matchId]: { saving: false, status: "success", error: "", savedScoreA: saved.scoreA, savedScoreB: saved.scoreB },
+      }));
       setSavedMatchIds((prev) => new Set(prev).add(matchId));
     } catch (err) {
       console.error(`Eroare la salvarea meciului ${matchId}:`, err);
@@ -408,6 +425,8 @@ export default function PredictionsScreen({ user, isAdmin, onBack, scrollToMatch
                       saving={!!sState.saving}
                       saveStatus={sState.status}
                       saveError={sState.error}
+                      savedScoreA={sState.savedScoreA}
+                      savedScoreB={sState.savedScoreB}
                       isSaved={savedMatchIds.has(m.id)}
                       locked={locked}
                       isFeatured={isFeatured}

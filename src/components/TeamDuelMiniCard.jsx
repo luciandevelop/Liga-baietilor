@@ -1,7 +1,7 @@
 import PlayerAvatar from "./PlayerAvatar";
 import DuelFighterPortrait from "./DuelFighterPortrait";
 import { color, font, radius } from "../matchdayTheme";
-import { teamScore } from "../services/scoringEngine";
+import { teamScore, teamScoreDisplay } from "../services/scoringEngine";
 
 // ── Rând compact per confruntare de echipă — pentru grupurile care NU
 // sunt al userului curent. Suportă echipe de 2, 3 sau 4 (Duel de Echipe
@@ -28,11 +28,11 @@ export default function TeamDuelMiniCard({ teamA, teamB, profiles, liveScores, r
           ))}
         </div>
         <span style={s.names}>{namesA}</span>
-        <span style={s.score}>{resolved ? `${pointsA ?? 0}p` : `${scoreA}p`}</span>
+        <span style={s.score}>{resolved ? `${pointsA ?? 0}p` : `${teamScoreDisplay(scoreA)}p`}</span>
       </div>
       <span style={s.vs}>vs</span>
       <div style={{ ...s.team, ...s.teamRight, ...(leading === "b" ? s.teamLeading : {}) }}>
-        <span style={s.score}>{resolved ? `${pointsB ?? 0}p` : `${scoreB}p`}</span>
+        <span style={s.score}>{resolved ? `${pointsB ?? 0}p` : `${teamScoreDisplay(scoreB)}p`}</span>
         <span style={s.names}>{namesB}</span>
         <div style={s.avatarsInline}>
           {teamB.map((uid) => duelTheme ? (

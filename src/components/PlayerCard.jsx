@@ -230,11 +230,17 @@ export default function PlayerCard({ uid, nickname, avatarId, rank, scope = "eta
                         <span style={s.summaryVal}>{stats.etapaBonusSurprisePoints > 0 ? "+" : ""}{stats.etapaBonusSurprisePoints}p</span>
                       </div>
                     )}
+                    {stats.etapaJokerExtraBonus != null && stats.etapaJokerExtraBonus !== 0 && (
+                      <div style={s.summaryRow}>
+                        <span>🃏✨ Joker Extra</span>
+                        <span style={s.summaryVal}>{stats.etapaJokerExtraBonus > 0 ? "+" : ""}{stats.etapaJokerExtraBonus}p</span>
+                      </div>
+                    )}
                     <div style={s.summaryDivider} />
                     <div style={s.summaryTotalRow}>
                       <span>TOTAL ETAPĂ</span>
                       <span style={s.summaryTotalVal}>
-                        {(stats.etapaMatchPoints || 0) + (stats.etapaRankingBonus || 0) + (stats.etapaMainSurprisePoints || 0) + (stats.etapaBonusSurprisePoints || 0)}p
+                        {(stats.etapaMatchPoints || 0) + (stats.etapaRankingBonus || 0) + (stats.etapaJokerExtraBonus || 0) + (stats.etapaMainSurprisePoints || 0) + (stats.etapaBonusSurprisePoints || 0)}p
                       </span>
                     </div>
                   </div>
@@ -344,7 +350,7 @@ function MatchBreakdownRow({ m }) {
   }
 
   return (
-    <div style={{ ...s.matchCard, ...(m.isJoker ? s.matchCardJoker : {}), ...(m.isFeatured ? s.matchCardFeatured : {}) }}>
+    <div style={{ ...s.matchCard, ...(m.isJoker ? s.matchCardJoker : {}), ...(m.isJokerExtra ? s.matchCardJoker : {}), ...(m.isFeatured ? s.matchCardFeatured : {}) }}>
       <div style={s.matchTop}>
         <div style={s.matchTeamsInline}>
           <ClubCrest teamName={m.homeTeam} size={26} />
@@ -354,10 +360,11 @@ function MatchBreakdownRow({ m }) {
         <span style={s.matchTotal}>{m.finalMatchPoints ?? m.total ?? 0}p</span>
       </div>
 
-      {(m.isFeatured || m.isJoker || m.loneWolfBonus > 0) && (
+      {(m.isFeatured || m.isJoker || m.isJokerExtra || m.loneWolfBonus > 0) && (
         <div style={s.matchBadgeRow}>
           {m.isFeatured && <span style={s.tagFeatured}>⭐ ×2</span>}
           {m.isJoker && <span style={s.tagJoker}>🃏 ×2</span>}
+          {m.isJokerExtra && <span style={s.tagJokerExtra}>🃏✨ Joker Extra +{m.jokerExtraBonus ?? 0}</span>}
           {m.loneWolfBonus > 0 && <span style={s.tagLoneWolf}>🐺 Lupul Singuratic +{m.loneWolfBonus}</span>}
         </div>
       )}
@@ -594,6 +601,7 @@ const s = {
   matchBadgeRow: { display: "flex", gap: 6, marginTop: 8 },
   tagFeatured: { fontSize: 9.5, fontWeight: 800, color: color.goldLight, background: "rgba(201,162,39,0.14)", border: "1px solid rgba(201,162,39,0.4)", borderRadius: 999, padding: "2px 7px" },
   tagJoker: { fontSize: 9.5, fontWeight: 800, color: color.green, background: color.greenBg, border: `1px solid ${color.greenBorder}`, borderRadius: 999, padding: "2px 7px" },
+  tagJokerExtra: { fontSize: 9.5, fontWeight: 800, color: "#F0D060", background: "rgba(212,175,55,0.16)", border: "1px solid rgba(212,175,55,0.55)", borderRadius: 999, padding: "2px 7px" },
   tagLoneWolf: { fontSize: 9.5, fontWeight: 800, color: "#B8C4FF", background: "rgba(91,111,255,0.14)", border: "1px solid rgba(91,111,255,0.4)", borderRadius: 999, padding: "2px 7px" },
   predVsReal: { display: "flex", alignItems: "center", justifyContent: "center", gap: 14, marginTop: 12, paddingTop: 12, borderTop: `1px solid ${color.borderSubtle}` },
   predVsRealCol: { display: "flex", flexDirection: "column", alignItems: "center", gap: 2 },

@@ -3,7 +3,7 @@ import DuelFighterPortrait from "./DuelFighterPortrait";
 import { getFighterUrl } from "../assets/fighters";
 import { color, font, radius } from "../matchdayTheme";
 import { usePrefersReducedMotion, EASING } from "../motion";
-import { teamScore, excludedUid } from "../services/scoringEngine";
+import { teamScore, teamScoreDisplay } from "../services/scoringEngine";
 
 // ── Aceeași secvență de intrare ca la Duel 1v1 (DuelExperience.jsx) —
 // vezi comentariul de-acolo pentru detalii. Nume de keyframes proprii
@@ -11,11 +11,12 @@ import { teamScore, excludedUid } from "../services/scoringEngine";
 // ajunge randate pe același ecran (ex. Preview Duel din Admin). ──
 const ENTRANCE = { vs: 0.5, leftDelay: 0.5, leftDur: 0.6, rightDelay: 0.7, rightDur: 0.6, vsPulseDelay: 1.3, vsPulseDur: 0.35 };
 
-// ── Regula de scor a unei părți — identică cu ce se calculează la
-// Resolve (surprisesService.js): sub 3 membri, suma tuturor; 3+, se
-// exclude cel clasat la mijloc (floor(n/2)+1) din comparație — el
-// rămâne vizibil în echipă, doar nu-i "contează" scorul aici. ──
-function TeamCol({ members, excluded, leading, score, profiles, duelTheme, entranceStyle }) {
+// ── Regula de scor a unei părți — MEDIA punctelor membrilor
+// (sum/length), identică cu ce se calculează la Resolve
+// (surprisesService.js, aceeași funcție teamScore importată acolo).
+// NIMENI nu mai e exclus — regula veche (excludea mijlocul la 3+
+// membri) a fost eliminată. ──
+function TeamCol({ members, leading, score, profiles, duelTheme, entranceStyle }) {
   const fighterSize = members.length > 2 ? 42 : 54;
   return (
     <div style={{ ...s.side, ...(leading ? s.sideLeading : {}), ...entranceStyle }}>
@@ -32,13 +33,12 @@ function TeamCol({ members, excluded, leading, score, profiles, duelTheme, entra
               ) : (
                 <PlayerAvatar avatarId={profiles[uid]?.avatarId} nickname={profiles[uid]?.nickname} size={fighterSize} />
               )}
-              {excluded === uid && <span style={s.excludedCrown}>👑</span>}
             </div>
           );
         })}
       </div>
       <div style={s.teamNames}>{members.map((uid) => profiles[uid]?.nickname || uid).join(" & ")}</div>
-      <div style={s.score}>{score}<span style={s.scoreUnit}>p</span></div>
+      <div style={s.score}>{teamScoreDisplay(score)}<span style={s.scoreUnit}>p</span></div>
       {leading && <div style={s.leadTag}>ÎN AVANTAJ</div>}
     </div>
   );
@@ -130,8 +130,6 @@ export default function TeamDuelExperience({ myUid, myTeam, opponentTeam, isFall
   const oppScore = teamScore(opponentTeam, liveScores);
   const leading = resolved ? null : (myScore > oppScore ? "me" : myScore < oppScore ? "opp" : "tie");
   const myPreview = resolved ? myPoints : (leading === "me" ? 200 : leading === "opp" ? 0 : 100);
-  const myExcluded = excludedUid(myTeam, liveScores);
-  const oppExcluded = excludedUid(opponentTeam, liveScores);
   // Banner-ul "MAIN EVENT" apare doar dacă există CEL PUȚIN un portret de
   // luptă real de arătat — nu doar pentru că Adminul a ales o temă care
   // încă n-are nicio imagine încărcată (ar arăta nepotrivit peste avatare
@@ -160,14 +158,10 @@ export default function TeamDuelExperience({ myUid, myTeam, opponentTeam, isFall
       {hasAnyFighter && <div style={s.mainEventTag}>⚔️ MAIN EVENT</div>}
 
       <div style={s.confrontation}>
-        <TeamCol members={myTeam} excluded={myExcluded} leading={leading === "me"} score={myScore} profiles={profiles} duelTheme={duelTheme} entranceStyle={leftEntranceStyle} />
+        <TeamCol members={myTeam} leading={leading === "me"} score={myScore} profiles={profiles} duelTheme={duelTheme} entranceStyle={leftEntranceStyle} />
         <div style={s.vsWrap}><div style={{ ...s.vsCircle, ...vsEntranceStyle }}><span style={s.vsShine} />VS</div></div>
-        <TeamCol members={opponentTeam} excluded={oppExcluded} leading={leading === "opp"} score={oppScore} profiles={profiles} duelTheme={duelTheme} entranceStyle={rightEntranceStyle} />
+        <TeamCol members={opponentTeam} leading={leading === "opp"} score={oppScore} profiles={profiles} duelTheme={duelTheme} entranceStyle={rightEntranceStyle} />
       </div>
-
-      {(myTeam.length > 2 || opponentTeam.length > 2) && (
-        <div style={s.excludeNote}>👑 = scor exclus din comparație (mijlocul clasamentului intern), rămâne în echipă</div>
-      )}
 
       {!resolved && (
         <div style={s.previewRow}>

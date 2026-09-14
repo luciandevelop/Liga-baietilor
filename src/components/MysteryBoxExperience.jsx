@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import {
-  getMysteryBoxBoard, getAllMysteryBoxPicks, submitMysteryBoxPick,
+  getMysteryBoxBoard, getAllMysteryBoxPicks, submitMysteryBoxPick, JOKER_EXTRA_SENTINEL,
 } from "../services/surprisesService";
 import { getUserPublicProfiles } from "../services/profilesService";
 import { getMysteryBoxMessage } from "../feedContent/mysteryBoxContent";
@@ -48,6 +48,7 @@ const TIER_VALUE_STYLE = {
   sad: { fontSize: 10.5, fontWeight: 600, color: "#5B6270" },
 };
 function tierOf(value) { return VALUE_TIER[value] || "mid"; }
+function formatBoxValue(value) { return value === JOKER_EXTRA_SENTINEL ? "🃏✨ Joker Extra" : `${value}p`; }
 
 // Componentă auto-suficientă (ca TriviaExperience/DiceExperience) — nu
 // depinde de `profiles` din SurprisesScreen (construit acolo doar pentru
@@ -106,7 +107,17 @@ export default function MysteryBoxExperience({ gameweekId, uid, allBoxesRevealed
     totalCounts[v] = (totalCounts[v] || 0) + 1;
     if (!picksByBox[idx]) remainingCounts[v] = (remainingCounts[v] || 0) + 1;
   });
-  const distributionValues = Object.keys(totalCounts).map(Number).sort((a, b) => b - a);
+  // Cheile pot fi valori numerice SAU sentinela specială JOKER_EXTRA —
+  // NU convertim totul la Number (asta producea NaN pentru cheia
+  // "JOKER_EXTRA"). Valorile numerice rămân sortate descrescător ca
+  // înainte; sentinela e păstrată ca string, afișată separat mai jos.
+  const distributionValues = Object.keys(totalCounts)
+    .map((k) => (k === JOKER_EXTRA_SENTINEL ? k : Number(k)))
+    .sort((a, b) => {
+      if (a === JOKER_EXTRA_SENTINEL) return -1;
+      if (b === JOKER_EXTRA_SENTINEL) return 1;
+      return b - a;
+    });
 
   async function handleConfirmPick() {
     if (pendingBox === null) return;
@@ -162,7 +173,7 @@ export default function MysteryBoxExperience({ gameweekId, uid, allBoxesRevealed
             const tier = tierOf(v);
             return (
               <div key={v} style={{ ...s.distroChip, ...TIER_BOX_STYLE[tier] }}>
-                <span style={{ ...s.distroValue, ...TIER_VALUE_STYLE[tier] }}>{v}p</span>
+                <span style={{ ...s.distroValue, ...TIER_VALUE_STYLE[tier] }}>{formatBoxValue(v)}</span>
                 <span style={s.distroCount}>×{totalCounts[v]} inițial · {remainingCounts[v] || 0} rămase</span>
               </div>
             );
@@ -208,12 +219,12 @@ export default function MysteryBoxExperience({ gameweekId, uid, allBoxesRevealed
                 <>
                   <PlayerAvatar avatarId={profiles[pick.uid]?.avatarId} nickname={profiles[pick.uid]?.nickname} size={26} />
                   <span style={s.boxName}>{profiles[pick.uid]?.nickname || pick.uid}</span>
-                  <span style={{ ...s.boxValue, ...TIER_VALUE_STYLE[tier], ...(wasRerolled ? { color: "#8A6A6A", ...s.boxValueRefused } : {}) }}>{value}p</span>
+                  <span style={{ ...s.boxValue, ...TIER_VALUE_STYLE[tier], ...(wasRerolled ? { color: "#8A6A6A", ...s.boxValueRefused } : {}) }}>{formatBoxValue(value)}</span>
                   {wasRerolled && <span style={s.refusedTag}>rejucată</span>}
                   {isFinalPick && <span style={s.finalTag}>finală</span>}
                 </>
               ) : showValue ? (
-                <span style={{ ...s.boxValue, ...TIER_VALUE_STYLE[tier], opacity: 0.75 }}>{value}p</span>
+                <span style={{ ...s.boxValue, ...TIER_VALUE_STYLE[tier], opacity: 0.75 }}>{formatBoxValue(value)}</span>
               ) : (
                 <span style={s.boxMystery}>🎁</span>
               )}
@@ -256,7 +267,7 @@ export default function MysteryBoxExperience({ gameweekId, uid, allBoxesRevealed
           <div style={{ ...s.modalCard, animation: "boxPop 350ms ease" }} onClick={(e) => e.stopPropagation()}>
             <div style={s.modalIcon}>🎉</div>
             <div style={{ ...s.finalResultValue, color: VALUE_COLOR[justPickedMessage.value] || "#fff", marginBottom: 10 }}>
-              {justPickedMessage.value}p
+              {formatBoxValue(justPickedMessage.value)}
             </div>
             <div style={s.messageText}>{justPickedMessage.message}</div>
             <button type="button" style={s.modalConfirmBtn} onClick={() => setJustPickedMessage(null)}>Am înțeles</button>

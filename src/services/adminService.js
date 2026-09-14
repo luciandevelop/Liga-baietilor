@@ -17,7 +17,7 @@ import {
   increment,
 } from "firebase/firestore";
 import { db } from "../firebase";
-import { computeMatchPoints, computeRankingBonuses } from "./scoringEngine";
+import { computeMatchPoints, computeRankingBonuses, computeLoneWolfWinnerUid, LONE_WOLF_BONUS_POINTS, LONE_WOLF_EXCLUDED_GAMEWEEK_IDS } from "./scoringEngine";
 import { resolveCompetitionPreset } from "../competitionThemes";
 import { getUserPublicProfiles } from "./profilesService";
 
@@ -787,12 +787,24 @@ async function publishMatchPointsIfFinal(matchId) {
     jokerExtraMatchByUser[j.userId] = j.matchId;
   });
 
+  // 🐺 Lupul Singuratic — determinat O SINGURĂ DATĂ per meci, din
+  // predicțiile deja încărcate mai sus (zero citiri noi în afara listei
+  // de useri activi, deja cache-uită 2 min în toată aplicația). Exclus
+  // strict pentru Etapa 1/Sezon 1 (deja finalizată, înghețată).
+  let loneWolfWinnerUid = null;
+  if (!LONE_WOLF_EXCLUDED_GAMEWEEK_IDS.has(match.gameweekId)) {
+    const eligibleUids = await listActiveUserIds();
+    const predictionsForMatch = predSnap.docs.map((d) => d.data());
+    loneWolfWinnerUid = computeLoneWolfWinnerUid(match.realScoreA, match.realScoreB, predictionsForMatch, eligibleUids);
+  }
+
   const batch = writeBatch(db);
   predSnap.docs.forEach((d) => {
     const p = d.data();
     const isJoker = jokerMatchByUser[p.userId] === matchId || jokerExtraMatchByUser[p.userId] === matchId;
     const result = computeMatchPoints({ prediction: p, match, isFeatured, isJoker });
-    const points = result ? result.total : 0;
+    const loneWolfBonus = p.userId === loneWolfWinnerUid ? LONE_WOLF_BONUS_POINTS : 0;
+    const points = (result ? result.total : 0) + loneWolfBonus;
     // Structură COMPLETĂ — nu doar totalul. Player Card afișează
     // predicție vs real + defalcarea pe componente (scor/cornere/
     // cartonașe) pentru fiecare meci — dacă lipsesc aceste câmpuri,
@@ -806,6 +818,7 @@ async function publishMatchPointsIfFinal(matchId) {
       scorePoints: result?.scorePoints ?? 0,
       cornersPoints: result?.cornersPoints ?? 0,
       cardsPoints: result?.cardsPoints ?? 0,
+      loneWolfBonus,
       isFeatured, isJoker,
       computedAt: serverTimestamp(),
     });
@@ -901,6 +914,27 @@ async function computeGameweekResults(gameweekId) {
   const usersSnap = await getDocs(collection(db, "users"));
   const allUids = usersSnap.docs.filter((d) => getPlayerStatus(d.data()) === "active").map((d) => d.id);
 
+  // 🐺 Lupul Singuratic — determinat O SINGURĂ DATĂ per meci (nu per
+  // user × meci), din predicțiile deja aduse mai sus (allPredictions) —
+  // zero citiri Firestore suplimentare. Exclus strict pentru Etapa 1/
+  // Sezon 1 (deja finalizată, înghețată) — aceeași funcție pură,
+  // aceeași excludere, ca în publishMatchPointsIfFinal.
+  const eligibleUidSet = new Set(allUids);
+  const loneWolfWinnerByMatch = {};
+  if (!LONE_WOLF_EXCLUDED_GAMEWEEK_IDS.has(gameweekId)) {
+    const predictionsByMatch = {};
+    allPredictions.forEach((p) => {
+      if (!predictionsByMatch[p.matchId]) predictionsByMatch[p.matchId] = [];
+      predictionsByMatch[p.matchId].push(p);
+    });
+    matches.forEach((match) => {
+      if (!isMatchFinal(match)) return;
+      loneWolfWinnerByMatch[match.id] = computeLoneWolfWinnerUid(
+        match.realScoreA, match.realScoreB, predictionsByMatch[match.id] || [], eligibleUidSet
+      );
+    });
+  }
+
   // Breakdown COMPLET, per user per meci — nu doar meciurile cu predicție
   // și rezultat (cum era înainte). Fiecare meci al etapei apare mereu în
   // breakdown, cu un `status` explicit:
@@ -950,8 +984,17 @@ async function computeGameweekResults(gameweekId) {
         return;
       }
 
-      pointsFromMatches += result.total;
-      breakdown[match.id] = { ...matchSnapshot, status: "scored", ...result };
+      const loneWolfBonus = uid === loneWolfWinnerByMatch[match.id] ? LONE_WOLF_BONUS_POINTS : 0;
+      pointsFromMatches += result.total + loneWolfBonus;
+      // total/finalMatchPoints suprascrise INTENȚIONAT să includă bonusul —
+      // exact cum mp.points (fluxul live, publishMatchPointsIfFinal) îl
+      // include deja. Păstrează cele două surse consistente, ca UI-ul să
+      // nu mai trebuiască să adune bonusul separat, oriunde citește.
+      const matchTotalWithBonus = result.total + loneWolfBonus;
+      breakdown[match.id] = {
+        ...matchSnapshot, status: "scored", ...result, loneWolfBonus,
+        total: matchTotalWithBonus, finalMatchPoints: matchTotalWithBonus,
+      };
     });
 
     return { uid, pointsFromMatches, breakdown };
@@ -1839,6 +1882,7 @@ export async function getLiveGameweekPointsDiagnostic(gameweekId, knownMatches =
         scorePoints: mp.scorePoints ?? 0,
         cornersPoints: mp.cornersPoints ?? 0,
         cardsPoints: mp.cardsPoints ?? 0,
+        loneWolfBonus: mp.loneWolfBonus ?? 0,
         isFeatured: mp.isFeatured ?? false,
         isJoker: mp.isJoker ?? false,
       };

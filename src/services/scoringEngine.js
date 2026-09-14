@@ -111,6 +111,42 @@ export function computeMatchPoints({ prediction, match, isFeatured, isJoker }) {
   };
 }
 
+// ── 🐺 Lupul Singuratic — scoring NORMAL de meci (NU Surpriză, NU bonus
+// de final de etapă). Regulă: dacă EXACT UN SINGUR jucător ELIGIBIL
+// (activ) a pronosticat scorul exact al meciului, acel jucător primește
+// +100, adăugat DIRECT în punctajul meciului respectiv (result.total),
+// deci intră automat în baza de ranking (pointsFromMatches) — fără nicio
+// schimbare la computeRankingBonuses.
+//
+// Funcție PURĂ — primește rezultatul real, toate predicțiile meciului
+// (indiferent de sursă: predSnap live sau allPredictions la finalizare)
+// și mulțimea userilor eligibili — întoarce uid-ul câștigător sau null.
+// Reutilizată IDENTIC din adminService.publishMatchPointsIfFinal ȘI din
+// adminService.computeGameweekResults, ca să nu existe doi calculatori
+// independenți care pot diverge (exact clasa de bug găsită anterior la
+// cornere/cartonașe stale — vezi cazul Levante–Barcelona).
+export const LONE_WOLF_BONUS_POINTS = 100;
+
+// Singura etapă exclusă definitiv — Etapa 1, Sezonul 1, deja finalizată
+// înainte ca regula să existe (confirmat manual din Firebase Console cu
+// Lu, 14 sept 2026). Cheiată STRICT pe ID-ul exact al documentului
+// gameweeks/{id} — NICIODATĂ pe `number`, care se resetează la 1 la
+// începutul fiecărui sezon nou și ar exclude greșit fiecare Etapă 1
+// viitoare.
+export const LONE_WOLF_EXCLUDED_GAMEWEEK_IDS = new Set([
+  "CtUy1kzH6OF1UVMLEOwd_2026-09-07",
+]);
+
+export function computeLoneWolfWinnerUid(realScoreA, realScoreB, predictionsForMatch, eligibleUids) {
+  if (realScoreA === undefined || realScoreA === null) return null;
+  if (realScoreB === undefined || realScoreB === null) return null;
+  const exactUids = predictionsForMatch
+    .filter((p) => eligibleUids.has(p.userId))
+    .filter((p) => p.scoreA === realScoreA && p.scoreB === realScoreB)
+    .map((p) => p.userId);
+  return exactUids.length === 1 ? exactUids[0] : null;
+}
+
 // Bonus/penalizare de poziție, cu regulă olimpică (egalitate = punctaj
 // întreg pentru toți de la acel loc) ȘI protecție defensivă pentru
 // grupuri mici, unde pozițiile de top s-ar suprapune cu cele de jos.

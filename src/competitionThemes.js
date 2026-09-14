@@ -79,6 +79,18 @@ export const COMPETITION_THEMES = {
     badgeTextColor: "#C48CFF",
     pattern: "diagonal",
   },
+  "efl-cup": {
+    name: "EFL Cup",
+    primaryColor: "#003C7E",
+    secondaryColor: "#D91E36",
+    accentColor: "#FFB81C",
+    borderColor: "rgba(0,60,126,0.4)",
+    glowColor: "rgba(0,60,126,0.3)",
+    backgroundGradient: "linear-gradient(135deg, rgba(0,60,126,0.2), rgba(217,30,54,0.05))",
+    badgeBackground: "rgba(0,60,126,0.2)",
+    badgeTextColor: "#6FA8FF",
+    pattern: "diagonal",
+  },
   "la-liga": {
     name: "LaLiga",
     primaryColor: "#FFC72C",
@@ -232,6 +244,9 @@ const COMPETITION_NAME_ALIASES = {
   "liga-2": "liga-2-romania",
   "liga-ii": "liga-2-romania",
   "liga-2-casa-pariurilor": "liga-2-romania",
+  "carabao-cup": "efl-cup",
+  "league-cup": "efl-cup",
+  "english-league-cup": "efl-cup",
 };
 
 export function resolveCompetitionPreset(rawName) {

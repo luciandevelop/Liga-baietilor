@@ -354,10 +354,11 @@ function MatchBreakdownRow({ m }) {
         <span style={s.matchTotal}>{m.finalMatchPoints ?? m.total ?? 0}p</span>
       </div>
 
-      {(m.isFeatured || m.isJoker) && (
+      {(m.isFeatured || m.isJoker || m.loneWolfBonus > 0) && (
         <div style={s.matchBadgeRow}>
           {m.isFeatured && <span style={s.tagFeatured}>⭐ ×2</span>}
           {m.isJoker && <span style={s.tagJoker}>🃏 ×2</span>}
+          {m.loneWolfBonus > 0 && <span style={s.tagLoneWolf}>🐺 Lupul Singuratic +{m.loneWolfBonus}</span>}
         </div>
       )}
 
@@ -593,6 +594,7 @@ const s = {
   matchBadgeRow: { display: "flex", gap: 6, marginTop: 8 },
   tagFeatured: { fontSize: 9.5, fontWeight: 800, color: color.goldLight, background: "rgba(201,162,39,0.14)", border: "1px solid rgba(201,162,39,0.4)", borderRadius: 999, padding: "2px 7px" },
   tagJoker: { fontSize: 9.5, fontWeight: 800, color: color.green, background: color.greenBg, border: `1px solid ${color.greenBorder}`, borderRadius: 999, padding: "2px 7px" },
+  tagLoneWolf: { fontSize: 9.5, fontWeight: 800, color: "#B8C4FF", background: "rgba(91,111,255,0.14)", border: "1px solid rgba(91,111,255,0.4)", borderRadius: 999, padding: "2px 7px" },
   predVsReal: { display: "flex", alignItems: "center", justifyContent: "center", gap: 14, marginTop: 12, paddingTop: 12, borderTop: `1px solid ${color.borderSubtle}` },
   predVsRealCol: { display: "flex", flexDirection: "column", alignItems: "center", gap: 2 },
   predVsRealLabel: { fontSize: 9, fontWeight: 700, color: color.textFaint, letterSpacing: "0.05em" },

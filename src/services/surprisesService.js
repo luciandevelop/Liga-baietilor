@@ -1,6 +1,7 @@
 import { collection, doc, getDoc, getDocs, setDoc, query, where, runTransaction, serverTimestamp } from "firebase/firestore";
 import { db } from "../firebase";
 import { listActiveUserIds, listGameweeks, getLiveGameweekPoints, isGameweekReadyToResolve, getLastCompletedGameweek, listGameweekScores } from "./adminService";
+import { teamScore } from "./scoringEngine";
 
 // ══════════════════════════════════════════════════════════════════
 // CATALOG — un singur loc, reutilizat de Admin (configurare) și de UI
@@ -837,30 +838,22 @@ export async function resolveMain(gameweekId) {
         if (byePlayer) toWrite.push({ uid: byePlayer, points: 100, matchScore: null, opponentMatchScore: null });
       } else {
         const { groups = [] } = config;
-        // Scorul unei părți = suma membrilor, din meciuri FINAL — DAR
-        // dacă partea are 3+ jucători, punctele celui clasat la mijloc
-        // (floor(n/2)+1, aceeași regulă ca la Jumate-Jumate) NU intră în
-        // sumă — el rămâne în echipă, primește premiul dacă echipa
-        // câștigă, doar nu-i "contează" scorul la comparație. Cu 2
-        // jucători, nicio excludere (suma amândurora, ca la 2v2 clasic).
-        function teamSum(members) {
-          if (members.length <= 2) {
-            return members.reduce((sum, uid) => sum + (scoreByUid[uid] || 0), 0);
-          }
-          const sorted = [...members].sort((a, b) => (scoreByUid[b] || 0) - (scoreByUid[a] || 0));
-          const excludeIdx = Math.floor(members.length / 2) + 1 - 1; // index 0-based
-          return sorted.reduce((sum, uid, i) => (i === excludeIdx ? sum : sum + (scoreByUid[uid] || 0)), 0);
-        }
-
+        // Scorul unei părți = MEDIA punctelor membrilor (sum/length) —
+        // ACEEAȘI funcție `teamScore` folosită și de UI-ul LIVE
+        // (TeamDuelExperience.jsx/TeamDuelMiniCard.jsx) — o singură
+        // sursă, garantat identică, niciodată recalculată separat.
+        // Regula veche (excludea din sumă jucătorul clasat la mijloc,
+        // la echipe de 3+) a fost eliminată complet, cerut explicit —
+        // acum toți membrii contează, la orice mărime de echipă.
         groups.forEach(({ teamA, teamB }) => {
-          const sA = teamSum(teamA);
-          const sB = teamSum(teamB);
+          const sA = teamScore(teamA, scoreByUid);
+          const sB = teamScore(teamB, scoreByUid);
           let pA, pB;
           if (sA > sB) { pA = 200; pB = 0; }
           else if (sB > sA) { pA = 0; pB = 200; }
           else { pA = 100; pB = 100; }
-          // Premiul e IDENTIC pentru FIECARE membru — inclusiv cel exclus
-          // din sumă. El nu e scos din echipă, doar din comparație.
+          // Premiul e IDENTIC pentru FIECARE membru — nimeni nu mai e
+          // exclus din echipă sau din premiu.
           teamA.forEach((uid) => toWrite.push({ uid, points: pA, matchScore: sA, opponentMatchScore: sB }));
           teamB.forEach((uid) => toWrite.push({ uid, points: pB, matchScore: sB, opponentMatchScore: sA }));
         });

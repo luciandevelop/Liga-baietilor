@@ -776,10 +776,9 @@ async function publishMatchPointsIfFinal(matchId) {
     jokerMatchByUser[j.userId] = j.matchId;
   });
   // Joker Extra — colecție SEPARATĂ, aditivă (vezi predictionsService).
-  // Combinat prin OR cu Jokerul normal: multiplicatorul rămâne x2 pe
-  // fiecare meci în parte, NICIODATĂ x4, indiferent câte tipuri de Joker
-  // ar cădea din greșeală pe același meci — computeMatchPoints nu vede
-  // decât un singur boolean isJoker.
+  // NU mai intră în multiplicatorul din computeMatchPoints (regula de
+  // produs: nu trebuie să influențeze pointsFromMatches/Top3) — tratat
+  // separat mai jos, ca bonus adițional de Surpriză.
   const jokerExtraSnap = await getDocs(query(collection(db, "jokerExtra"), where("gameweekId", "==", match.gameweekId)));
   const jokerExtraMatchByUser = {};
   jokerExtraSnap.docs.forEach((d) => {
@@ -801,9 +800,26 @@ async function publishMatchPointsIfFinal(matchId) {
   const batch = writeBatch(db);
   predSnap.docs.forEach((d) => {
     const p = d.data();
-    const isJoker = jokerMatchByUser[p.userId] === matchId || jokerExtraMatchByUser[p.userId] === matchId;
+    // Joker NORMAL — neatins, se comportă exact ca înainte (intră în
+    // multiplicatorul din computeMatchPoints, deci în punctajul normal).
+    const isJoker = jokerMatchByUser[p.userId] === matchId;
+    // Joker EXTRA — separat STRICT de multiplicator și de `points`
+    // (figura care alimentează pointsFromMatches/Top3/clasamentul LIVE).
+    // NU mai intră în `isJoker`/computeMatchPoints — regula de produs
+    // cere explicit ca Joker Extra să NU influențeze Top3, deci nu poate
+    // sta ascuns în interiorul scoring-ului normal al meciului.
+    const isJokerExtra = jokerExtraMatchByUser[p.userId] === matchId;
     const result = computeMatchPoints({ prediction: p, match, isFeatured, isJoker });
     const loneWolfBonus = p.userId === loneWolfWinnerUid ? LONE_WOLF_BONUS_POINTS : 0;
+    // "încă o copie a punctajului normal al acelui meci" — exact
+    // definiția cerută: o a doua copie a lui result.total (deja include
+    // ×2 Featured dacă e cazul; Joker normal e imposibil pe același meci,
+    // blocat explicit în UI/handleSetJokerExtra).
+    const jokerExtraBonus = isJokerExtra && result ? result.total : 0;
+    // `points` — figura folosită de getLiveGameweekPoints/pointsFromMatches
+    // — include Lupul Singuratic (scoring normal de meci), dar NU Joker
+    // Extra (bonus de Surpriză, adăugat abia după Top3 — vezi
+    // computeGameweekResults/finalizeGameweek).
     const points = (result ? result.total : 0) + loneWolfBonus;
     // Structură COMPLETĂ — nu doar totalul. Player Card afișează
     // predicție vs real + defalcarea pe componente (scor/cornere/
@@ -819,7 +835,8 @@ async function publishMatchPointsIfFinal(matchId) {
       cornersPoints: result?.cornersPoints ?? 0,
       cardsPoints: result?.cardsPoints ?? 0,
       loneWolfBonus,
-      isFeatured, isJoker,
+      jokerExtraBonus,
+      isFeatured, isJoker, isJokerExtra,
       computedAt: serverTimestamp(),
     });
   });
@@ -887,8 +904,9 @@ async function computeGameweekResults(gameweekId) {
     const j = d.data();
     jokerMatchByUser[j.userId] = j.matchId;
   });
-  // Joker Extra — colecție SEPARATĂ, aditivă (vezi predictionsService și
-  // nota din bucla de resolve instant, mai sus). Combinat prin OR.
+  // Joker Extra — colecție SEPARATĂ, aditivă (vezi predictionsService).
+  // NU mai combinat cu Jokerul normal — tratat separat mai jos, ca bonus
+  // de Surpriză care NU intră în pointsFromMatches/Top3.
   const jokerExtraSnap = await getDocs(query(collection(db, "jokerExtra"), where("gameweekId", "==", gameweekId)));
   const jokerExtraMatchByUser = {};
   jokerExtraSnap.docs.forEach((d) => {
@@ -946,12 +964,21 @@ async function computeGameweekResults(gameweekId) {
   // formulă duplicată — totul vine din computeMatchPoints, aceeași sursă unică.
   const rows = allUids.map((uid) => {
     let pointsFromMatches = 0;
+    let jokerExtraBonusTotal = 0;
     const breakdown = {};
 
     matches.forEach((match) => {
       const p = (predictionsByUser[uid] || []).find((pr) => pr.matchId === match.id) || null;
       const isFeatured = featuredMatchIds.includes(match.id);
-      const isJoker = jokerMatchByUser[uid] === match.id || jokerExtraMatchByUser[uid] === match.id;
+      // Joker NORMAL — neatins, intră în multiplicatorul din
+      // computeMatchPoints, exact ca înainte.
+      const isJoker = jokerMatchByUser[uid] === match.id;
+      // Joker EXTRA — separat STRICT, NU intră în multiplicator, NU
+      // intră în pointsFromMatches (regula de produs: nu trebuie să
+      // influențeze Top3) — tratat ca bonus de Surpriză, adăugat abia
+      // la consolidarea finală (finalizeGameweek), exact ca
+      // mainSurprisePoints/bonusSurprisePoints.
+      const isJokerExtra = jokerExtraMatchByUser[uid] === match.id;
       const hasResult = isMatchFinal(match);
 
       const matchSnapshot = {
@@ -965,6 +992,7 @@ async function computeGameweekResults(gameweekId) {
           : null,
         isFeatured,
         isJoker,
+        isJokerExtra,
       };
 
       if (!hasResult) {
@@ -985,19 +1013,24 @@ async function computeGameweekResults(gameweekId) {
       }
 
       const loneWolfBonus = uid === loneWolfWinnerByMatch[match.id] ? LONE_WOLF_BONUS_POINTS : 0;
+      // "încă o copie a punctajului normal al acelui meci" — definiția
+      // exactă cerută. NU intră în pointsFromMatches.
+      const jokerExtraBonus = isJokerExtra ? result.total : 0;
+      jokerExtraBonusTotal += jokerExtraBonus;
       pointsFromMatches += result.total + loneWolfBonus;
-      // total/finalMatchPoints suprascrise INTENȚIONAT să includă bonusul —
-      // exact cum mp.points (fluxul live, publishMatchPointsIfFinal) îl
-      // include deja. Păstrează cele două surse consistente, ca UI-ul să
-      // nu mai trebuiască să adune bonusul separat, oriunde citește.
+      // total/finalMatchPoints suprascrise INTENȚIONAT să includă
+      // Lupul Singuratic — exact cum mp.points (fluxul live,
+      // publishMatchPointsIfFinal) îl include deja. Joker Extra rămâne
+      // AFARĂ din această figură (e "Meci: 130", nu "Meci: 260") —
+      // afișat separat în breakdown, ca linie proprie.
       const matchTotalWithBonus = result.total + loneWolfBonus;
       breakdown[match.id] = {
-        ...matchSnapshot, status: "scored", ...result, loneWolfBonus,
+        ...matchSnapshot, status: "scored", ...result, loneWolfBonus, jokerExtraBonus,
         total: matchTotalWithBonus, finalMatchPoints: matchTotalWithBonus,
       };
     });
 
-    return { uid, pointsFromMatches, breakdown };
+    return { uid, pointsFromMatches, jokerExtraBonusTotal, breakdown };
   });
 
   const ranked = computeRankingBonuses(rows);
@@ -1197,9 +1230,12 @@ export async function finalizeGameweek(gameweekId) {
     results.rows.forEach((r, i) => {
       const mainSurprisePoints = surpriseByUid[r.uid]?.mainPoints || 0;
       const bonusSurprisePoints = surpriseByUid[r.uid]?.bonusPoints || 0;
+      const jokerExtraBonus = r.jokerExtraBonusTotal || 0;
       // TOTALUL FINAL, consolidat O SINGURĂ DATĂ: meciuri + bonus poziție
-      // + MAIN Surprise + BONUS Surprise — exact formula cerută explicit.
-      const finalTotal = r.pointsFromMatches + r.rankingBonus + mainSurprisePoints + bonusSurprisePoints;
+      // (ambele DEJA includ Lupul Singuratic, parte din scoring-ul normal)
+      // + Joker Extra (bonus de Mystery Box, adăugat DUPĂ Top3, cerut
+      // explicit) + MAIN Surprise + BONUS Surprise.
+      const finalTotal = r.pointsFromMatches + r.rankingBonus + jokerExtraBonus + mainSurprisePoints + bonusSurprisePoints;
 
       const scoreRef = doc(db, "gameweekScores", `${gameweekId}_${r.uid}`);
       tx.set(scoreRef, {
@@ -1208,6 +1244,7 @@ export async function finalizeGameweek(gameweekId) {
         rank: r.rank,
         pointsFromMatches: r.pointsFromMatches,
         rankingBonus: r.rankingBonus,
+        jokerExtraBonus,
         mainSurprisePoints,
         bonusSurprisePoints,
         totalPoints: finalTotal,
@@ -1501,6 +1538,7 @@ export async function getPlayerCardStats(uid, seasonId, etapaGameweekId) {
     // diferite între "REZUMAT ETAPĂ" și restul cardului).
     etapaMainSurprisePoints: etapaScore?.mainSurprisePoints ?? null,
     etapaBonusSurprisePoints: etapaScore?.bonusSurprisePoints ?? null,
+    etapaJokerExtraBonus: etapaScore?.jokerExtraBonus ?? null,
     previousEtapaPoints: previousScore?.totalPoints ?? null,
     seasonPoints,
     generalPoints,
@@ -1883,8 +1921,10 @@ export async function getLiveGameweekPointsDiagnostic(gameweekId, knownMatches =
         cornersPoints: mp.cornersPoints ?? 0,
         cardsPoints: mp.cardsPoints ?? 0,
         loneWolfBonus: mp.loneWolfBonus ?? 0,
+        jokerExtraBonus: mp.jokerExtraBonus ?? 0,
         isFeatured: mp.isFeatured ?? false,
         isJoker: mp.isJoker ?? false,
+        isJokerExtra: mp.isJokerExtra ?? false,
       };
     }
   });

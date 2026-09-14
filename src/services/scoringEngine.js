@@ -200,21 +200,24 @@ export function computeRankingBonuses(rows) {
   return ranked.map((r) => ({ ...r, rankingBonus: bonusByRank[r.rank] || 0 }));
 }
 
-// ── Scor de echipă (Duel de Echipe) — mutat aici din TeamDuelExperience.jsx
-// ca să fie reutilizabil și din Feed (editorial, nu doar din UI). Regula:
-// echipe de 2 → suma simplă. Echipe mai mari (3-4, din resturi) → cel mai
-// slab scor din echipă NU intră în sumă (dar tot ia premiul dacă echipa
-// câștigă) — exact aceeași logică, o singură sursă, folosită acum de
-// ambele. ──
+// ── Scor de echipă (Duel de Echipe) — MUTAT aici din TeamDuelExperience.jsx
+// ca să fie reutilizabil și din Feed (editorial, nu doar din UI), și acum
+// și din surprisesService.resolveMain (o singură sursă, LIVE și FINAL
+// identice). Regulă ACTUALĂ (cerută explicit, înlocuiește vechea regulă
+// cu excludere): teamScore = suma punctelor tuturor membrilor / numărul
+// membrilor — NIMENI nu mai e exclus, la nicio mărime de echipă.
+// Compararea câștigătorului trebuie să folosească valoarea REALĂ,
+// neajustată — teamScoreDisplay() de mai jos e STRICT pentru afișare. ──
 export function teamScore(members, liveScores) {
-  if (members.length <= 2) return members.reduce((s, uid) => s + (liveScores[uid] ?? 0), 0);
-  const sorted = [...members].sort((a, b) => (liveScores[b] ?? 0) - (liveScores[a] ?? 0));
-  const excludeIdx = Math.floor(members.length / 2) + 1 - 1;
-  return sorted.reduce((s, uid, i) => (i === excludeIdx ? s : s + (liveScores[uid] ?? 0)), 0);
+  if (!members || members.length === 0) return 0;
+  const sum = members.reduce((s, uid) => s + (liveScores[uid] ?? 0), 0);
+  return sum / members.length;
 }
 
-export function excludedUid(members, liveScores) {
-  if (members.length <= 2) return null;
-  const sorted = [...members].sort((a, b) => (liveScores[b] ?? 0) - (liveScores[a] ?? 0));
-  return sorted[Math.floor(members.length / 2) + 1 - 1];
+// Rotunjire STRICT pentru afișare (max 1 zecimală, doar dacă e nevoie)
+// — NICIODATĂ folosită pentru comparație/decizia câștigătorului, care
+// trebuie să rămână pe valoarea reală, neajustată (ex. 100.4 > 100.3,
+// chiar dacă UI-ul ar rotunji ambele la "100").
+export function teamScoreDisplay(score) {
+  return Number.isInteger(score) ? score : Math.round(score * 10) / 10;
 }

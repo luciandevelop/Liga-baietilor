@@ -19,7 +19,7 @@ import {
   buildPredictionDistributionFact, buildSurpriseFact, buildTopExactScorerFact, buildStandingsGapFact,
   buildBiggestMoveOfGameweekFact,
 } from "./feedFactsEngine";
-import { teamScore } from "./scoringEngine";
+import { teamScore, teamScoreDisplay } from "./scoringEngine";
 import { getSecretMain } from "./surprisesService";
 import {
   emptyStageMemory, updateStageMemoryWithRanking, updateStageMemoryWithMatchScoring,
@@ -351,7 +351,7 @@ export async function processTeamDuelPulse(gameweekId) {
   const namesA = chosen.teamA.map((uid) => profiles[uid]?.nickname || uid).join(" & ");
   const namesB = chosen.teamB.map((uid) => profiles[uid]?.nickname || uid).join(" & ");
 
-  const event = buildTeamDuelPulseEvent(dateKey, namesA, namesB, chosen.scoreA, chosen.scoreB, pickBalanced);
+  const event = buildTeamDuelPulseEvent(dateKey, namesA, namesB, teamScoreDisplay(chosen.scoreA), teamScoreDisplay(chosen.scoreB), pickBalanced);
   await saveFeedEvents([event]);
   return { event };
 }

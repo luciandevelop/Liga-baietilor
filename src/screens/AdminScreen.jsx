@@ -30,6 +30,7 @@ import {
   listAllUsers, getPlayerStatus, listJokersForGameweek,
   getPlayerCardStats,
   republishAllMatchPointsForGameweek,
+  listGameweekScoresForStats,
 } from "../services/adminService";
 import { getUserPublicProfiles, updateOwnAvatar } from "../services/profilesService";
 import { claimNickname } from "../services/authService";
@@ -112,6 +113,7 @@ const TABS = [
   { id: "surprises", label: "🎭 Surprize" },
   { id: "feed", label: "Feed" },
   { id: "players", label: "👥 Jucători" },
+  { id: "stats", label: "📊 Statistici etape" },
   { id: "health", label: "Health Check" },
   { id: "config", label: "Config" },
 ];
@@ -131,6 +133,39 @@ function specialPhaseStatusInfo(state, now) {
     return { dot: "🟡", text: `Se închide peste ${days} ${days === 1 ? "zi" : "zile"}` };
   }
   return { dot: "🟢", text: "Deschisă" };
+}
+
+// ── 📊 Statistici etape — calcul PUR, local, doar pentru afișare. ──
+// Primește snapshot-urile brute din gameweekScores (deja calculate,
+// nu recalculăm nimic) + un map uid -> nickname, și produce un rând
+// per jucător. Nu scrie nimic, nu atinge Firestore.
+function computeEtapaStatsRows(scoreRows, nicknameByUid) {
+  return scoreRows.map((r) => {
+    const breakdown = r.breakdown || {};
+    let exact = 0, oneXTwo = 0, cornersExact = 0, cardsExact = 0, evaluated = 0;
+    Object.values(breakdown).forEach((m) => {
+      if (m.status !== "scored") return;
+      evaluated += 1;
+      if (m.scorePoints === 120) exact += 1;
+      if (m.scorePoints >= 50) oneXTwo += 1;
+      if (m.cornersPoints === 15) cornersExact += 1;
+      if (m.cardsPoints === 15) cardsExact += 1;
+    });
+    return {
+      uid: r.userId,
+      nickname: nicknameByUid[r.userId] || r.userId,
+      exact, oneXTwo, cornersExact, cardsExact, evaluated,
+    };
+  });
+}
+
+// Pentru rezumat: cine are valoarea maximă la o anumită cheie —
+// TOȚI jucătorii aflați la egalitate, dacă maximul > 0.
+function findEtapaStatsLeaders(rows, key) {
+  if (rows.length === 0) return { max: 0, players: [] };
+  const max = Math.max(...rows.map((r) => r[key]));
+  if (max <= 0) return { max: 0, players: [] };
+  return { max, players: rows.filter((r) => r[key] === max).map((r) => r.nickname) };
 }
 
 export default function AdminScreen({ onBack }) {
@@ -903,6 +938,19 @@ export default function AdminScreen({ onBack }) {
   const [openPlayerStats, setOpenPlayerStats] = useState(null);
   const [openPlayerLoading, setOpenPlayerLoading] = useState(false);
 
+  // ── 📊 Statistici etape — stare COMPLET IZOLATĂ de selectedSeasonId/
+  // selectedGameweekId de mai sus (cei doi controlează tab-urile cu
+  // acțiuni live — Rezultate/Live/Speciale/Surprize/Feed). Navigarea
+  // prin etape trecute aici NU trebuie să le atingă niciodată.
+  const [statsSeasonId, setStatsSeasonId] = useState("");
+  const [statsGameweeks, setStatsGameweeks] = useState([]);
+  const [statsGameweekId, setStatsGameweekId] = useState("");
+  const [statsRows, setStatsRows] = useState([]);
+  const [statsLoading, setStatsLoading] = useState(false);
+  const [statsError, setStatsError] = useState("");
+  const [statsSortKey, setStatsSortKey] = useState("exact");
+  const [statsSortDir, setStatsSortDir] = useState(-1);
+
   async function refreshSeasons() {
     const data = await listSeasons();
     setSeasons(data);
@@ -1412,6 +1460,48 @@ export default function AdminScreen({ onBack }) {
       .then((jokers) => { setWeeklyJokers(jokers); setWeeklyJokersGwId(selectedGameweekId); })
       .catch((err) => console.error("Eroare la încărcarea Jokerelor etapei:", err));
   }, [tab, selectedGameweekId, weeklyJokersGwId]);
+
+  // ── 📊 Statistici etape — complet izolat de selectedSeasonId/selectedGameweekId. ──
+  // 1) Doar un default inițial de sezon (o singură dată, când intri prima
+  //    dată pe tab) — NU sincronizează ulterior cu selecția globală.
+  useEffect(() => {
+    if (tab !== "stats" || statsSeasonId || seasons.length === 0) return;
+    setStatsSeasonId(selectedSeasonId || seasons[0].id);
+  }, [tab, statsSeasonId, seasons, selectedSeasonId]);
+
+  // 2) Lista de etape a sezonului ales pentru statistici — se încarcă
+  //    DOAR cât timp ești efectiv pe tab-ul Statistici etape.
+  useEffect(() => {
+    if (tab !== "stats" || !statsSeasonId) return;
+    listGameweeks(statsSeasonId)
+      .then(setStatsGameweeks)
+      .catch((err) => console.error("Eroare la încărcarea etapelor pentru Statistici:", err));
+  }, [tab, statsSeasonId]);
+
+  // 3) Statisticile propriu-zise — citește STRICT etapa selectată aici,
+  //    niciodată toate deodată, și doar cât timp tab-ul e activ.
+  useEffect(() => {
+    if (tab !== "stats" || !statsGameweekId) { setStatsRows([]); return; }
+    let cancelled = false;
+    setStatsLoading(true);
+    setStatsError("");
+    (async () => {
+      try {
+        const scoreRows = await listGameweekScoresForStats(statsGameweekId);
+        const uids = scoreRows.map((r) => r.userId);
+        const profiles = await getUserPublicProfiles(uids);
+        const nicknameByUid = {};
+        uids.forEach((uid) => { nicknameByUid[uid] = profiles[uid]?.nickname || uid; });
+        if (!cancelled) setStatsRows(computeEtapaStatsRows(scoreRows, nicknameByUid));
+      } catch (err) {
+        console.error("Eroare la încărcarea Statisticilor etapei:", err);
+        if (!cancelled) setStatsError("Eroare la încărcare — vezi consola.");
+      } finally {
+        if (!cancelled) setStatsLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [tab, statsGameweekId]);
 
   // Aceeași sursă ca în Clasament — un singur card, indiferent de unde
   // e deschis (Live preview din Admin, sau oricare din cele 3 taburi).
@@ -3095,6 +3185,115 @@ export default function AdminScreen({ onBack }) {
                 </button>
                 {nicknameSaveMsg && <p style={s.hint}>{nicknameSaveMsg}</p>}
               </SectionCard>
+              </>
+            )}
+
+            {/* ── 📊 Statistici etape — READ-ONLY, selector propriu, izolat ── */}
+            {tab === "stats" && (
+              <>
+                <SectionCard title="📊 Statistici etape">
+                  <p style={s.hint}>
+                    Selector separat de cel folosit în Rezultate/Live/Speciale — alegerea de aici
+                    nu schimbă etapa activă în restul panoului.
+                  </p>
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 10 }}>
+                    {seasons.length > 1 && (
+                      <select
+                        style={s.select}
+                        value={statsSeasonId}
+                        onChange={(e) => { setStatsSeasonId(e.target.value); setStatsGameweekId(""); setStatsGameweeks([]); }}
+                      >
+                        {seasons.map((se) => (
+                          <option key={se.id} value={se.id}>{se.name}</option>
+                        ))}
+                      </select>
+                    )}
+                    <select
+                      style={s.select}
+                      value={statsGameweekId}
+                      onChange={(e) => setStatsGameweekId(e.target.value)}
+                    >
+                      <option value="">— alege o etapă finalizată —</option>
+                      {statsGameweeks.filter((g) => g.status === "completed").map((g) => (
+                        <option key={g.id} value={g.id}>{g.title}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {!statsGameweekId && (
+                    <EmptyState icon="📊" title="Alege o etapă finalizată" subtitle="Statisticile apar doar după selectare — nimic nu se încarcă înainte." />
+                  )}
+
+                  {statsGameweekId && statsLoading && <p style={s.hint}>Se încarcă…</p>}
+                  {statsGameweekId && statsError && <p style={s.message}>{statsError}</p>}
+
+                  {statsGameweekId && !statsLoading && !statsError && statsRows.length === 0 && (
+                    <EmptyState icon="📊" title="Niciun snapshot găsit pentru etapa asta." subtitle="Etapa a fost finalizată fără jucători evaluați, sau ID-ul nu are gameweekScores." />
+                  )}
+
+                  {statsGameweekId && !statsLoading && !statsError && statsRows.length > 0 && (
+                    <>
+                      {[
+                        { icon: "🏆", label: "Regele scorurilor exacte", key: "exact" },
+                        { icon: "🎯", label: "Cele mai multe 1X2 corecte", key: "oneXTwo" },
+                        { icon: "🚩", label: "Regele cornerelor", key: "cornersExact" },
+                        { icon: "🟨", label: "Regele cartonașelor", key: "cardsExact" },
+                      ].map(({ icon, label, key }) => {
+                        const { max, players } = findEtapaStatsLeaders(statsRows, key);
+                        return (
+                          <p key={key} style={s.hint}>
+                            {icon} {label} — {players.length > 0 ? `${players.join(", ")} — ${max}` : "—"}
+                          </p>
+                        );
+                      })}
+
+                      <div style={{ overflowX: "auto", marginTop: 10 }}>
+                        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+                          <thead>
+                            <tr>
+                              {[
+                                { key: "nickname", label: "JUCĂTOR" },
+                                { key: "exact", label: "SCORURI EXACTE" },
+                                { key: "oneXTwo", label: "1X2 CORECTE" },
+                                { key: "cornersExact", label: "CORNERE EXACTE" },
+                                { key: "cardsExact", label: "CARTONAȘE EXACTE" },
+                                { key: "evaluated", label: "MECIURI EVALUATE" },
+                              ].map(({ key, label }) => (
+                                <th
+                                  key={key}
+                                  style={{ textAlign: key === "nickname" ? "left" : "center", padding: "6px 8px", cursor: "pointer", color: color.gold, borderBottom: `1px solid ${color.border}`, whiteSpace: "nowrap" }}
+                                  onClick={() => {
+                                    if (statsSortKey === key) setStatsSortDir((d) => -d);
+                                    else { setStatsSortKey(key); setStatsSortDir(key === "nickname" ? 1 : -1); }
+                                  }}
+                                >
+                                  {label}{statsSortKey === key ? (statsSortDir === -1 ? " ▼" : " ▲") : ""}
+                                </th>
+                              ))}
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {[...statsRows]
+                              .sort((a, b) => {
+                                if (statsSortKey === "nickname") return a.nickname.localeCompare(b.nickname) * statsSortDir;
+                                return (a[statsSortKey] - b[statsSortKey]) * statsSortDir;
+                              })
+                              .map((r) => (
+                                <tr key={r.uid}>
+                                  <td style={{ padding: "6px 8px", borderBottom: `1px solid ${color.border}` }}>{r.nickname}</td>
+                                  <td style={{ padding: "6px 8px", textAlign: "center", borderBottom: `1px solid ${color.border}` }}>{r.exact}</td>
+                                  <td style={{ padding: "6px 8px", textAlign: "center", borderBottom: `1px solid ${color.border}` }}>{r.oneXTwo}</td>
+                                  <td style={{ padding: "6px 8px", textAlign: "center", borderBottom: `1px solid ${color.border}` }}>{r.cornersExact}</td>
+                                  <td style={{ padding: "6px 8px", textAlign: "center", borderBottom: `1px solid ${color.border}` }}>{r.cardsExact}</td>
+                                  <td style={{ padding: "6px 8px", textAlign: "center", borderBottom: `1px solid ${color.border}` }}>{r.evaluated}</td>
+                                </tr>
+                              ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </>
+                  )}
+                </SectionCard>
               </>
             )}
           </>

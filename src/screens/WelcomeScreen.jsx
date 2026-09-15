@@ -58,6 +58,12 @@ export default function WelcomeScreen({ user, profile, isAdmin, onOpenAdmin, onO
   const [toast, setToast] = useState("");
 
   const [gameweek, setGameweek] = useState(null);
+  // ── Story de etapă evidențiat pe Home — SEPARAT de gameweek (etapa
+  // curentă). Rezolvat mai jos din seasons/{id}.activeStoryGameweekId,
+  // ca Admin să poată publica retrospectiva unei etape trecute fără
+  // să depindă de etapa live curentă. gameweek NU se atinge — rămâne
+  // sursa pentru meciuri/pronosticuri/lock-uri, exact ca înainte. ──
+  const [storyGameweek, setStoryGameweek] = useState(null);
   // ── Sezonul curent — folosit STRICT pentru Story de Sezon în header
   // (storyActive/storyVersion, deja pe documentul deja preluat mai sus,
   // zero citire nouă). ──
@@ -549,26 +555,50 @@ export default function WelcomeScreen({ user, profile, isAdmin, onOpenAdmin, onO
   const generalPointsLive = (profile?.seasonPoints || 0) + (profile?.specialPoints || 0)
     + (isCurrentGwCompleted ? 0 : (ownRow?.totalPoints || 0));
 
+  // ── Rezolvă storyGameweek din seasons/{id}.activeStoryGameweekId.
+  // Dacă pointerul lipsește sau indică chiar etapa curentă (cazul
+  // obișnuit), reutilizează gameweek — ZERO citire suplimentară. Dacă
+  // indică altă etapă (Story publicat pentru o etapă trecută), o
+  // singură citire, strict a acelui document. ──
+  useEffect(() => {
+    let cancelled = false;
+    const pointerId = seasonState?.activeStoryGameweekId;
+    if (!pointerId || pointerId === gameweek?.id) {
+      setStoryGameweek(gameweek);
+      return;
+    }
+    (async () => {
+      try {
+        const snap = await getDoc(doc(db, "gameweeks", pointerId));
+        if (!cancelled) setStoryGameweek(snap.exists() ? { id: snap.id, ...snap.data() } : gameweek);
+      } catch (err) {
+        console.error("Eroare la încărcarea etapei Story evidențiate:", err);
+        if (!cancelled) setStoryGameweek(gameweek);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [seasonState?.activeStoryGameweekId, gameweek]);
+
   // ── PLAY LEAGUE Stories — determinare "nevăzut", STRICT din date deja
-  // încărcate (gameweek, seasonState, profile) — zero citire nouă doar
+  // încărcate (storyGameweek, seasonState, profile) — zero citire nouă doar
   // ca să decidem dacă iconița pulsează. ──
-  const gwStoryUnseen = !!(gameweek?.storyActive && profile
-    && profile.lastSeenGwStoryKey !== storyKey(gameweek.id, gameweek.storyVersion || 1)
-    && locallySeenKeys.gw !== storyKey(gameweek.id, gameweek.storyVersion || 1));
+  const gwStoryUnseen = !!(storyGameweek?.storyActive && profile
+    && profile.lastSeenGwStoryKey !== storyKey(storyGameweek.id, storyGameweek.storyVersion || 1)
+    && locallySeenKeys.gw !== storyKey(storyGameweek.id, storyGameweek.storyVersion || 1));
   const seasonStoryUnseen = !!(seasonState?.storyActive && profile
     && profile.lastSeenSeasonStoryKey !== storyKey(seasonState.id, seasonState.storyVersion || 1)
     && locallySeenKeys.season !== storyKey(seasonState.id, seasonState.storyVersion || 1));
   const anyStoryUnseen = gwStoryUnseen || seasonStoryUnseen;
 
   async function openGwStory() {
-    if (!gameweek?.storyActive || !gameweek.storySlideCount) return;
+    if (!storyGameweek?.storyActive || !storyGameweek.storySlideCount) return;
     setStoryLoading(true);
     try {
       const seasons = await listSeasons();
-      const seasonNumber = seasonNumberFromList(gameweek.seasonId, seasons);
-      const slideUrls = Array.from({ length: gameweek.storySlideCount }, (_, i) =>
-        slideUrl({ seasonNumber, etapaNumber: gameweek.number, slideIndex: i + 1 }));
-      setStoryView({ slideUrls, kind: "gw", id: gameweek.id, version: gameweek.storyVersion || 1, isSeasonStory: false });
+      const seasonNumber = seasonNumberFromList(storyGameweek.seasonId, seasons);
+      const slideUrls = Array.from({ length: storyGameweek.storySlideCount }, (_, i) =>
+        slideUrl({ seasonNumber, etapaNumber: storyGameweek.number, slideIndex: i + 1 }));
+      setStoryView({ slideUrls, kind: "gw", id: storyGameweek.id, version: storyGameweek.storyVersion || 1, isSeasonStory: false });
     } catch (err) {
       console.error("Eroare la deschiderea Story-ului de etapă:", err);
     } finally {

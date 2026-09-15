@@ -1305,6 +1305,18 @@ export async function listGameweekScores(gameweekId) {
   return rows;
 }
 
+// ── 📊 Statistici etape (Admin, istoric) — STRICT READ-ONLY. ──
+// Aceeași interogare ca listGameweekScores() de mai sus, dar FĂRĂ
+// filtrarea prin listActiveUserIds(): acolo era corect (Clasament
+// = doar jucători activi ACUM), dar aici NU e — un jucător dezactivat
+// DUPĂ o etapă trecută trebuie să rămână vizibil în statisticile
+// etapei respective. Nu modifică listGameweekScores(), doar o
+// funcție separată, adițională. Zero writes.
+export async function listGameweekScoresForStats(gameweekId) {
+  const snap = await getDocs(query(collection(db, "gameweekScores"), where("gameweekId", "==", gameweekId)));
+  return snap.docs.map((d) => d.data());
+}
+
 // Clasamentul general — direct din users (seasonPoints/gameweeksPlayed),
 // deja citibil de orice user autentificat.
 export async function listGeneralLeaderboard() {

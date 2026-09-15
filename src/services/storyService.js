@@ -20,7 +20,13 @@ export async function activateGameweekStory(gameweekId, slideCount) {
   const ref = doc(db, "gameweeks", gameweekId);
   const snap = await getDoc(ref);
   const prevVersion = snap.exists() ? (snap.data().storyVersion || 0) : 0;
+  const seasonId = snap.exists() ? snap.data().seasonId : null;
   await updateDoc(ref, { storyActive: true, storyVersion: prevVersion + 1, storySlideCount: slideCount });
+  // Home evidențiază Story-ul de etapă via acest pointer, independent
+  // de currentGameweek — vezi WelcomeScreen.jsx (storyGameweek).
+  if (seasonId) {
+    await updateDoc(doc(db, "seasons", seasonId), { activeStoryGameweekId: gameweekId });
+  }
 }
 
 export async function deactivateGameweekStory(gameweekId) {

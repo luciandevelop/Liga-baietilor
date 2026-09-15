@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { doc, getDoc, collection, getDocs, query, where, updateDoc, serverTimestamp } from "firebase/firestore";
 import { db, auth } from "../firebase";
-import { listAllSpecialCompetitions, listSpecialPhases, openSpecialPhase, resolveSpecialPhase, listAllSpecialPicksForPhases, SPECIALS_EDITION_ID, migrateSpecialPhasesToEdition } from "../services/specialsService";
+import { listAllSpecialCompetitions, listSpecialPhases, openSpecialPhase, closeSpecialPhase, resolveSpecialPhase, listAllSpecialPicksForPhases, SPECIALS_EDITION_ID, migrateSpecialPhasesToEdition } from "../services/specialsService";
 import { PICK_TYPES, getPhaseDefinition } from "../specialDefinitions";
 import { resolveTeamOptions } from "../teamRegistry";
 import SpecialResolvePicker from "../components/SpecialResolvePicker";
@@ -178,7 +178,7 @@ export default function AdminScreen({ onBack }) {
   const [selectedSeasonId, setSelectedSeasonId] = useState("");
   const [selectedGameweekId, setSelectedGameweekId] = useState("");
   // ── 📖 PLAY LEAGUE Stories — control minim în Admin. ──
-  const [gwStorySlideCount, setGwStorySlideCount] = useState(6);
+  const [gwStorySlideCount, setGwStorySlideCount] = useState(7);
   const [seasonStorySlideCount, setSeasonStorySlideCount] = useState(6);
   const [storyBusy, setStoryBusy] = useState(false);
   const [storyPreview, setStoryPreview] = useState(null); // { slideUrls, isSeasonStory } | null
@@ -355,6 +355,8 @@ export default function AdminScreen({ onBack }) {
   const [resolveSelection, setResolveSelection] = useState(null);
   const [resolveSaving, setResolveSaving] = useState(false);
   const [resolveMsg, setResolveMsg] = useState("");
+  const [closeSaving, setCloseSaving] = useState(false);
+  const [closeMsg, setCloseMsg] = useState("");
 
   // ── Jucători (Admin) ──
   const [players, setPlayers] = useState([]);
@@ -1531,7 +1533,7 @@ export default function AdminScreen({ onBack }) {
     listAllUsers()
       .then((users) => setCompletionActiveUsers(users.filter((u) => getPlayerStatus(u) === "active")))
       .catch((err) => console.error("Eroare la lista de useri activi (overview Speciale):", err));
-  }, [tab, openMsg, resolveMsg]);
+  }, [tab, openMsg, resolveMsg, closeMsg]);
 
   // ── Overview agregat: cine a completat Specialele — peste TOATE
   // fazele deschise deja (nu cele blocate), recalculat ori de câte ori
@@ -1580,6 +1582,21 @@ export default function AdminScreen({ onBack }) {
       setOpenMsg("Eroare: " + err.message);
     } finally {
       setOpenSaving(false);
+    }
+  }
+
+  async function handleCloseSpecialPhase() {
+    if (!specialPhaseDef || !specialPhaseId) return;
+    setCloseSaving(true);
+    setCloseMsg("");
+    try {
+      await closeSpecialPhase(specialPhaseId);
+      setCloseMsg("Fază închisă — alegerile tuturor sunt acum vizibile jucătorilor.");
+    } catch (err) {
+      console.error(err);
+      setCloseMsg("Eroare: " + err.message);
+    } finally {
+      setCloseSaving(false);
     }
   }
 
@@ -2125,6 +2142,17 @@ export default function AdminScreen({ onBack }) {
                       Stare: <b>{specialPhaseState.status}</b> · {specialPhaseState.options?.length || 0} opțiuni.
                       Introdu rezultatul real ca să rezolvi faza — punctele se adaugă automat în Clasamentul General.
                     </p>
+                    {specialPhaseState.status === "open" && (
+                      <>
+                        <button style={s.smallBtn} disabled={closeSaving} onClick={handleCloseSpecialPhase} type="button">
+                          {closeSaving ? "Se închide…" : "🔒 Închide faza"}
+                        </button>
+                        <p style={s.hint}>
+                          Închide faza pentru pronosticuri — alegerile tuturor devin vizibile jucătorilor imediat, chiar dacă rezultatul real nu e încă disponibil.
+                        </p>
+                        {closeMsg && <p style={s.hint}>{closeMsg}</p>}
+                      </>
+                    )}
                     <SpecialResolvePicker
                       phaseDef={specialPhaseDef}
                       options={specialPhaseState.options || []}

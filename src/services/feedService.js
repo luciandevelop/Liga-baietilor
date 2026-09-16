@@ -17,7 +17,7 @@ import { canRevealPredictions } from "./matchLockRule";
 import { classifyScoreChange } from "../../api/_lib/footballLogic";
 import {
   buildPredictionDistributionFact, buildSurpriseFact, buildTopExactScorerFact, buildStandingsGapFact,
-  buildBiggestMoveOfGameweekFact,
+  buildBiggestMoveOfGameweekFact, buildCurrentLeaderFact, buildCurrentBottomFact, buildCurrentPodiumFact,
 } from "./feedFactsEngine";
 import { teamScore, teamScoreDisplay } from "./scoringEngine";
 import { getSecretMain } from "./surprisesService";
@@ -267,6 +267,18 @@ export async function processLiveRankChanges(gameweekId) {
     if (gapFact) factEvents.push(gapFact);
     const moveFact = buildBiggestMoveOfGameweekFact(gameweekId, gwStartRanks, rows);
     if (moveFact) factEvents.push(moveFact);
+    // ── Situația STATICĂ actuală — strict din rows, fără nicio
+    // dependență de leaderHistory/stageMemory. Spre deosebire de
+    // leader_established/bottom_established (legate de prima procesare
+    // LIVE), acestea se pot genera oricând, inclusiv prin Regenerate pe
+    // o etapă deja încheiată. Id stabil per etapă — merge:true la
+    // saveFeedEvents, deci rulări repetate actualizează, nu duplică. ──
+    const leaderFact = buildCurrentLeaderFact(gameweekId, rows);
+    if (leaderFact) factEvents.push(leaderFact);
+    const bottomFact = buildCurrentBottomFact(gameweekId, rows);
+    if (bottomFact) factEvents.push(bottomFact);
+    const podiumFact = buildCurrentPodiumFact(gameweekId, rows);
+    if (podiumFact) factEvents.push(podiumFact);
   } catch (err) {
     console.error("Eroare la facts de clasament:", err);
   }

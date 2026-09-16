@@ -170,3 +170,56 @@ export function buildBiggestMoveOfGameweekFact(gameweekId, startOfGwRanks, curre
 }
 
 export { hashSeed };
+
+// ══════════════════════════════════════════════════════════════════
+// FACTS STATICE, IDEMPOTENTE — "situația ACTUALĂ" a etapei, calculate
+// STRICT din clasamentul curent (rows), FĂRĂ nicio dependență de
+// leaderHistory/stageMemory. Spre deosebire de leader_established/
+// bottom_established (feedStoryEngine.js — legate de PRIMA procesare
+// LIVE a etapei, deci inutile pentru Regenerate pe o etapă deja
+// încheiată), acestea pot fi (re)generate oricând, inclusiv retroactiv,
+// pentru orice etapă — id STABIL pe gameweekId, scrise cu merge:true
+// (saveFeedEvents), deci Regenerate repetat le actualizează pe loc,
+// nu creează duplicate. NU pretind nicio tranziție/schimbare istorică —
+// doar starea de ACUM. Complementare motorului LIVE, nu îl înlocuiesc. ──
+export function buildCurrentLeaderFact(gameweekId, rows) {
+  const leader = rows.find((r) => r.rank === 1);
+  if (!leader) return null;
+  const id = `fact_currentleader_${gameweekId}`;
+  return {
+    id, type: TYPE.FACT, subtype: "current_leader", ts: Date.now(), importance: CLASAMENT_FACT_IMPORTANCE,
+    actors: [leader.uid], version: 2, metadata: { uid: leader.uid, points: leader.seasonPoints ?? 0 },
+    narrativeKey: id, icon: "fun", important: false,
+    title: `👑 Liderul actual este ${leader.nickname} cu ${leader.seasonPoints ?? 0} PCT.`,
+    category: "clasament", priority: CLASAMENT_FACT_IMPORTANCE, detail: { uid: leader.uid, points: leader.seasonPoints ?? 0 },
+  };
+}
+
+export function buildCurrentBottomFact(gameweekId, rows) {
+  if (rows.length === 0) return null;
+  const total = rows.length;
+  const last = rows.find((r) => r.rank === total);
+  if (!last) return null;
+  const id = `fact_currentbottom_${gameweekId}`;
+  return {
+    id, type: TYPE.FACT, subtype: "current_bottom", ts: Date.now(), importance: CLASAMENT_FACT_IMPORTANCE,
+    actors: [last.uid], version: 2, metadata: { uid: last.uid, points: last.seasonPoints ?? 0 },
+    narrativeKey: id, icon: "fun", important: false,
+    title: `🪦 Ultimul loc este ocupat de ${last.nickname} cu ${last.seasonPoints ?? 0} PCT.`,
+    category: "clasament", priority: CLASAMENT_FACT_IMPORTANCE, detail: { uid: last.uid, points: last.seasonPoints ?? 0 },
+  };
+}
+
+export function buildCurrentPodiumFact(gameweekId, rows) {
+  const podium = rows.filter((r) => r.rank <= 3).sort((a, b) => a.rank - b.rank);
+  if (podium.length < 3) return null;
+  const id = `fact_currentpodium_${gameweekId}`;
+  const text = podium.map((r) => `${r.rank}. ${r.nickname} — ${r.seasonPoints ?? 0} PCT`).join(", ");
+  return {
+    id, type: TYPE.FACT, subtype: "current_podium", ts: Date.now(), importance: CLASAMENT_FACT_IMPORTANCE,
+    actors: podium.map((r) => r.uid), version: 2, metadata: { podium: podium.map((r) => ({ uid: r.uid, points: r.seasonPoints ?? 0 })) },
+    narrativeKey: id, icon: "fun", important: false,
+    title: `🏅 Podiumul actual: ${text}.`,
+    category: "clasament", priority: CLASAMENT_FACT_IMPORTANCE, detail: {},
+  };
+}

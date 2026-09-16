@@ -1234,13 +1234,18 @@ export function mergeFeedEvents(matchesById, ...groups) {
   // IMPORTANCE existent (max 100) — azi bate mereu orice altceva;
   // mâine (60) rămâne sub azi, dar peste conținutul obișnuit. ──
   function dateRelevanceBoost(ev) {
-    // ── Știrea publicată manual de Admin nu are matchId (nu e legată
-    // neapărat de un meci anume) — dar e mereu "despre acum", exact ca
-    // un meci de azi. Fără asta, orice rezultat de meci al zilei
-    // (+200) o îngroapă complet, indiferent cât de mare îi e
-    // importanța nominală — contrar scopului ei explicit, de "plasă
-    // de siguranță" vizibilă. Același boost, aceeași regulă. ──
-    if (ev.subtype === "manual") return 200;
+    // ── Știrea manuală are prioritate mare DOAR cât e recentă (~24h de
+    // la ev.ts, deja existent, fără câmp/scriere nouă) — cerut explicit:
+    // "manual" nu mai înseamnă "sus etern". După fereastra de recență,
+    // boost-ul dispare complet, ca informațiile actuale PLAY LEAGUE
+    // (clasament, meciuri) s-o depășească natural. Documentul NU se
+    // șterge — rămâne vizibil în "Vezi tot" prin importanța ei proprie
+    // (deja ≥50 din MANUAL_NEWS_TYPES), doar nu mai domină Home. ──
+    if (ev.subtype === "manual") {
+      const MANUAL_RECENCY_MS = 24 * 3600 * 1000;
+      const ageMs = Date.now() - (ev.ts ?? Date.now());
+      return ageMs < MANUAL_RECENCY_MS ? 200 : 0;
+    }
     const matchId = ev.detail?.matchId || ev.metadata?.matchId;
     if (!matchId) return 0;
     const match = matchesById[matchId];

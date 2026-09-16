@@ -341,20 +341,45 @@ function PhaseProgressBar({ phaseDef, score, ownPick }) {
 }
 
 function RevealList({ loading, data, phaseDef, phaseState }) {
+  // ── Doar afișare — rândurile cu >2 selecții pot fi extinse individual,
+  // fără să atingă datele (toate selecțiile există deja în r.choices). ──
+  const [expandedUids, setExpandedUids] = useState(() => new Set());
   if (loading) return <div style={s.centerNote}>Se încarcă…</div>;
   if (!data || data.rows.length === 0) return <div style={s.centerNote}>Niciun pronostic salvat.</div>;
   const optionLabel = (id) => phaseState.options?.find((o) => o.id === id)?.label || id;
+  function toggleExpanded(uid) {
+    setExpandedUids((prev) => {
+      const next = new Set(prev);
+      if (next.has(uid)) next.delete(uid); else next.add(uid);
+      return next;
+    });
+  }
   return (
     <div style={s.revealList}>
-      {data.rows.map((r) => (
-        <div key={r.userId} style={s.revealRow}>
-          <PlayerAvatar avatarId={data.profiles[r.userId]?.avatarId} nickname={data.profiles[r.userId]?.nickname} size={22} />
-          <span style={s.revealName}>{data.profiles[r.userId]?.nickname || r.userId}</span>
-          <span style={s.revealPick}>
-            {phaseDef.type === PICK_TYPES.SINGLE ? optionLabel(r.choice) : (r.choices || []).map(optionLabel).join(", ")}
-          </span>
-        </div>
-      ))}
+      {data.rows.map((r) => {
+        const choices = phaseDef.type === PICK_TYPES.SINGLE ? [optionLabel(r.choice)] : (r.choices || []).map(optionLabel);
+        const isMulti = choices.length > 2;
+        const isExpanded = isMulti && expandedUids.has(r.userId);
+        return (
+          <div key={r.userId} style={s.revealRow}>
+            <div style={s.revealRowTop}>
+              <PlayerAvatar avatarId={data.profiles[r.userId]?.avatarId} nickname={data.profiles[r.userId]?.nickname} size={22} />
+              <span style={s.revealName}>{data.profiles[r.userId]?.nickname || r.userId}</span>
+              {!isExpanded && (
+                <span style={s.revealPick}>
+                  {isMulti ? choices.slice(0, 2).join(", ") : choices.join(", ")}
+                </span>
+              )}
+              {isMulti && (
+                <button type="button" style={s.revealExpandBtn} onClick={() => toggleExpanded(r.userId)}>
+                  {isExpanded ? "▲" : `+${choices.length - 2}`}
+                </button>
+              )}
+            </div>
+            {isExpanded && <div style={s.revealPickExpanded}>{choices.join(", ")}</div>}
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -451,9 +476,12 @@ const s = {
 
   revealList: { display: "flex", flexDirection: "column", gap: 5, marginTop: 2, padding: "0 2px" },
   revealRow: {
-    display: "flex", alignItems: "center", gap: 8, background: color.surface,
+    display: "flex", flexDirection: "column", gap: 4, background: color.surface,
     border: `1px solid ${color.borderSubtle}`, borderRadius: radius.sm, padding: "7px 10px",
   },
+  revealRowTop: { display: "flex", alignItems: "center", gap: 8 },
   revealName: { fontSize: 11, fontWeight: 600, color: color.textPrimary, fontFamily: font.body, flexShrink: 0, width: 90, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
   revealPick: { fontSize: 10.5, color: color.textSecondary, fontFamily: font.body, textAlign: "right", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
+  revealExpandBtn: { fontSize: 10, fontWeight: 700, color: color.gold, background: "transparent", border: "none", padding: 0, marginLeft: 4, cursor: "pointer", flexShrink: 0 },
+  revealPickExpanded: { fontSize: 10.5, color: color.textSecondary, fontFamily: font.body, lineHeight: 1.5, paddingLeft: 30 },
 };

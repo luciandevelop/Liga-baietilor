@@ -1015,7 +1015,6 @@ async function getCachedFunItems() {
 // folosit ATÂT de FeedScreen (Vezi tot) CÂT ȘI de getHomeFeedTop
 // (Home) — o singură logică, nicio duplicare. ──
 const QUOTE_SAMPLE_SIZE = 2;
-const OTHER_FUN_SAMPLE_SIZE = 2;
 
 // Citate — rotație proprie, fără autor repetat în ACELAȘI eșantion.
 // Determinist pe zi (nu Firestore) — cost zero suplimentar, spre
@@ -1034,25 +1033,16 @@ function pickDailyQuotes(daySeed, count) {
   return picked;
 }
 
-function buildSampledFunEvents(adminFun) {
+// ── STRICT cele EXACT 2 citate reale din ALL_QUOTES — cerut explicit.
+// Ramura de "alte glume/facts" (FUN_ITEMS + glume adăugate de Admin din
+// bancă) a fost eliminată din acest flux — nu mai concurează cu
+// conținutul real PLAY LEAGUE pentru sloturile vizibile din Feed.
+// listAdminFunItems/FUN_ITEMS rămân neatinse ca date — doar nu mai sunt
+// injectate aici. ──
+function buildSampledFunEvents() {
   const daySeed = new Date().toISOString().slice(0, 10);
-
   const quotes = pickDailyQuotes(daySeed, QUOTE_SAMPLE_SIZE);
-  const quoteEvents = quotes.map((q, i) => buildQuoteEvent(daySeed, i, q)).filter(Boolean);
-
-  const allOtherFun = [
-    ...FUN_ITEMS.map((f) => ({ id: `fun_${f.id}`, label: f.label, text: f.text })),
-    ...adminFun.map((f) => ({ id: `fun_${f.id}`, label: f.label, text: f.text })),
-  ];
-  const startIdx = hashSeedLocal(`${daySeed}_otherfun`) % Math.max(allOtherFun.length, 1);
-  const sampledOtherFun = allOtherFun.length <= OTHER_FUN_SAMPLE_SIZE ? allOtherFun
-    : Array.from({ length: OTHER_FUN_SAMPLE_SIZE }, (_, i) => allOtherFun[(startIdx + i) % allOtherFun.length]);
-  const otherFunEvents = sampledOtherFun.map((f) => ({
-    id: f.id, type: TYPE.FACT, category: "fun", priority: 15, ts: Date.now(),
-    icon: "fun", important: false, title: f.text, subtitle: f.label,
-  }));
-
-  return [...quoteEvents, ...otherFunEvents];
+  return quotes.map((q, i) => buildQuoteEvent(daySeed, i, q)).filter(Boolean);
 }
 
 // ── Sursă unică pentru Home ȘI "Vezi tot" — AMBELE folosesc funcția
@@ -1079,16 +1069,20 @@ function ensureQuotesInWindow(sorted, max, minQuotes = 2) {
   const target = Math.min(minQuotes, availableQuotes.length);
   if (target === 0) return sorted;
 
-  const alreadyInWindow = sorted.slice(0, max).filter(isQuote).length;
-  if (alreadyInWindow >= target) return sorted;
-
   const nonQuotes = sorted.filter((e) => !isQuote(e));
   const chosenQuotes = availableQuotes.slice(0, target);
-  const insertAt = Math.min(4, nonQuotes.length); // meciurile zilei rămân în frunte, neatinse
+
+  // ── Citatele intră STRICT la coada ferestrei vizibile (ultimele
+  // `target` poziții din `max`) — cerut explicit, ca informațiile reale
+  // PLAY LEAGUE (clasament, meciuri) să rămână mereu înaintea lor, nu
+  // amestecate la mijloc. Dacă există suficient conținut real, el umple
+  // restul ferestrei neatins; dacă nu, citatele completează, tot la
+  // coadă. ──
+  const realSlotsBeforeQuotes = Math.max(0, max - target);
   return [
-    ...nonQuotes.slice(0, insertAt),
+    ...nonQuotes.slice(0, realSlotsBeforeQuotes),
     ...chosenQuotes,
-    ...nonQuotes.slice(insertAt).filter((e) => !chosenQuotes.includes(e)),
+    ...nonQuotes.slice(realSlotsBeforeQuotes),
   ];
 }
 
@@ -1104,10 +1098,10 @@ export async function getHomeFeedTop(matches = [], { max = 8 } = {}) {
   // nevoia unui index compus nou), volum natural mic (Admin publică
   // ocazional, nu în flux), sortat client-side, ultimele 5 păstrate.
   // Cost: câteva documente în plus, per mount — nu sute. ──
-  const [live, adminFun, manualRaw] = await Promise.all([
-    listLiveFeedEvents({ max: buffer }), getCachedFunItems(), listRecentManualNews(),
+  const [live, manualRaw] = await Promise.all([
+    listLiveFeedEvents({ max: buffer }), listRecentManualNews(),
   ]);
-  const fun = buildSampledFunEvents(adminFun);
+  const fun = buildSampledFunEvents();
   const matchesById = Object.fromEntries(matches.map((m) => [m.id, m]));
   const merged = mergeFeedEvents(matchesById, live, fun, manualRaw);
   return { merged: ensureQuotesInWindow(merged, max).slice(0, max) };
@@ -1116,7 +1110,7 @@ export async function getHomeFeedTop(matches = [], { max = 8 } = {}) {
 // ── Plasă de siguranță GARANTATĂ pentru știrea manuală — vezi
 // comentariul din getHomeFeedTop. where() simplu, FĂRĂ orderBy pe alt
 // câmp, ca să nu ceară un index Firestore nou. ──
-async function listRecentManualNews(keep = 5) {
+export async function listRecentManualNews(keep = 5) {
   console.log("[FS-TRACE] feed manual-news query START");
   const snap = await getDocs(query(collection(db, "feedEvents"), where("subtype", "==", "manual")));
   const all = snap.docs.map((d) => d.data()).sort((a, b) => b.ts - a.ts);

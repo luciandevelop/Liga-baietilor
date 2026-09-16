@@ -121,6 +121,16 @@ export function detectLeaderStory(mem, rows, lastDetachGap = 0) {
     events.push(mkStory(id, "leader_story", "leader_return", IMPORTANCE.LEADER_RETURN, [leader.uid],
       pick([`👑 ${leader.nickname} revine pe primul loc etapei.`, `👑 ${leader.nickname} recuperează fruntea clasamentului.`], id),
       null, { leaderCount: history.length }));
+  } else if (justBecameLeader && history.length === 0) {
+    // ── Prima determinare a liderului etapei — IDEMPOTENT prin
+    // construcție: history vine din oldMem (memoria DINAINTE de update),
+    // e goală DOAR la prima procesare a etapei; din a doua procesare
+    // încolo leaderHistory are mereu ≥1 intrare, deci ramura asta nu se
+    // mai poate declanșa a doua oară pentru aceeași etapă. ID stabil,
+    // fără contor de reprocesare. ──
+    const id = `story_leaderfirst_${mem.gameweekId}`;
+    events.push(mkStory(id, "leader_story", "leader_established", IMPORTANCE.NEW_LEADER, [leader.uid],
+      pick([`👑 Liderul etapei este ${leader.nickname} cu ${leader.seasonPoints ?? 0} PCT.`], id), null, { points: leader.seasonPoints ?? 0 }));
   } else if (justBecameLeader && history.length >= 4) {
     const id = `story_leadercount_${mem.gameweekId}_${history.length}`;
     events.push(mkStory(id, "leader_story", "leader_count", IMPORTANCE.LEADER_CHANGE_COUNT, [leader.uid],
@@ -192,6 +202,14 @@ export function detectBottomStory(mem, rows) {
     const idTake = `story_bottomtake_${mem.gameweekId}_${prevLastEntry[0]}_to_${last.uid}`;
     events.push(mkStory(idTake, "bottom_story", "bottom_takeover", IMPORTANCE.BOTTOM_TAKEOVER, [last.uid],
       pick([`🚨 ${last.nickname} preia lanterna roșie.`], idTake), null, {}));
+  } else if (last && !prevLastEntry) {
+    // ── Prima determinare a ultimului loc — IDEMPOTENT prin construcție,
+    // ca la lider: mem.byUid vine din oldMem, gol DOAR la prima procesare
+    // a etapei; din a doua încolo byUid[last.uid] există mereu, deci
+    // ramura asta nu se mai poate declanșa a doua oară. ──
+    const id = `story_bottomfirst_${mem.gameweekId}`;
+    events.push(mkStory(id, "bottom_story", "bottom_established", IMPORTANCE.BOTTOM_TAKEOVER, [last.uid],
+      pick([`🪦 Ultimul loc al etapei este ${last.nickname} cu ${last.seasonPoints ?? 0} PCT.`], id), null, { points: last.seasonPoints ?? 0 }));
   }
   const bottom3 = rows.filter((r) => r.rank > total - 3);
   if (bottom3.length === 3) {

@@ -109,6 +109,12 @@ export function buildTopExactScorerFact(gameweekId, matchPointsRows) {
   };
 }
 
+// ── FACTS DE CLASAMENT REALE — separate de restul (care rămân "fun"),
+// pragul de publicare al motorului e importance>=55; sub asta erau
+// calculate corect dar niciodată salvate. Doar prag+categorie, ZERO
+// schimbare de calcul. ──
+const CLASAMENT_FACT_IMPORTANCE = 58;
+
 // ── Diferența dintre locurile 1-2, sau podium foarte strâns — din
 // clasamentul curent al etapei. ──
 export function buildStandingsGapFact(gameweekId, rows) {
@@ -120,20 +126,20 @@ export function buildStandingsGapFact(gameweekId, rows) {
 
   if (gap12 <= 10) {
     return {
-      id, type: TYPE.FACT, subtype: "tight_top", ts: Date.now(), importance: IMPORTANCE.FACT_INTERNAL,
+      id, type: TYPE.FACT, subtype: "tight_top", ts: Date.now(), importance: CLASAMENT_FACT_IMPORTANCE,
       actors: [sorted[0].uid, sorted[1].uid], version: 2, metadata: { gap: gap12 },
       narrativeKey: id, icon: "fun", important: false,
       title: pick([`🔥 Doar ${gap12}p între ${sorted[0].nickname} și ${sorted[1].nickname} în fruntea clasamentului.`], id),
-      category: "fun", priority: IMPORTANCE.FACT_INTERNAL, detail: { gap: gap12 },
+      category: "clasament", priority: CLASAMENT_FACT_IMPORTANCE, detail: { gap: gap12 },
     };
   }
   if (gap12 >= 100) {
     return {
-      id, type: TYPE.FACT, subtype: "leader_detached", ts: Date.now(), importance: IMPORTANCE.FACT_INTERNAL,
+      id, type: TYPE.FACT, subtype: "leader_detached", ts: Date.now(), importance: CLASAMENT_FACT_IMPORTANCE,
       actors: [sorted[0].uid], version: 2, metadata: { gap: gap12 },
       narrativeKey: id, icon: "fun", important: false,
       title: pick([`${sorted[0].nickname} conduce detașat, cu ${gap12}p peste locul 2.`], id),
-      category: "fun", priority: IMPORTANCE.FACT_INTERNAL, detail: { gap: gap12 },
+      category: "clasament", priority: CLASAMENT_FACT_IMPORTANCE, detail: { gap: gap12 },
     };
   }
   return null;
@@ -153,13 +159,13 @@ export function buildBiggestMoveOfGameweekFact(gameweekId, startOfGwRanks, curre
   if (!biggest || Math.abs(biggest.moved) < 3) return null;
   const id = `fact_biggestmove_${gameweekId}_${biggest.uid}`;
   return {
-    id, type: TYPE.FACT, subtype: "biggest_move", ts: Date.now(), importance: IMPORTANCE.FACT_INTERNAL,
+    id, type: TYPE.FACT, subtype: "biggest_move", ts: Date.now(), importance: CLASAMENT_FACT_IMPORTANCE,
     actors: [biggest.uid], version: 2, metadata: biggest,
     narrativeKey: id, icon: "fun", important: false,
     title: biggest.moved > 0
       ? pick([`${biggest.nickname} a urcat ${biggest.moved} poziții de la începutul etapei.`], id)
       : pick([`${biggest.nickname} a coborât ${Math.abs(biggest.moved)} poziții de la începutul etapei.`], id),
-    category: "fun", priority: IMPORTANCE.FACT_INTERNAL, detail: biggest,
+    category: "clasament", priority: CLASAMENT_FACT_IMPORTANCE, detail: biggest,
   };
 }
 

@@ -48,7 +48,7 @@ import EmptyState from "../components/EmptyState";
 import {
   listRecentEventsForAdmin, listAdminFunItems, addFunItem, deleteFunItem, deleteAllLiveMatchEvents,
   regenerateCurrentGameweekFeed, processLiveRankChangesCapped, processTeamDuelPulse, processRankChanges,
-  publishManualFeedNews, deleteManualFeedNews,
+  publishManualFeedNews, deleteManualFeedNews, listRecentManualNews,
 } from "../services/feedService";
 import { activateGameweekStory, deactivateGameweekStory, activateSeasonStory, deactivateSeasonStory, storyKey } from "../services/storyService";
 import {
@@ -668,17 +668,27 @@ export default function AdminScreen({ onBack }) {
   const [cleanupMessage, setCleanupMessage] = useState("");
   const [regeneratingFeed, setRegeneratingFeed] = useState(false);
   const [regenerateMessage, setRegenerateMessage] = useState("");
+  // ── Selector DEDICAT pentru Regenerate Feed — complet izolat de
+  // selectedSeasonId/selectedGameweekId (cei doi controlează tab-urile
+  // cu acțiuni live). Regenerate trebuie să poată viza orice etapă
+  // trecută, fără să depindă sau să schimbe etapa curentă a Admin-ului. ──
+  const [regenerateSeasonId, setRegenerateSeasonId] = useState("");
+  const [regenerateGameweeks, setRegenerateGameweeks] = useState([]);
+  const [regenerateGameweekId, setRegenerateGameweekId] = useState("");
 
   // ── Știre manuală în Feed — plasă de siguranță pentru Admin. Lista
-  // de știri manuale se derivă direct din feedEvents deja încărcate
-  // (subtype "manual") — NICIO interogare Firestore separată. ──
+  // de știri manuale folosește interogarea DEDICATĂ (listRecentManualNews,
+  // where subtype=="manual") — NU se mai derivă din cele 50 evenimente
+  // recente (bug găsit: o știre veche ieșea din acea fereastră și
+  // devenea de negăsit/de neșters din Admin, deși documentul chiar exista
+  // în Firestore). ──
   const [manualNewsTitle, setManualNewsTitle] = useState("");
   const [manualNewsText, setManualNewsText] = useState("");
   const [manualNewsType, setManualNewsType] = useState("clasament");
   const [manualNewsPublishing, setManualNewsPublishing] = useState(false);
   const [manualNewsMessage, setManualNewsMessage] = useState("");
   const [manualNewsDeletingId, setManualNewsDeletingId] = useState(null);
-  const manualNewsList = feedEvents.filter((e) => e.subtype === "manual");
+  const [manualNewsList, setManualNewsList] = useState([]);
 
   async function handlePublishManualNews() {
     if (!manualNewsTitle.trim()) { setManualNewsMessage("Titlul e obligatoriu."); return; }
@@ -795,16 +805,17 @@ export default function AdminScreen({ onBack }) {
   // avem snapshot-uri reale pentru fiecare pas, acea parte rămâne
   // needeterminată, semnalat explicit în mesaj, nu ascuns. ──
   async function handleRegenerateFeed() {
-    if (!selectedGameweekId) { setRegenerateMessage("Alege o etapă întâi."); return; }
-    const confirmed = window.confirm("Regenerezi Feed-ul pentru etapa curentă? Nu se șterge nimic existent, doar se completează ce lipsește (idempotent).");
+    if (!regenerateGameweekId) { setRegenerateMessage("Alege o etapă întâi."); return; }
+    const gwLabel = regenerateGameweeks.find((g) => g.id === regenerateGameweekId)?.title || regenerateGameweekId;
+    const confirmed = window.confirm(`Regenerezi Feed-ul pentru ${gwLabel}? Nu se șterge nimic existent (nici știrile manuale), doar se completează ce lipsește (idempotent).`);
     if (!confirmed) return;
     setRegeneratingFeed(true);
     setRegenerateMessage("");
     try {
-      const gwMatches = await listMatches(selectedGameweekId);
-      const result = await regenerateCurrentGameweekFeed(selectedGameweekId, gwMatches);
+      const gwMatches = await listMatches(regenerateGameweekId);
+      const result = await regenerateCurrentGameweekFeed(regenerateGameweekId, gwMatches);
       setRegenerateMessage(
-        `Reconstruit: ${result.reconstructed.matchFinalEvents} evenimente de meci, ${result.reconstructed.currentRankEvents} evenimente de clasament (stare curentă). ${result.note}`
+        `${gwLabel} — reconstruit: ${result.reconstructed.matchFinalEvents} evenimente de meci, ${result.reconstructed.currentRankEvents} evenimente de clasament (stare curentă). ${result.note}`
       );
     } catch (err) {
       console.error("Eroare la regenerarea Feed-ului:", err);
@@ -822,10 +833,11 @@ export default function AdminScreen({ onBack }) {
 
   function loadFeedAdminData() {
     setFeedLoading(true);
-    Promise.all([listRecentEventsForAdmin(), listAdminFunItems()])
-      .then(([events, adminFun]) => {
+    Promise.all([listRecentEventsForAdmin(), listAdminFunItems(), listRecentManualNews(50)])
+      .then(([events, adminFun, manualNews]) => {
         setFeedEvents(events);
         setFeedAdminFun(adminFun);
+        setManualNewsList(manualNews);
       })
       .catch((err) => console.error("Eroare la încărcarea Feed-ului (admin):", err))
       .finally(() => setFeedLoading(false));
@@ -1504,6 +1516,24 @@ export default function AdminScreen({ onBack }) {
     })();
     return () => { cancelled = true; };
   }, [tab, statsGameweekId]);
+
+  // ── Selector DEDICAT Regenerate Feed — izolat, la fel ca la
+  // Statistici etape mai sus. Default de sezon o singură dată, apoi
+  // lista de etape a sezonului ales, doar cât timp ești pe tab-ul Feed. ──
+  useEffect(() => {
+    if (tab !== "feed" || regenerateSeasonId || seasons.length === 0) return;
+    setRegenerateSeasonId(selectedSeasonId || seasons[0].id);
+  }, [tab, regenerateSeasonId, seasons, selectedSeasonId]);
+
+  useEffect(() => {
+    if (tab !== "feed" || !regenerateSeasonId) return;
+    listGameweeks(regenerateSeasonId)
+      .then((gws) => {
+        setRegenerateGameweeks(gws);
+        setRegenerateGameweekId((prev) => prev || gws[gws.length - 1]?.id || "");
+      })
+      .catch((err) => console.error("Eroare la încărcarea etapelor pentru Regenerate:", err));
+  }, [tab, regenerateSeasonId]);
 
   // Aceeași sursă ca în Clasament — un singur card, indiferent de unde
   // e deschis (Live preview din Admin, sau oricare din cele 3 taburi).
@@ -2958,8 +2988,33 @@ export default function AdminScreen({ onBack }) {
                   <button type="button" style={s.smallBtn} disabled={cleaningLiveEvents} onClick={handleCleanupLiveEvents}>
                     {cleaningLiveEvents ? "Se curăță…" : "🧹 Șterge golurile/cartonașele vechi (text greșit)"}
                   </button>
-                  <button type="button" style={s.smallBtn} disabled={regeneratingFeed} onClick={handleRegenerateFeed}>
-                    {regeneratingFeed ? "Se regenerează…" : "🔄 Regenerează Feed etapa curentă"}
+                  <p style={s.hint}>
+                    Selector separat de cel din Rezultate/Live/Speciale — alegerea de aici nu schimbă etapa activă în restul panoului.
+                  </p>
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 8 }}>
+                    {seasons.length > 1 && (
+                      <select
+                        style={s.select}
+                        value={regenerateSeasonId}
+                        onChange={(e) => { setRegenerateSeasonId(e.target.value); setRegenerateGameweekId(""); setRegenerateGameweeks([]); }}
+                      >
+                        {seasons.map((se) => (
+                          <option key={se.id} value={se.id}>{se.name}</option>
+                        ))}
+                      </select>
+                    )}
+                    <select style={s.select} value={regenerateGameweekId} onChange={(e) => setRegenerateGameweekId(e.target.value)}>
+                      <option value="">— alege etapa —</option>
+                      {regenerateGameweeks.map((g) => (
+                        <option key={g.id} value={g.id}>{g.title}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <p style={s.hint}>
+                    <b>Regenerate Feed pentru: {regenerateGameweeks.find((g) => g.id === regenerateGameweekId)?.title || "— alege o etapă —"}</b>
+                  </p>
+                  <button type="button" style={s.smallBtn} disabled={regeneratingFeed || !regenerateGameweekId} onClick={handleRegenerateFeed}>
+                    {regeneratingFeed ? "Se regenerează…" : "🔄 Regenerează Feed"}
                   </button>
                   {regenerateMessage && <p style={s.hint}>{regenerateMessage}</p>}
                   {cleanupMessage && <p style={s.hint}>{cleanupMessage}</p>}

@@ -7,7 +7,7 @@ import { slideUrl, seasonNumberFromList } from "../storyAssets";
 import StoryViewer from "../components/StoryViewer";
 import { subscribeToGameweekMatches } from "../services/matchesStore";
 import { getUserPublicProfiles } from "../services/profilesService";
-import { processFinishedMatches, processJokerActivation, processUpcomingMatches, getHomeFeedTop, processSurpriseCreated, processSurpriseMatchup, processSurpriseResult, processExternalMatchDelta, processMatchIntelligence, processDailyFillerIfQuiet, processClubFactsForMatch } from "../services/feedService";
+import { processFinishedMatches, processJokerActivation, processUpcomingMatches, getHomeFeedTop, processSurpriseCreated, processSurpriseMatchup, processSurpriseResult, processExternalMatchDelta, processMatchIntelligence, processClubFactsForMatch } from "../services/feedService";
 import { doc, getDoc } from "firebase/firestore";
 import { db } from "../firebase";
 import useNow from "../hooks/useNow";
@@ -404,12 +404,11 @@ export default function WelcomeScreen({ user, profile, isAdmin, onOpenAdmin, onO
       .then((events) => { if (events.length > 0) refreshFeedTop(); })
       .catch((err) => console.error("Eroare Feed meciuri viitoare:", err));
 
-    // Filler zilnic — DOAR dacă etapa e genuin "tăcută" (nicio
-    // activitate reală în ultimele ~20h). Verificarea internă a
-    // funcției decide, nu publicăm orbește la fiecare deschidere.
-    processDailyFillerIfQuiet()
-      .then((ev) => { if (ev) refreshFeedTop(); })
-      .catch((err) => console.error("Eroare filler zilnic:", err));
+    // ── Filler zilnic OPRIT — cerut explicit: nu mai vrem glume/facts
+    // generice noi acumulate persistent. Nu șterge nimic din ce există
+    // deja în Firestore (feedEvents rămâne neatins) — doar nu se mai
+    // generează conținut nou de aici încolo. Funcția rămâne definită în
+    // feedService.js, doar neapelată. ──
 
     // Fapte de club/oraș/competiție — DOAR pentru meciurile în
     // fereastra 08:00→23:59 ziua următoare (verificată intern per

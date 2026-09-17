@@ -62,6 +62,8 @@ import {
 } from "../services/higherLowerService";
 import { HIGHER_LOWER_PREVIEW_STATES } from "../higherLowerMockData";
 import HigherLowerScreen from "./HigherLowerScreen";
+import { TREASURE_HUNT_PREVIEW_STATES } from "../treasureHuntMockData";
+import TreasureHuntScreen from "./TreasureHuntScreen";
 import { slideUrl, seasonNumberFromList } from "../storyAssets";
 import StoryViewer from "../components/StoryViewer";
 import { EDITORIAL_ARTICLES } from "../feedContent/editorialContent";
@@ -203,6 +205,10 @@ export default function AdminScreen({ onBack }) {
   const [higherLower, setHigherLower] = useState(null);
   const [higherLowerPreviewOpen, setHigherLowerPreviewOpen] = useState(false);
   const [higherLowerPreviewState, setHigherLowerPreviewState] = useState("A");
+  // ── 🏴‍☠️ Comoara Blestemată — PREVIEW MOCK ONLY, runda asta. Nicio
+  // stare de generare/Admin reală încă — doar toggle-ul de preview. ──
+  const [treasureHuntPreviewOpen, setTreasureHuntPreviewOpen] = useState(false);
+  const [treasureHuntPreviewState, setTreasureHuntPreviewState] = useState("A");
   const [higherLowerBusy, setHigherLowerBusy] = useState(false);
   const [higherLowerMsg, setHigherLowerMsg] = useState("");
   const [hlQuestionDrafts, setHlQuestionDrafts] = useState([]); // [{matchId, criteria, threshold, unit}] x6
@@ -2990,6 +2996,16 @@ export default function AdminScreen({ onBack }) {
                 </button>
               </SectionCard>
 
+              <SectionCard title="🏴‍☠️ Preview Comoara Blestemată — MOCK · ZERO FIRESTORE">
+                <p style={s.hint}>
+                  Runda asta: doar experiența, 100% locală — motorul (pre-shuffle, alegere, reveal, cash-out, final)
+                  rulează integral în React state, nimic scris/citit din Firestore. Joc real + persistență: rundă viitoare.
+                </p>
+                <button type="button" style={s.smallBtn} onClick={() => setTreasureHuntPreviewOpen(true)}>
+                  👁 Preview Comoara Blestemată
+                </button>
+              </SectionCard>
+
               <SectionCard title="🥋 Preview Duel — doar în Admin, 100% local">
                 <p style={s.hint}>
                   Verifică grafica temelor de Duel fără să atingi etapa curentă — nimic de-aici nu se scrie
@@ -3669,6 +3685,29 @@ export default function AdminScreen({ onBack }) {
           </div>
           <div style={s.bbPreviewBody}>
             <HigherLowerScreen previewMode previewState={higherLowerPreviewState} embedded />
+          </div>
+        </div>
+      )}
+
+      {treasureHuntPreviewOpen && (
+        <div style={s.bbPreviewOverlay}>
+          <div style={s.bbPreviewBar}>
+            <span style={s.bbPreviewLabel}>👁 PREVIEW Comoara Blestemată — mock, nimic salvat</span>
+            <button type="button" style={s.bbPreviewCloseBtn} onClick={() => setTreasureHuntPreviewOpen(false)}>✕ Închide</button>
+          </div>
+          <div style={s.bbPreviewStates}>
+            {TREASURE_HUNT_PREVIEW_STATES.map((st) => (
+              <button
+                key={st.id} type="button"
+                style={{ ...s.bbPreviewStateBtn, ...(treasureHuntPreviewState === st.id ? s.bbPreviewStateBtnActive : {}) }}
+                onClick={() => setTreasureHuntPreviewState(st.id)}
+              >
+                {st.label}
+              </button>
+            ))}
+          </div>
+          <div style={s.bbPreviewBody}>
+            <TreasureHuntScreen previewMode previewState={treasureHuntPreviewState} embedded />
           </div>
         </div>
       )}

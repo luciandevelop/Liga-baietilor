@@ -99,6 +99,7 @@ export default function LiveScreen({ onBack, onOpenFeaturedMatch, onOpenSurprise
             {liveMatches.map((m) => {
               const isFeaturedMatch = (gameweek?.featuredMatchIds || []).includes(m.id);
               const showBetBuilderCta = secretMain?.type === "betBuilder" && isFeaturedMatch;
+              const showHigherLowerCta = secretMain?.type === "higherLower" && isFeaturedMatch;
               return (
                 <LiveMatchCard
                   key={m.id}
@@ -109,6 +110,8 @@ export default function LiveScreen({ onBack, onOpenFeaturedMatch, onOpenSurprise
                   onOpenFeatured={onOpenFeaturedMatch ? () => onOpenFeaturedMatch(m, gameweek?.id) : undefined}
                   hasMyBetBuilder={showBetBuilderCta}
                   onOpenBetBuilder={showBetBuilderCta && onOpenSurprises ? () => onOpenSurprises() : undefined}
+                  hasHigherLower={showHigherLowerCta}
+                  onOpenHigherLower={showHigherLowerCta && onOpenSurprises ? () => onOpenSurprises() : undefined}
                 />
               );
             })}
@@ -119,7 +122,7 @@ export default function LiveScreen({ onBack, onOpenFeaturedMatch, onOpenSurprise
   );
 }
 
-function LiveMatchCard({ match, now, reveal, isFeatured, onOpenFeatured, hasMyBetBuilder, onOpenBetBuilder }) {
+function LiveMatchCard({ match, now, reveal, isFeatured, onOpenFeatured, hasMyBetBuilder, onOpenBetBuilder, hasHigherLower, onOpenHigherLower }) {
   const display = getDisplayMatchState(match, now);
   const liveA = display.scoreA;
   const liveB = display.scoreB;
@@ -148,6 +151,11 @@ function LiveMatchCard({ match, now, reveal, isFeatured, onOpenFeatured, hasMyBe
       {hasMyBetBuilder && (
         <div style={{ ...s.betBuilderStrip, cursor: onOpenBetBuilder ? "pointer" : "default" }} onClick={onOpenBetBuilder}>
           🎟️ BET BUILDER LIVE{onOpenBetBuilder ? " · VEZI BILETUL →" : ""}
+        </div>
+      )}
+      {hasHigherLower && (
+        <div style={{ ...s.higherLowerStrip, cursor: onOpenHigherLower ? "pointer" : "default" }} onClick={onOpenHigherLower}>
+          📈📉 MAI MARE / MAI MIC · 🔥 2 RUNDE LIVE{onOpenHigherLower ? " · VEZI DUELUL →" : ""}
         </div>
       )}
       <div style={s.teamsRow}>
@@ -255,6 +263,11 @@ const s = {
   betBuilderStrip: {
     background: "rgba(194,68,68,0.14)", border: "1px solid #C24444", borderRadius: radius.sm,
     padding: "5px 8px", fontSize: 10, fontWeight: 700, color: "#E8837A", textAlign: "center",
+    marginBottom: 8, fontFamily: font.body,
+  },
+  higherLowerStrip: {
+    background: "rgba(139,217,87,0.12)", border: `1px solid ${color.greenBorder}`, borderRadius: radius.sm,
+    padding: "5px 8px", fontSize: 10, fontWeight: 700, color: color.green, textAlign: "center",
     marginBottom: 8, fontFamily: font.body,
   },
 

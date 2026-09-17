@@ -56,6 +56,12 @@ import {
   resolveQuestion, resolveTiebreaker, resolveAllDuels,
 } from "../services/betBuilderService";
 import BetBuilderScreen from "./BetBuilderScreen";
+import {
+  generateHigherLower, getHigherLower, setHigherLowerQuestions, activateHigherLower,
+  resolveHigherLowerQuestion, revealHigherLowerTiebreakers, resolveAllHigherLowerDuels, computeRealGoalsTotal,
+} from "../services/higherLowerService";
+import { HIGHER_LOWER_PREVIEW_STATES } from "../higherLowerMockData";
+import HigherLowerScreen from "./HigherLowerScreen";
 import { slideUrl, seasonNumberFromList } from "../storyAssets";
 import StoryViewer from "../components/StoryViewer";
 import { EDITORIAL_ARTICLES } from "../feedContent/editorialContent";
@@ -192,6 +198,110 @@ export default function AdminScreen({ onBack }) {
   const [betBuilderBusy, setBetBuilderBusy] = useState(false);
   const [betBuilderMsg, setBetBuilderMsg] = useState("");
   const [questionDrafts, setQuestionDrafts] = useState({}); // { matchId: { questions:[{text,options:[a,b]}]x5, tiebreakerText } }
+
+  // ── 📈📉 Mai Mare / Mai Mic — izolat de Bet Builder, propriul state. ──
+  const [higherLower, setHigherLower] = useState(null);
+  const [higherLowerPreviewOpen, setHigherLowerPreviewOpen] = useState(false);
+  const [higherLowerPreviewState, setHigherLowerPreviewState] = useState("A");
+  const [higherLowerBusy, setHigherLowerBusy] = useState(false);
+  const [higherLowerMsg, setHigherLowerMsg] = useState("");
+  const [hlQuestionDrafts, setHlQuestionDrafts] = useState([]); // [{matchId, criteria, threshold, unit}] x6
+
+  async function loadHigherLower(gameweekId) {
+    if (!gameweekId) { setHigherLower(null); return; }
+    try {
+      const hl = await getHigherLower(gameweekId);
+      setHigherLower(hl);
+    } catch (err) {
+      console.error("Eroare la încărcarea Mai Mare/Mai Mic:", err);
+    }
+  }
+
+  async function handleGenerateHigherLower(gameweekId, featuredMatchIds) {
+    setHigherLowerBusy(true);
+    setHigherLowerMsg("");
+    try {
+      const matches = await listMatches(gameweekId);
+      const kickoffMsByMatchId = {};
+      matches.forEach((m) => { kickoffMsByMatchId[m.id] = m.kickoffAt?.toMillis ? m.kickoffAt.toMillis() : null; });
+      await generateHigherLower(gameweekId, featuredMatchIds, kickoffMsByMatchId);
+      await loadHigherLower(gameweekId);
+      setHigherLowerMsg("✅ 9 perechi generate RANDOM.");
+    } catch (err) {
+      setHigherLowerMsg("❌ " + (err.message || String(err)));
+    } finally {
+      setHigherLowerBusy(false);
+    }
+  }
+
+  async function handleSaveHigherLowerQuestions(gameweekId) {
+    setHigherLowerBusy(true);
+    setHigherLowerMsg("");
+    try {
+      await setHigherLowerQuestions(gameweekId, hlQuestionDrafts.map((q) => ({ ...q, threshold: Number(q.threshold) })));
+      await loadHigherLower(gameweekId);
+      setHigherLowerMsg("✅ Cele 6 întrebări salvate.");
+    } catch (err) {
+      setHigherLowerMsg("❌ " + (err.message || String(err)));
+    } finally {
+      setHigherLowerBusy(false);
+    }
+  }
+
+  async function handleActivateHigherLower(gameweekId) {
+    setHigherLowerBusy(true);
+    setHigherLowerMsg("");
+    try {
+      await activateHigherLower(gameweekId);
+      await loadHigherLower(gameweekId);
+      setHigherLowerMsg("✅ Mai Mare/Mai Mic activat — vizibil jucătorilor.");
+    } catch (err) {
+      setHigherLowerMsg("❌ " + (err.message || String(err)));
+    } finally {
+      setHigherLowerBusy(false);
+    }
+  }
+
+  async function handleResolveHigherLowerQuestion(gameweekId, questionId, result) {
+    setHigherLowerBusy(true);
+    try {
+      await resolveHigherLowerQuestion(gameweekId, questionId, result);
+      await loadHigherLower(gameweekId);
+    } catch (err) {
+      setHigherLowerMsg("❌ " + (err.message || String(err)));
+    } finally {
+      setHigherLowerBusy(false);
+    }
+  }
+
+  async function handleRevealHigherLowerTiebreakers(gameweekId) {
+    setHigherLowerBusy(true);
+    try {
+      await revealHigherLowerTiebreakers(gameweekId);
+      setHigherLowerMsg("✅ Barajele au fost dezvăluite.");
+    } catch (err) {
+      setHigherLowerMsg("❌ " + (err.message || String(err)));
+    } finally {
+      setHigherLowerBusy(false);
+    }
+  }
+
+  async function handleResolveAllHigherLowerDuels(gameweekId) {
+    setHigherLowerBusy(true);
+    setHigherLowerMsg("");
+    try {
+      const matches = await listMatches(gameweekId);
+      const starMatches = matches.filter((m) => (higherLower?.matchIds || []).includes(m.id));
+      const realGoalsTotal = await computeRealGoalsTotal(starMatches);
+      const outcomes = await resolveAllHigherLowerDuels(gameweekId, realGoalsTotal);
+      const done = outcomes.filter((o) => o.computed).length;
+      setHigherLowerMsg(`✅ Recalculat — ${done}/9 dueluri complete. Total goluri real: ${realGoalsTotal ?? "— (nu toate 3 meciuri s-au terminat)"}`);
+    } catch (err) {
+      setHigherLowerMsg("❌ " + (err.message || String(err)));
+    } finally {
+      setHigherLowerBusy(false);
+    }
+  }
 
   async function loadBetBuilder(gameweekId) {
     if (!gameweekId) { setBetBuilder(null); return; }
@@ -379,6 +489,16 @@ export default function AdminScreen({ onBack }) {
     else setBetBuilder(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [betBuilderGwId]);
+
+  // ── Mai Mare/Mai Mic — exact același tipar izolat ca Bet Builder. ──
+  const higherLowerGwId = tab === "surprises"
+    ? Object.keys(surprisesData).find((gwId) => surprisesData[gwId]?.secretMain?.type === "higherLower")
+    : null;
+  useEffect(() => {
+    if (higherLowerGwId) loadHigherLower(higherLowerGwId);
+    else setHigherLower(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [higherLowerGwId]);
   const [surprisesLoading, setSurprisesLoading] = useState(false);
   const [surpriseActionKey, setSurpriseActionKey] = useState(""); // "{gwId}_{action}" cu acțiune în curs
   const [sabotajProgress, setSabotajProgress] = useState({}); // gameweekId -> { chosenPickers, takenTargets }
@@ -2511,6 +2631,94 @@ export default function AdminScreen({ onBack }) {
                         </div>
                       )}
 
+                      {mainType === "higherLower" && mainRevealed && (
+                        <div style={s.triviaBox}>
+                          <p style={s.hint}>📈📉 Mai Mare/Mai Mic — 18 jucători, 9 perechi RANDOM, 6 runde comune.</p>
+                          {(!higherLower || higherLower.matchIds?.length !== 3) ? (
+                            <button
+                              type="button" style={s.approveBtn} disabled={higherLowerBusy}
+                              onClick={() => handleGenerateHigherLower(gw.id, gw.featuredMatchIds)}
+                            >
+                              🎲 Generează 9 perechi RANDOM
+                            </button>
+                          ) : (
+                            <>
+                              <p style={s.hint}>
+                                Status: <b>{higherLower.questions?.length === 6 ? "configurat" : "lipsesc întrebările"}</b> · {Object.keys(higherLower.duels || {}).length} perechi generate.
+                              </p>
+
+                              <div style={s.hlPairsGrid}>
+                                {Object.entries(higherLower.duels || {}).map(([duelId, d]) => (
+                                  <div key={duelId} style={s.hlPairChip}>
+                                    {d.playerA} vs {d.playerB} <span style={s.hint}>(începe: {d.starterUid})</span>
+                                  </div>
+                                ))}
+                              </div>
+
+                              {(!higherLower.questions || higherLower.questions.length !== 6) && (
+                                <>
+                                  <p style={s.hint}>Configurează cele 6 întrebări — exact 2 per meci, praguri X,5 (ex. 2.5).</p>
+                                  {Array.from({ length: 6 }, (_, i) => hlQuestionDrafts[i] || { matchId: gw.featuredMatchIds?.[Math.floor(i / 2)] || "", criteria: "", threshold: "", unit: "" }).map((q, i) => (
+                                    <div key={i} style={s.hlQuestionRow}>
+                                      <span style={s.hint}>Runda {i + 1} (meci {Math.floor(i / 2) + 1})</span>
+                                      <input
+                                        style={s.input} placeholder="Criteriu (ex. Total cornere)" value={q.criteria}
+                                        onChange={(e) => setHlQuestionDrafts((prev) => {
+                                          const next = [...prev]; next[i] = { ...q, criteria: e.target.value, matchId: gw.featuredMatchIds?.[Math.floor(i / 2)] }; return next;
+                                        })}
+                                      />
+                                      <input
+                                        style={s.input} placeholder="Prag (ex. 9.5)" value={q.threshold}
+                                        onChange={(e) => setHlQuestionDrafts((prev) => {
+                                          const next = [...prev]; next[i] = { ...q, threshold: e.target.value, matchId: gw.featuredMatchIds?.[Math.floor(i / 2)] }; return next;
+                                        })}
+                                      />
+                                      <input
+                                        style={s.input} placeholder="Unitate (ex. cornere)" value={q.unit}
+                                        onChange={(e) => setHlQuestionDrafts((prev) => {
+                                          const next = [...prev]; next[i] = { ...q, unit: e.target.value, matchId: gw.featuredMatchIds?.[Math.floor(i / 2)] }; return next;
+                                        })}
+                                      />
+                                    </div>
+                                  ))}
+                                  <button type="button" style={s.smallBtn} disabled={higherLowerBusy} onClick={() => handleSaveHigherLowerQuestions(gw.id)}>
+                                    💾 Salvează cele 6 întrebări
+                                  </button>
+                                </>
+                              )}
+
+                              {higherLower.questions?.length === 6 && (
+                                <>
+                                  <p style={s.hint}>Rezultate runde (validare comună, folosită de toate cele 9 perechi):</p>
+                                  {higherLower.questions.map((q, i) => (
+                                    <div key={q.id} style={s.hlQuestionRow}>
+                                      <span style={s.hint}>R{i + 1}. {q.criteria} — {q.threshold}</span>
+                                      {["mai_mare", "mai_mic"].map((r) => (
+                                        <button
+                                          key={r} type="button" disabled={higherLowerBusy}
+                                          style={{ ...s.smallBtn, ...(higherLower.results?.[q.id] === r ? { background: color.gold, color: "#12141C" } : {}) }}
+                                          onClick={() => handleResolveHigherLowerQuestion(gw.id, q.id, r)}
+                                        >
+                                          {r === "mai_mare" ? "📈" : "📉"}
+                                        </button>
+                                      ))}
+                                    </div>
+                                  ))}
+
+                                  <button type="button" style={s.smallBtn} disabled={higherLowerBusy} onClick={() => handleRevealHigherLowerTiebreakers(gw.id)}>
+                                    🔓 Dezvăluie barajele
+                                  </button>
+                                  <button type="button" style={s.btn} disabled={higherLowerBusy} onClick={() => handleResolveAllHigherLowerDuels(gw.id)}>
+                                    🔄 Recalculează toate cele 9 dueluri
+                                  </button>
+                                </>
+                              )}
+                            </>
+                          )}
+                          {higherLowerMsg && <p style={s.hint}>{higherLowerMsg}</p>}
+                        </div>
+                      )}
+
                       {mainType === "trivia" && (
                         <div style={s.triviaBox}>
                           <button type="button" style={s.smallBtn} onClick={() => openTriviaEditor(gw.id, data.secretMain?.config?.questions)}>
@@ -2769,6 +2977,16 @@ export default function AdminScreen({ onBack }) {
                 </p>
                 <button type="button" style={s.smallBtn} onClick={() => setBetBuilderPreviewOpen(true)}>
                   👁 Preview Bet Builder
+                </button>
+              </SectionCard>
+
+              <SectionCard title="📈📉 Preview Mai Mare/Mai Mic — MOCK · ZERO FIRESTORE">
+                <p style={s.hint}>
+                  Demo izolat, 100% local — nu citește/scrie Firestore, nu generează perechi reale.
+                  Disponibil oricând, indiferent ce tip e ales/activ.
+                </p>
+                <button type="button" style={s.smallBtn} onClick={() => setHigherLowerPreviewOpen(true)}>
+                  👁 Preview Mai Mare/Mai Mic
                 </button>
               </SectionCard>
 
@@ -3431,6 +3649,29 @@ export default function AdminScreen({ onBack }) {
           </div>
         </div>
       )}
+
+      {higherLowerPreviewOpen && (
+        <div style={s.bbPreviewOverlay}>
+          <div style={s.bbPreviewBar}>
+            <span style={s.bbPreviewLabel}>👁 PREVIEW Mai Mare/Mai Mic — mock, nimic salvat</span>
+            <button type="button" style={s.bbPreviewCloseBtn} onClick={() => setHigherLowerPreviewOpen(false)}>✕ Închide</button>
+          </div>
+          <div style={s.bbPreviewStates}>
+            {HIGHER_LOWER_PREVIEW_STATES.map((st) => (
+              <button
+                key={st.id} type="button"
+                style={{ ...s.bbPreviewStateBtn, ...(higherLowerPreviewState === st.id ? s.bbPreviewStateBtnActive : {}) }}
+                onClick={() => setHigherLowerPreviewState(st.id)}
+              >
+                {st.label}
+              </button>
+            ))}
+          </div>
+          <div style={s.bbPreviewBody}>
+            <HigherLowerScreen previewMode previewState={higherLowerPreviewState} embedded />
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -3567,6 +3808,9 @@ const s = {
   rosterBadgeOpp: { position: "absolute", top: 2, right: 2, fontSize: 7.5, fontWeight: 800, color: "#F0555A", background: "rgba(10,11,16,0.85)", borderRadius: 4, padding: "1px 3px" },
 
   triviaBox: { marginTop: 4, marginBottom: 8, paddingTop: 8, borderTop: "1px dashed rgba(255,255,255,0.1)" },
+  hlPairsGrid: { display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 8 },
+  hlPairChip: { fontSize: 11, padding: "4px 8px", borderRadius: 8, background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.08)" },
+  hlQuestionRow: { display: "flex", gap: 6, alignItems: "center", marginBottom: 6, flexWrap: "wrap" },
   triviaEditor: { marginTop: 8, display: "flex", flexDirection: "column", gap: 8 },
   triviaQRow: { background: "rgba(255,255,255,0.03)", borderRadius: 8, padding: 8, display: "flex", flexDirection: "column", gap: 6 },
   triviaQNum: { fontSize: 10, fontWeight: 800, color: "#D4AF37" },

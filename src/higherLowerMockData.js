@@ -1,8 +1,8 @@
 // ── Date mock, STRICT pentru preview Admin — nu ating Firestore. ──
 import { CHOICE_MORE, CHOICE_LESS, computeHigherLowerDuelPoints } from "./services/higherLowerService";
 
-const ME = { uid: "me", nickname: "Luck87", avatarId: "luck87" };
-const OPP = { uid: "opp", nickname: "Bogdan", avatarId: "bogdanb" };
+const ME = { uid: "me", nickname: "Luck87", avatarId: "luck87/1" };
+const OPP = { uid: "opp", nickname: "Bogdan", avatarId: "bogdanb/1" };
 
 const QUESTIONS = [
   { id: "q1", matchId: "m1", criteria: "Total goluri", matchLabel: "Liverpool vs Tottenham", threshold: 2.5, unit: "goluri" },

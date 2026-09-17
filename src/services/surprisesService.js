@@ -21,6 +21,7 @@ export const MAIN_CATALOG = [
   { id: "zaruri", label: "Zarurile", active: true },
   { id: "sabotaj", label: "Sabotaj", active: true },
   { id: "betBuilder", label: "🎟️ Bet Builder", active: true },
+  { id: "higherLower", label: "📈📉 Mai Mare / Mai Mic", active: true },
 ];
 
 export const BONUS_CATALOG = [

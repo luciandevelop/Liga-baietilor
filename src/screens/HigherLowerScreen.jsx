@@ -115,6 +115,8 @@ export default function HigherLowerScreen({ onBack, gameweekId, uid, previewMode
       {shownRound && (
         <HeroRoundCard
           round={shownRound} duel={view.duel} uid={effectiveUid}
+          opponentName={(view.opponent || profiles[view.opponentUid])?.nickname || "adversar"}
+          isActive={shownIdx === activeIdx}
           onPick={(choice) => handlePick(shownRound, choice)} busy={busy} justPicked={justPicked}
         />
       )}
@@ -153,7 +155,7 @@ function ArenaHeader({ view, profiles, uid }) {
       <div style={s.arenaMid}>
         <div className="hl-vs-pulse" style={s.vsBadge}>VS</div>
         <div style={s.arenaScore}>{view.winsMine}–{view.winsOpp}</div>
-        <div style={s.arenaSub}>{resolvedCount === 6 ? "TOATE RUNDELE VALIDATE" : `RUNDA ${resolvedCount + 1} / 6`}</div>
+        <div style={s.arenaSub}>{resolvedCount === 6 ? "TOATE RUNDELE VALIDATE" : `PROGRES DUEL — ${resolvedCount}/6 RUNDE VALIDATE`}</div>
       </div>
 
       <div style={s.arenaSide}>
@@ -198,14 +200,14 @@ function DotProgress({ rounds, shownIdx, onSelect }) {
 // ══════════════════════════════════════════════════════════════════
 // C + D + F — HERO CARD (runda selectată/activă)
 // ══════════════════════════════════════════════════════════════════
-function HeroRoundCard({ round, duel, uid, onPick, busy, justPicked }) {
+function HeroRoundCard({ round, duel, uid, opponentName, isActive, onPick, busy, justPicked }) {
   const isMine = round.priorityUid === uid;
   const myChoice = duel.playerA === uid ? round.choiceA : round.choiceB;
   const oppChoice = duel.playerA === uid ? round.choiceB : round.choiceA;
 
   return (
     <div style={s.hero}>
-      <div style={s.heroTag}>RUNDA {round.roundNumber} / 6</div>
+      <div style={s.heroTag}>{isActive ? `RUNDA ACTIVĂ ${round.roundNumber} / 6` : `REVEZI RUNDA ${round.roundNumber} / 6`}</div>
       <div style={s.heroMatch}>⚽ {round.question.matchLabel || round.question.criteria}</div>
       <div style={s.heroCriteria}>{round.question.criteria}{round.question.unit ? ` (${round.question.unit})` : ""}</div>
       <div style={s.heroThreshold}>{round.question.threshold}</div>
@@ -232,7 +234,7 @@ function HeroRoundCard({ round, duel, uid, onPick, busy, justPicked }) {
             </button>
           </div>
         ) : (
-          <div style={s.waitingBox}>⏳ Așteptăm alegerea adversarului...</div>
+          <div style={s.waitingBox}>⏳ Așteptăm alegerea lui {opponentName}...</div>
         )
       )}
 

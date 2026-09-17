@@ -73,12 +73,12 @@ export function applyOutcome(state, doorIndex) {
   if (outcome.type === "points") total = clampPoints(total + outcome.value);
   else lives = lives - 1;
 
-  const gameOver = lives <= 0;
-  return {
-    ...state,
-    total, lives, chosenIndex: doorIndex,
-    phase: gameOver ? "gameover" : "revealed",
-  };
+  // ── Reveal-ul se arată ÎNTOTDEAUNA, inclusiv la a doua viață
+  // pierdută — cerut explicit ("folosește momentul de reacție și apoi
+  // treci în game over"). Game over-ul propriu-zis se activează abia
+  // la advanceAfterReveal, după ce jucătorul a văzut reacția. Scoring-ul
+  // (total/lives) e neschimbat — doar SECVENȚIEREA fazei. ──
+  return { ...state, total, lives, chosenIndex: doorIndex, phase: "revealed" };
 }
 
 // ── Stări inițiale ale motorului — folosite de un joc nou REAL,
@@ -90,6 +90,7 @@ export function freshGameState() {
 // ── Tranziții — motorul complet, reutilizabil identic de UI real
 // (viitor) și de preview (acum). ──
 export function advanceAfterReveal(state) {
+  if (state.lives <= 0) return { ...state, phase: "gameover", total: 0 };
   const { step } = state;
   if (step >= TOTAL_STEPS) {
     return { ...state, phase: "treasure", total: clampPoints(state.total + TREASURE_BONUS) };

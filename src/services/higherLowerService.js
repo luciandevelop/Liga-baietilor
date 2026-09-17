@@ -181,6 +181,28 @@ export async function resolveAllHigherLowerDuels(gameweekId, realGoalsTotal) {
   return outcomes;
 }
 
+// ── Formula de scoring — PURĂ, exportată explicit ca să fie SINGURA
+// sursă de adevăr, folosită atât de rezolvarea reală, cât și de
+// preview/mock (evită exact bug-ul găsit: un total hardcodat separat,
+// decuplat de calculul real). Formula NU s-a schimbat — doar extrasă. ──
+export function computeHigherLowerDuelPoints(winsA, winsB, tbA, tbB, realGoalsTotal) {
+  let bonusA = 0, bonusB = 0;
+  if (winsA > winsB) bonusA = DUEL_WIN_BONUS;
+  else if (winsB > winsA) bonusB = DUEL_WIN_BONUS;
+  else if (realGoalsTotal != null && tbA != null && tbB != null) {
+    const distA = Math.abs(tbA - realGoalsTotal);
+    const distB = Math.abs(tbB - realGoalsTotal);
+    if (distA < distB) bonusA = DUEL_WIN_BONUS;
+    else if (distB < distA) bonusB = DUEL_WIN_BONUS;
+    else { bonusA = DUEL_WIN_BONUS / 2; bonusB = DUEL_WIN_BONUS / 2; }
+  }
+  return {
+    bonusA, bonusB,
+    totalA: winsA * POINTS_PER_ROUND + bonusA,
+    totalB: winsB * POINTS_PER_ROUND + bonusB,
+  };
+}
+
 async function computeAndSaveHigherLowerDuelScore(gameweekId, duelId, duel, hl, realGoalsTotal) {
   const picksSnap = await getDocs(query(collection(db, "weeklySurprises", gameweekId, "higherLowerPicks"), where("duelId", "==", duelId)));
   const picksByUid = { [duel.playerA]: {}, [duel.playerB]: {} };
@@ -205,19 +227,7 @@ async function computeAndSaveHigherLowerDuelScore(gameweekId, duelId, duel, hl, 
   const tbA = tbASnap.exists() ? tbASnap.data().value : null;
   const tbB = tbBSnap.exists() ? tbBSnap.data().value : null;
 
-  let bonusA = 0, bonusB = 0;
-  if (winsA > winsB) bonusA = DUEL_WIN_BONUS;
-  else if (winsB > winsA) bonusB = DUEL_WIN_BONUS;
-  else if (realGoalsTotal != null && tbA != null && tbB != null) {
-    const distA = Math.abs(tbA - realGoalsTotal);
-    const distB = Math.abs(tbB - realGoalsTotal);
-    if (distA < distB) bonusA = DUEL_WIN_BONUS;
-    else if (distB < distA) bonusB = DUEL_WIN_BONUS;
-    else { bonusA = DUEL_WIN_BONUS / 2; bonusB = DUEL_WIN_BONUS / 2; }
-  }
-
-  const totalA = winsA * POINTS_PER_ROUND + bonusA;
-  const totalB = winsB * POINTS_PER_ROUND + bonusB;
+  const { bonusA, bonusB, totalA, totalB } = computeHigherLowerDuelPoints(winsA, winsB, tbA, tbB, realGoalsTotal);
 
   await setDoc(doc(db, "weeklySurprises", gameweekId, "results", duel.playerA), {
     mainPoints: winsA * POINTS_PER_ROUND, bonusPoints: bonusA, source: "higherLower",

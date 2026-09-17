@@ -93,7 +93,7 @@ export function advanceAfterReveal(state) {
   if (state.lives <= 0) return { ...state, phase: "gameover", total: 0 };
   const { step } = state;
   if (step >= TOTAL_STEPS) {
-    return { ...state, phase: "treasure", total: clampPoints(state.total + TREASURE_BONUS) };
+    return { ...state, phase: "treasure", preTreasureTotal: state.total, total: clampPoints(state.total + TREASURE_BONUS) };
   }
   if (step >= 3) {
     return { ...state, phase: "cashout" };
@@ -149,7 +149,7 @@ export function buildTreasureHuntPreview(letter) {
     case "H": // ultima trecere (7)
       return { step: 7, total: 65, lives: 1, phase: "choosing", doors: shuffleStepDoors(7), chosenIndex: null };
     case "I": // comoara gasita
-      return { step: 7, total: clampPoints(70 + TREASURE_BONUS), lives: 1, phase: "treasure", doors: [], chosenIndex: null };
+      return { step: 7, total: clampPoints(70 + TREASURE_BONUS), preTreasureTotal: 70, lives: 1, phase: "treasure", doors: [], chosenIndex: null };
     case "J": // game over
       return { step: 5, total: 0, lives: 0, phase: "gameover", doors: [], chosenIndex: null };
     default:

@@ -21,12 +21,12 @@ export const CURSED_ZONE_INTRO = [
 export const LAST_LIFE_WARNING_TITLE = "⚠️ ULTIMA VIAȚĂ";
 export const LAST_LIFE_WARNING_BODY = [
   "Dacă mai pierzi o ❤️, pierzi TOATE punctele și termini cu 0 PCT.",
-  "Un ❤️ pierdut de-acum = tot ce ai strâns, dus pe apa sâmbetei.",
+  "O ❤️ pierdută de-acum = tot ce ai strâns, dus pe apa sâmbetei.",
 ];
 export function lastLifeCashoutLine(total) {
   const variants = [
     `${total} PCT. O viață. Și tot vrei să continui? 😈`,
-    `${total} PCT pe masă. Un ❤️ distanță de zero. Gândește bine.`,
+    `${total} PCT pe masă. O ❤️ distanță de zero. Gândește bine.`,
   ];
   return pick(variants);
 }

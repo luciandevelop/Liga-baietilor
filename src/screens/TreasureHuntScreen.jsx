@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   freshGameState, buildTreasureHuntPreview, applyOutcome, advanceAfterReveal, cashOut, continueAfterCashout,
   TOTAL_STEPS, MAX_POINTS, TREASURE_BONUS, START_LIVES,
@@ -147,13 +147,14 @@ const ZONE_BG = {
 // ══════════════════════════════════════════════════════════════════
 function ChoiceOverlay({ doors, onPick, step }) {
   const isLast = step >= TOTAL_STEPS;
+  const rewardLabels = useMemo(() => allOutcomeLabels(doors), [doors]);
   return (
     <div className="th-pop" style={s.overlayCard}>
       <div style={s.overlayHeader}>{isLast ? "☠️ ULTIMA TRECERE" : "🏴‍☠️ ALEGE-ȚI DRUMUL"}</div>
       {isLast && <div style={s.overlaySub}>Insula comorii e foarte aproape. Furtuna e puternică.</div>}
 
       <div style={s.rewardsRow}>
-        {uniqueOutcomeLabels(doors).map((label, i) => (
+        {rewardLabels.map((label, i) => (
           <span key={i} style={s.rewardChip}>{label}</span>
         ))}
       </div>
@@ -170,14 +171,16 @@ function ChoiceOverlay({ doors, onPick, step }) {
   );
 }
 
-function uniqueOutcomeLabels(doors) {
-  const seen = new Set();
-  const out = [];
-  doors.forEach((d) => {
-    const label = outcomeLabel(d.outcome);
-    if (!seen.has(label)) { seen.add(label); out.push(label); }
-  });
-  return out;
+// ── STRICT toate cele N sloturi — FĂRĂ deduplicare (două ❤️ −1 VIAȚĂ
+// identice trebuie afișate de DOUĂ ori) și amestecate INDEPENDENT de
+// ordinea reală a ușilor, ca ordinea afișată să nu trădeze poziția. ──
+function allOutcomeLabels(doors) {
+  const labels = doors.map((d) => outcomeLabel(d.outcome));
+  for (let i = labels.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [labels[i], labels[j]] = [labels[j], labels[i]];
+  }
+  return labels;
 }
 function outcomeLabel(o) {
   if (o.type === "life") return "❤️ −1 VIAȚĂ";

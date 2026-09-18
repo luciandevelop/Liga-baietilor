@@ -19,102 +19,147 @@ const ASSET = {
   lifeLost: "/treasure-hunt/life-lost.webp",
 };
 
-function pickOnce(arr) {
-  return arr[Math.floor(Math.random() * arr.length)];
+function pickOnce(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
+function outcomeLabel(o) {
+  if (o.type === "life") return "❤️";
+  return `${o.value > 0 ? "+" : ""}${o.value}`;
 }
 
 // ══════════════════════════════════════════════════════════════════
-// 🏴‍☠️ COMOARA BLESTEMATĂ — Surpriză Mică, max 100 PCT.
-// REDESIGN VIZUAL — motorul (treasureHuntMockData.js) e neschimbat în
-// reguli/valori; doar SECVENȚIEREA fazei "gameover" a fost mutată după
-// reveal (cerut explicit, "momentul de reacție" înainte de game over).
-// 100% MOCK, ZERO Firestore.
+// 🏴‍☠️ COMOARA BLESTEMATĂ — P0 FIX MOBIL. Randare condiționată REALĂ:
+// fiecare fază vizuală (visualPhase) e un `return` complet separat.
+// Corabia/harta există în DOM STRICT în "choice" și "travel" — în toate
+// celelalte faze, componenta MapPanel nici nu e instanțiată (nu doar
+// ascunsă/estompată CSS). Un singur focus per fază, mereu.
 // ══════════════════════════════════════════════════════════════════
 export default function TreasureHuntScreen({ onBack, previewMode, previewState, embedded }) {
   const [game, setGame] = useState(() => (previewMode ? buildTreasureHuntPreview(previewState) : freshGameState()));
   const [pulse, setPulse] = useState(null);
-  const [traveling, setTraveling] = useState(false);
+  const [visualPhase, setVisualPhase] = useState("choice"); // choice|reveal|lifeReaction|travel|cashout|cashedout|treasure|gameover
 
   useEffect(() => {
-    if (previewMode) { setGame(buildTreasureHuntPreview(previewState)); setTraveling(false); }
+    if (previewMode) {
+      const g = buildTreasureHuntPreview(previewState);
+      setGame(g);
+      setVisualPhase(resolveInitialPhase(g));
+    }
   }, [previewMode, previewState]);
 
+  function resolveInitialPhase(g) {
+    if (g.phase === "revealed") {
+      const isLife = g.doors[g.chosenIndex]?.outcome.type === "life";
+      return isLife ? "lifeReaction" : "reveal";
+    }
+    if (g.phase === "choosing") return "choice";
+    return g.phase; // cashout | cashedout | treasure | gameover
+  }
+
+  const chosenOutcome = game.chosenIndex != null ? game.doors[game.chosenIndex]?.outcome : null;
+  const isSecondLifeLoss = chosenOutcome?.type === "life" && game.lives <= 0;
+
   function handlePick(doorIndex) {
-    if (game.phase !== "choosing") return;
+    if (visualPhase !== "choice") return;
     const next = applyOutcome(game, doorIndex);
     const outcome = next.doors[doorIndex].outcome;
     setPulse(outcome.type === "life" ? "life" : outcome.value > 0 ? "up" : "down");
     setGame(next);
+    setVisualPhase(outcome.type === "life" ? "lifeReaction" : "reveal");
     setTimeout(() => setPulse(null), 650);
   }
 
-  // ── Navigarea efectivă a corăbiei: overlay-ul se retrage, harta
-  // rămâne vizibilă, corabia se mută (transition CSS pe poziție),
-  // ABIA APOI intră faza reală următoare (alegere/cash-out/etc). ──
+  // ── CAZ B din spec: a doua viață pierdută → DIRECT în gameover, fără
+  // reveal, fără "Corabia avansează", fără travel. advanceAfterReveal
+  // e funcția existentă a motorului (neschimbată) care pune total:0
+  // când lives<=0 — o refolosim ca să nu duplicăm regula nicăieri. ──
+  function handleReactionDone() {
+    if (isSecondLifeLoss) {
+      const final = advanceAfterReveal(game);
+      setGame(final);
+      setVisualPhase("gameover");
+    } else {
+      setVisualPhase("reveal");
+    }
+  }
+
   function travelThenCommit(nextState) {
-    setTraveling(true);
-    setGame((g) => ({ ...g, step: nextState.step })); // doar poziția se schimbă acum
+    setVisualPhase("travel");
+    setGame((g) => ({ ...g, step: nextState.step }));
     setTimeout(() => {
       setGame(nextState);
-      setTraveling(false);
+      setVisualPhase(nextState.phase === "choosing" ? "choice" : nextState.phase);
     }, 700);
   }
 
   function handleContinueAfterReveal() {
     const next = advanceAfterReveal(game);
-    if (next.phase === "choosing" && next.step !== game.step) travelThenCommit(next);
-    else setGame(next);
+    if (next.phase === "choosing" && next.step !== game.step) { travelThenCommit(next); return; }
+    setGame(next);
+    setVisualPhase(next.phase === "choosing" ? "choice" : next.phase);
   }
 
   function handleCashOut() {
     setGame((g) => cashOut(g));
+    setVisualPhase("cashedout");
   }
 
   function handleContinueRisk() {
-    const next = continueAfterCashout(game);
-    travelThenCommit(next);
+    travelThenCommit(continueAfterCashout(game));
   }
 
   function handleRestart() {
-    setGame(previewMode ? buildTreasureHuntPreview(previewState) : freshGameState());
+    const g = previewMode ? buildTreasureHuntPreview(previewState) : freshGameState();
+    setGame(g);
+    setVisualPhase(resolveInitialPhase(g));
   }
 
-  const zone = zoneForStep(game.step);
+  return wrapPage(embedded, onBack,
+    <>
+      <Hud game={game} pulse={pulse} />
+      {renderPhase()}
+    </>
+  );
 
-  const content = (
+  function renderPhase() {
+    switch (visualPhase) {
+      case "lifeReaction":
+        return <LifeReactionPanel isSecondLoss={isSecondLifeLoss} onDone={handleReactionDone} />;
+      case "reveal":
+        return (
+          <RevealPanel
+            doors={game.doors} chosenIndex={game.chosenIndex}
+            onContinue={handleContinueAfterReveal} isLastStep={game.step >= TOTAL_STEPS}
+          />
+        );
+      case "cashout":
+        return <CashoutPanel total={game.total} lives={game.lives} onCashOut={handleCashOut} onContinue={handleContinueRisk} />;
+      case "cashedout":
+        return <SimpleFinalPanel icon="💰" title="TE-AI OPRIT LA TIMP" total={game.total} detail={`Ai păstrat ${game.total} PCT.`} onRestart={previewMode ? null : handleRestart} />;
+      case "treasure":
+        return <TreasureCinematic game={game} onRestart={previewMode ? null : handleRestart} />;
+      case "gameover":
+        return <GameOverCinematic onRestart={previewMode ? null : handleRestart} />;
+      case "travel":
+        return <MapPanel game={game} zone={zoneForStep(game.step)} travelingTag />;
+      case "choice":
+      default:
+        return (
+          <MapPanel game={game} zone={zoneForStep(game.step)}>
+            <ChoiceOverlay doors={game.doors} onPick={handlePick} step={game.step} lives={game.lives} />
+          </MapPanel>
+        );
+    }
+  }
+}
+
+function wrapPage(embedded, onBack, content) {
+  const inner = (
     <div style={s.wrap}>
       <style>{ANIM_CSS}</style>
       {!embedded && <PageHeader title="🏴‍☠️ Comoara Blestemată" onBack={onBack} />}
-
-      <Hud game={game} pulse={pulse} />
-
-      <MapPanel game={game} zone={zone} traveling={traveling}>
-        {!traveling && game.phase === "choosing" && (
-          <ChoiceOverlay doors={game.doors} onPick={handlePick} step={game.step} lives={game.lives} />
-        )}
-        {!traveling && game.phase === "revealed" && (
-          <RevealOverlay
-            doors={game.doors} chosenIndex={game.chosenIndex} lives={game.lives}
-            onContinue={handleContinueAfterReveal} isLastStep={game.step >= TOTAL_STEPS}
-          />
-        )}
-        {!traveling && game.phase === "cashout" && (
-          <CashoutOverlay total={game.total} lives={game.lives} onCashOut={handleCashOut} onContinue={handleContinueRisk} />
-        )}
-        {!traveling && game.phase === "cashedout" && (
-          <FinalOverlay kind="cashedout" total={game.total} onRestart={previewMode ? null : handleRestart} />
-        )}
-        {!traveling && game.phase === "treasure" && (
-          <TreasureFinalOverlay total={game.total} onRestart={previewMode ? null : handleRestart} />
-        )}
-        {!traveling && game.phase === "gameover" && (
-          <FinalOverlay kind="gameover" total={0} onRestart={previewMode ? null : handleRestart} />
-        )}
-      </MapPanel>
+      {content}
     </div>
   );
-
-  return embedded ? content : <div style={s.page}>{content}</div>;
+  return embedded ? inner : <div style={s.page}>{inner}</div>;
 }
 
 function zoneForStep(step) {
@@ -124,7 +169,7 @@ function zoneForStep(step) {
 }
 
 // ══════════════════════════════════════════════════════════════════
-// HUD
+// HUD — permanent, indiferent de fază.
 // ══════════════════════════════════════════════════════════════════
 function Hud({ game, pulse }) {
   return (
@@ -141,37 +186,42 @@ function Hud({ game, pulse }) {
 }
 
 // ══════════════════════════════════════════════════════════════════
-// HARTA — assets reale, corabia se deplasează efectiv (transition CSS
-// pe poziție), overlay-urile apar DEASUPRA, dar harta rămâne mereu
-// vizibilă dedesubt — inclusiv în faza de navigare (fără overlay).
+// MAP — SINGURUL loc unde corabia există în DOM. Folosit STRICT de
+// fazele "choice" și "travel".
 // ══════════════════════════════════════════════════════════════════
-function MapPanel({ game, zone, traveling, children }) {
-  const shipTopPct = 6 + (Math.min(game.step, TOTAL_STEPS) - 1) * (72 / (TOTAL_STEPS - 1));
-  const sinking = game.phase === "gameover" && !traveling;
+const STATIONS = [
+  { label: "START", top: 4, side: 0 }, { label: "1", top: 13, side: -1 }, { label: "2", top: 24, side: 1 },
+  { label: "3", top: 35, side: -1 }, { label: "4", top: 46, side: 1 }, { label: "5", top: 57, side: -1 },
+  { label: "6", top: 68, side: 1 }, { label: "7", top: 79, side: -1 }, { label: "TREASURE", top: 92, side: 0 },
+];
+function stationTopForStep(step) {
+  return STATIONS[Math.max(0, Math.min(step, TOTAL_STEPS))].top;
+}
+
+function MapPanel({ game, zone, travelingTag, children }) {
+  const shipTop = stationTopForStep(game.step);
   return (
-    <div style={{ ...s.map, ...ZONE_BG[zone] }}>
-      {zone === "cursed" && <div className="th-lightning" style={s.lightning} />}
+    <>
+      <div style={{ ...s.map, ...ZONE_BG[zone] }}>
+        {zone === "cursed" && <div className="th-lightning" style={s.lightning} />}
 
-      <img
-        src={ASSET.island} alt="" style={{ ...s.islandImg, opacity: 0.55 + Math.min(game.step, TOTAL_STEPS) * 0.06 }}
-      />
+        {STATIONS.map((st, i) => (
+          <div key={i} style={{ ...s.stationWrap, top: `${st.top}%`, left: `${50 + st.side * 16}%` }}>
+            <div style={{ ...s.stationDot, ...(i <= game.step ? s.stationDotPassed : {}), ...(st.label === "TREASURE" ? s.stationDotTreasure : {}) }}>
+              {st.label === "TREASURE" ? "🏝️" : st.label === "START" ? "⚓" : st.label}
+            </div>
+          </div>
+        ))}
 
-      {Array.from({ length: TOTAL_STEPS }, (_, i) => {
-        const top = 6 + i * (72 / (TOTAL_STEPS - 1));
-        const passed = i + 1 < game.step;
-        return <div key={i} style={{ ...s.stationDot, top: `${top}%`, ...(passed ? s.stationDotPassed : {}) }} />;
-      })}
+        <img src={ASSET.island} alt="" style={s.islandImg} />
+        <img src={ASSET.ship} alt="Corabia" className="th-ship-sway" style={{ ...s.shipImg, top: `${shipTop}%` }} />
 
-      <img
-        src={ASSET.ship} alt="Corabia"
-        className={sinking ? "th-ship-sink" : "th-ship-sway"}
-        style={{ ...s.shipImg, top: `${shipTopPct}%` }}
-      />
+        {!travelingTag && game.doors && game.doors.length > 0 && <PossiblePouch doors={game.doors} />}
 
-      {traveling && <div style={s.travelingTag}>⛵ Corabia navighează...</div>}
-
-      {children && !traveling && <div style={s.overlayBackdrop}>{children}</div>}
-    </div>
+        {children && <div style={s.overlayBackdrop}>{children}</div>}
+      </div>
+      {travelingTag && <div style={s.travelingTag}>⛵ Corabia navighează...</div>}
+    </>
   );
 }
 
@@ -181,31 +231,35 @@ const ZONE_BG = {
   cursed: { background: "linear-gradient(180deg, #14101F, #05060C)" },
 };
 
+function PossiblePouch({ doors }) {
+  const labels = useMemo(() => {
+    const l = doors.map((d) => outcomeLabel(d.outcome));
+    for (let i = l.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [l[i], l[j]] = [l[j], l[i]]; }
+    return l;
+  }, [doors]);
+  return (
+    <div style={s.pouch}>
+      <div style={s.pouchTitle}>🎒 PRADĂ POSIBILĂ</div>
+      <div style={s.pouchRow}>{labels.join(" · ")}</div>
+    </div>
+  );
+}
+
 // ══════════════════════════════════════════════════════════════════
-// OVERLAY — ALEGERE. Recompensele posibile ("🎒 POSIBILE") sunt un
-// panou SEPARAT, cu ordine amestecată INDEPENDENT de uși — zero
-// asociere spațială cu destinațiile.
+// CHOICE — conținutul cardului de alegere (randat DOAR peste MapPanel
+// din faza "choice").
 // ══════════════════════════════════════════════════════════════════
 function ChoiceOverlay({ doors, onPick, step, lives }) {
   const isLast = step >= TOTAL_STEPS;
   const isRisk = step >= 4 && step <= 5;
   const isCursed = step >= 6;
-  const rewardLabels = useMemo(() => shuffledLabels(doors), [doors]);
   const intro = isCursed ? pickOnce(CURSED_ZONE_INTRO) : isRisk ? pickOnce(RISK_ZONE_INTRO) : null;
-
   return (
     <div className="th-pop" style={s.overlayCard}>
       <div style={s.overlayHeader}>{isLast ? "☠️ ULTIMA TRECERE" : "🏴‍☠️ ALEGE-ȚI DRUMUL"}</div>
       {isLast && <div style={s.overlaySub}>Insula comorii e foarte aproape. Furtuna e puternică.</div>}
       {intro && !isLast && <div style={s.overlaySub}>{intro}</div>}
-
       {lives === 1 && step >= 4 && <LastLifeBanner compact />}
-
-      <div style={s.rewardsPouch}>
-        <div style={s.rewardsPouchTitle}>🎒 POSIBILE ÎN ACEST PAS</div>
-        <div style={s.rewardsPouchRow}>{rewardLabels.join("  ·  ")}</div>
-      </div>
-
       <div style={{ ...s.doorsGrid, ...(doors.length === 4 ? s.doorsGrid4 : {}) }}>
         {doors.map((d, i) => (
           <button key={i} type="button" style={s.doorBtn} onClick={() => onPick(i)}>
@@ -218,19 +272,6 @@ function ChoiceOverlay({ doors, onPick, step, lives }) {
   );
 }
 
-function shuffledLabels(doors) {
-  const labels = doors.map((d) => outcomeLabel(d.outcome));
-  for (let i = labels.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [labels[i], labels[j]] = [labels[j], labels[i]];
-  }
-  return labels;
-}
-function outcomeLabel(o) {
-  if (o.type === "life") return "❤️ −1 VIAȚĂ";
-  return `${o.value > 0 ? "+" : ""}${o.value} PCT`;
-}
-
 function LastLifeBanner({ compact }) {
   return (
     <div className="th-warn-pulse" style={{ ...s.lastLifeBanner, ...(compact ? s.lastLifeBannerCompact : {}) }}>
@@ -241,122 +282,137 @@ function LastLifeBanner({ compact }) {
 }
 
 // ══════════════════════════════════════════════════════════════════
-// OVERLAY — REVEAL. Dacă alegerea a fost o viață pierdută, momentul e
-// MARE (asset life-lost, mesaj), apoi lista completă a celor N uși.
+// LIFE REACTION — ecran PLIN, propriu, FĂRĂ hartă/corabie/reveal.
+// Assetul mereu vizibil COMPLET: object-fit:contain, dimensionat în
+// dvh, containerul NICIODATĂ overflow:hidden.
 // ══════════════════════════════════════════════════════════════════
-function RevealOverlay({ doors, chosenIndex, lives, onContinue, isLastStep }) {
-  const chosenOutcome = doors[chosenIndex]?.outcome;
-  const isLifeLoss = chosenOutcome?.type === "life";
-  const isSecondLifeLoss = isLifeLoss && lives <= 0;
-  const bigLine = isLifeLoss
-    ? pickOnce(isSecondLifeLoss ? LIFE_LOST_SECOND : LIFE_LOST_FIRST)
-    : chosenOutcome?.value > 0 ? bigPositiveLine(chosenOutcome.value) : negativeLine(chosenOutcome?.value);
-
+function LifeReactionPanel({ isSecondLoss, onDone }) {
+  useEffect(() => {
+    const t = setTimeout(onDone, 1600);
+    return () => clearTimeout(t);
+  }, [onDone]);
+  const line = pickOnce(isSecondLoss ? LIFE_LOST_SECOND : LIFE_LOST_FIRST);
   return (
-    <div className="th-pop" style={s.overlayCard}>
-      {isLifeLoss && (
-        <div className="th-shake" style={s.lifeLostBlock}>
-          <img src={ASSET.lifeLost} alt="Ai luat o muie!" style={s.lifeLostImg} />
-          <div style={s.lifeLostLine}>{bigLine}</div>
-        </div>
-      )}
-      {!isLifeLoss && <div style={s.smallReactionLine}>{bigLine}</div>}
+    <div className="th-pop th-shake" style={s.reactionPanel}>
+      <img src={ASSET.lifeLost} alt="Ai luat o muie!" style={s.reactionImg} />
+      <div style={s.reactionLine}>{line}</div>
+      <button type="button" style={s.primaryBtnGhost} onClick={onDone}>Continuă →</button>
+    </div>
+  );
+}
 
-      <div style={s.overlayHeader}>🗺️ DRUMURILE DEZVĂLUITE</div>
-      <div style={s.revealList}>
-        {doors.map((d, i) => {
-          const isChosen = i === chosenIndex;
-          const positive = d.outcome.type === "points" && d.outcome.value > 0;
-          const negative = d.outcome.type === "points" && d.outcome.value < 0;
-          const isLife = d.outcome.type === "life";
-          return (
-            <div key={i} style={{ ...s.revealRow, ...(isChosen ? s.revealRowChosen : {}) }}>
-              <span style={s.revealLabel}>{d.label}</span>
-              <span style={{
-                ...s.revealValue,
-                ...(positive ? s.revealValuePos : negative ? s.revealValueNeg : isLife ? s.revealValueLife : {}),
-              }}>
-                {outcomeLabel(d.outcome)}
-              </span>
-              {isChosen && <span style={s.chosenTag}>🏴‍☠️ AI ALES AICI</span>}
-            </div>
-          );
-        })}
+// ══════════════════════════════════════════════════════════════════
+// REVEAL — ecran PLIN propriu, FĂRĂ hartă/corabie. Compact garantat:
+// CTA într-un footer fix, doar lista rulează intern dacă e nevoie.
+// ══════════════════════════════════════════════════════════════════
+function RevealPanel({ doors, chosenIndex, onContinue, isLastStep }) {
+  return (
+    <div className="th-pop" style={s.revealPanel}>
+      <div style={s.revealScroll}>
+        <div style={s.overlayHeader}>🗺️ DRUMURILE DEZVĂLUITE</div>
+        <div style={s.revealList}>
+          {doors.map((d, i) => {
+            const isChosen = i === chosenIndex;
+            const positive = d.outcome.type === "points" && d.outcome.value > 0;
+            const negative = d.outcome.type === "points" && d.outcome.value < 0;
+            const isLife = d.outcome.type === "life";
+            return (
+              <div key={i} style={{ ...s.revealRow, ...(isChosen ? s.revealRowChosen : {}) }}>
+                <span style={s.revealLabel}>{d.label}{isChosen ? " 🏴‍☠️" : ""}</span>
+                <span style={{ ...s.revealValue, ...(positive ? s.revealValuePos : negative ? s.revealValueNeg : isLife ? s.revealValueLife : {}) }}>
+                  {isLife ? "❤️ −1" : outcomeLabel(d.outcome) + " PCT"}
+                </span>
+              </div>
+            );
+          })}
+        </div>
       </div>
       <button type="button" style={s.primaryBtn} onClick={onContinue}>
-        {isSecondLifeLoss ? "Vezi ce ai pățit →" : isLastStep ? "Continuă →" : "Corabia avansează →"}
+        {isLastStep ? "Continuă →" : "Corabia avansează →"}
       </button>
     </div>
   );
 }
 
 // ══════════════════════════════════════════════════════════════════
-// OVERLAY — CASH OUT
+// CASHOUT — ecran PLIN propriu, FĂRĂ hartă/corabie.
 // ══════════════════════════════════════════════════════════════════
-function CashoutOverlay({ total, lives, onCashOut, onContinue }) {
+function CashoutPanel({ total, lives, onCashOut, onContinue }) {
   const isLastLife = lives === 1;
   return (
-    <div className="th-pop" style={s.overlayCard}>
-      <div style={s.overlayHeader}>⚖️ O DECIZIE TE AȘTEAPTĂ</div>
-      <div style={s.cashoutTotal}>{total} PCT</div>
-      <div style={s.overlaySub}>{isLastLife ? lastLifeCashoutLine(total) : cashoutLine(total, false)}</div>
-
-      {isLastLife && <LastLifeBanner />}
-
+    <div className="th-pop" style={s.revealPanel}>
+      <div style={s.revealScroll}>
+        <div style={s.overlayHeader}>⚖️ O DECIZIE TE AȘTEAPTĂ</div>
+        <div style={s.cashoutTotal}>{total} PCT</div>
+        <div style={s.overlaySub}>{isLastLife ? lastLifeCashoutLine(total) : cashoutLine(total, false)}</div>
+        {isLastLife && <LastLifeBanner />}
+      </div>
       <div style={s.cashoutRow}>
-        <button type="button" style={{ ...s.primaryBtn, ...s.cashoutBtn }} onClick={onCashOut}>
-          💰 MĂ OPRESC — {total} PCT
-        </button>
-        <button type="button" style={{ ...s.primaryBtn, ...s.continueBtn }} onClick={onContinue}>
-          🏴‍☠️ CONTINUI SPRE COMOARĂ
-        </button>
+        <button type="button" style={{ ...s.primaryBtn, ...s.cashoutBtn }} onClick={onCashOut}>💰 MĂ OPRESC — {total} PCT</button>
+        <button type="button" style={{ ...s.primaryBtn, ...s.continueBtn }} onClick={onContinue}>🏴‍☠️ CONTINUI SPRE COMOARĂ</button>
       </div>
     </div>
   );
 }
 
-// ══════════════════════════════════════════════════════════════════
-// FINAL — cashed-out / game over (fără asset dedicat)
-// ══════════════════════════════════════════════════════════════════
-function FinalOverlay({ kind, total, onRestart }) {
-  const config = {
-    cashedout: { icon: "💰", title: "TE-AI OPRIT LA TIMP", detail: `Ai păstrat ${total} PCT.` },
-    gameover: { icon: "☠️", title: "COMOARA TE-A ÎNVINS", detail: pickOnce(GAME_OVER_LINES) },
-  }[kind];
+function SimpleFinalPanel({ icon, title, total, detail, onRestart }) {
   return (
-    <div className={`th-pop ${kind === "gameover" ? "th-darken" : ""}`} style={{ ...s.overlayCard, ...s.finalCard }}>
-      <div style={s.finalIcon}>{config.icon}</div>
-      <div style={s.overlayHeader}>{config.title}</div>
-      <div style={s.finalTotal}>{total} PCT</div>
-      <div style={s.overlaySub}>{config.detail}</div>
+    <div className="th-pop" style={s.revealPanel}>
+      <div style={s.revealScroll}>
+        <div style={s.finalIcon}>{icon}</div>
+        <div style={s.overlayHeader}>{title}</div>
+        <div style={s.finalTotal}>{total} PCT</div>
+        <div style={s.overlaySub}>{detail}</div>
+      </div>
       {onRestart && <button type="button" style={s.primaryBtn} onClick={onRestart}>Joacă din nou (mock)</button>}
     </div>
   );
 }
 
 // ══════════════════════════════════════════════════════════════════
-// FINAL — COMOARA — moment cinematic, cufăr închis → deschis, MARE.
+// GAME OVER — cinematic PLIN, propriu. FĂRĂ hartă/corabie/reveal.
 // ══════════════════════════════════════════════════════════════════
-function TreasureFinalOverlay({ total, onRestart }) {
+function GameOverCinematic({ onRestart }) {
+  const line = pickOnce(GAME_OVER_LINES);
+  return (
+    <div className="th-pop" style={{ ...s.revealPanel, ...s.cinematicDark }}>
+      <div style={s.revealScroll}>
+        <div style={s.cinematicHeader}>☠️ COMOARA TE-A ÎNVINS</div>
+        <div style={s.finalTotal}>0 PCT</div>
+        <div style={s.overlaySub}>{line}</div>
+      </div>
+      {onRestart && <button type="button" style={s.primaryBtn} onClick={onRestart}>Joacă din nou (mock)</button>}
+    </div>
+  );
+}
+
+// ══════════════════════════════════════════════════════════════════
+// TREASURE — cinematic PLIN, propriu. FĂRĂ hartă/corabie.
+// ══════════════════════════════════════════════════════════════════
+function TreasureCinematic({ game, onRestart }) {
   const [open, setOpen] = useState(false);
   useEffect(() => {
     const t = setTimeout(() => setOpen(true), 550);
     return () => clearTimeout(t);
   }, []);
-  const isPerfect = total >= 100;
+  const preTotal = game.preTreasureTotal ?? Math.max(0, game.total - TREASURE_BONUS);
+  const isPerfect = game.total >= 100;
   const line = isPerfect ? pickOnce(PERFECT_100_LINES) : pickOnce(TREASURE_FOUND_LINES);
-
   return (
-    <div className="th-pop" style={{ ...s.overlayCard, ...s.treasureCard }}>
-      <img
-        src={open ? ASSET.chestOpen : ASSET.chestClosed} alt="Comoara"
-        className={open ? "th-chest-open" : "th-chest-shake"}
-        style={s.treasureChestImg}
-      />
-      <div style={s.overlayHeader}>{isPerfect ? "💯 MAXIM ABSOLUT!" : "🏆 COMOARA E A TA!"}</div>
-      <div style={s.treasureBonusLine}>+{TREASURE_BONUS} PCT</div>
-      <div style={s.finalTotal}>{total} PCT</div>
-      <div style={s.overlaySub}>{line}</div>
+    <div className="th-pop" style={s.revealPanel}>
+      <div style={s.revealScroll}>
+        <img
+          src={open ? ASSET.chestOpen : ASSET.chestClosed} alt="Comoara"
+          className={open ? "th-chest-open" : "th-chest-shake"} style={s.treasureChestImg}
+        />
+        <div style={s.overlayHeader}>{isPerfect ? "💯 MAXIM ABSOLUT!" : "🏆 COMOARA E A TA!"}</div>
+        <div style={s.scoreBreakdown}>
+          <div style={s.scoreBreakdownLine}><span>Puncte înainte de comoară</span><span style={s.scoreBreakdownVal}>{preTotal} PCT</span></div>
+          <div style={s.scoreBreakdownLine}><span>Bonus comoară</span><span style={{ ...s.scoreBreakdownVal, color: color.green }}>+{TREASURE_BONUS} PCT</span></div>
+          <div style={{ ...s.scoreBreakdownLine, ...s.scoreBreakdownTotal }}><span>TOTAL FINAL</span><span style={s.scoreBreakdownVal}>{game.total} PCT</span></div>
+        </div>
+        <div style={s.overlaySub}>{line}</div>
+      </div>
       {onRestart && <button type="button" style={s.primaryBtn} onClick={onRestart}>Joacă din nou (mock)</button>}
     </div>
   );
@@ -366,9 +422,8 @@ const ANIM_CSS = `
 @keyframes thPulseUp { 0% { transform: translateY(0) scale(1); } 40% { transform: translateY(-5px) scale(1.08); } 100% { transform: translateY(0) scale(1); } }
 @keyframes thPulseDown { 0% { transform: translateX(0); } 25% { transform: translateX(-4px); } 75% { transform: translateX(4px); } 100% { transform: translateX(0); } }
 @keyframes thShake { 0% { transform: translateX(0); } 20% { transform: translateX(-6px); } 40% { transform: translateX(6px); } 60% { transform: translateX(-4px); } 80% { transform: translateX(4px); } 100% { transform: translateX(0); } }
-@keyframes thPop { 0% { transform: scale(0.92); opacity: 0; } 100% { transform: scale(1); opacity: 1; } }
+@keyframes thPop { 0% { transform: scale(0.94); opacity: 0; } 100% { transform: scale(1); opacity: 1; } }
 @keyframes thShipSway { 0%, 100% { transform: translateX(-50%) rotate(-2deg); } 50% { transform: translateX(-50%) rotate(2deg); } }
-@keyframes thShipSink { 0% { transform: translateX(-50%) rotate(0deg) translateY(0); opacity: 1; } 100% { transform: translateX(-50%) rotate(18deg) translateY(40px); opacity: 0.15; } }
 @keyframes thLightning { 0%, 92%, 100% { opacity: 0; } 94% { opacity: 0.9; } 96% { opacity: 0.15; } 98% { opacity: 0.7; } }
 @keyframes thWarnPulse { 0%, 100% { box-shadow: 0 0 0 0 rgba(220,60,60,0.35); } 50% { box-shadow: 0 0 0 6px rgba(220,60,60,0); } }
 @keyframes thChestShake { 0%, 100% { transform: rotate(0deg); } 25% { transform: rotate(-2deg); } 75% { transform: rotate(2deg); } }
@@ -377,118 +432,129 @@ const ANIM_CSS = `
 .th-pulse-down { animation: thPulseDown 0.4s ease; }
 .th-shake { animation: thShake 0.5s ease; }
 .th-pop { animation: thPop 0.25s ease; }
-.th-darken { filter: brightness(0.9); }
 .th-ship-sway { animation: thShipSway 3s ease-in-out infinite; transition: top 0.7s ease; }
-.th-ship-sink { animation: thShipSink 1.1s ease forwards; }
 .th-lightning { animation: thLightning 4.5s linear infinite; }
 .th-warn-pulse { animation: thWarnPulse 2s ease-in-out infinite; }
 .th-chest-shake { animation: thChestShake 0.4s ease-in-out 2; }
 .th-chest-open { animation: thChestOpen 0.4s ease; }
 @media (prefers-reduced-motion: reduce) {
-  .th-pulse-up, .th-pulse-down, .th-shake, .th-pop, .th-ship-sway, .th-ship-sink, .th-lightning, .th-warn-pulse, .th-chest-shake, .th-chest-open { animation: none !important; }
+  .th-pulse-up, .th-pulse-down, .th-shake, .th-pop, .th-ship-sway, .th-lightning, .th-warn-pulse, .th-chest-shake, .th-chest-open { animation: none !important; }
 }
 `;
 
 const s = {
-  page: { minHeight: "100vh", background: color.bgBase },
+  page: { minHeight: "100dvh", background: color.bgBase },
   wrap: { maxWidth: 460, margin: "0 auto", padding: "0 14px 24px" },
 
   hud: {
     display: "flex", justifyContent: "space-between", alignItems: "center",
     background: color.surfaceElevated, border: `1px solid ${color.border}`, borderRadius: radius.md,
-    padding: "10px 14px", margin: "12px 0",
+    padding: "10px 14px", margin: "12px 0", flexShrink: 0,
   },
   hudItem: { color: color.textPrimary, fontSize: 13, fontWeight: 800, fontFamily: font.body },
   hudPoints: { color: color.goldLight, fontSize: 15 },
 
-  map: {
-    position: "relative", borderRadius: radius.lg, overflow: "hidden",
-    minHeight: 440, border: `1px solid ${color.border}`,
-  },
+  // ── MAP — folosit STRICT de choice/travel. ──
+  map: { position: "relative", borderRadius: radius.lg, overflow: "hidden", minHeight: 420, maxHeight: "62dvh", border: `1px solid ${color.border}` },
   lightning: { position: "absolute", inset: 0, background: "#FFFFFF", pointerEvents: "none" },
-  islandImg: { position: "absolute", bottom: "1%", left: "50%", transform: "translateX(-50%)", width: "62%", maxWidth: 260, transition: "opacity 0.6s ease", filter: "drop-shadow(0 4px 14px rgba(0,0,0,0.5))" },
+  stationWrap: { position: "absolute", transform: "translate(-50%, -50%)" },
   stationDot: {
-    position: "absolute", left: "50%", transform: "translateX(-50%)", width: 9, height: 9, borderRadius: "50%",
-    background: "rgba(255,255,255,0.25)", border: "1px solid rgba(255,255,255,0.4)", zIndex: 1,
+    width: 26, height: 26, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center",
+    fontSize: 11, fontWeight: 800, color: "rgba(255,255,255,0.5)",
+    background: "rgba(255,255,255,0.08)", border: "1px solid rgba(255,255,255,0.25)", fontFamily: font.body,
   },
-  stationDotPassed: { background: color.gold, border: `1px solid ${color.goldLight}` },
-  shipImg: { position: "absolute", left: "50%", width: 108, zIndex: 2, filter: "drop-shadow(0 3px 6px rgba(0,0,0,0.6))" },
-  travelingTag: {
-    position: "absolute", bottom: 14, left: "50%", transform: "translateX(-50%)",
-    color: color.goldLight, fontSize: 12, fontWeight: 700, fontFamily: font.body,
-    background: "rgba(5,6,12,0.6)", borderRadius: radius.pill, padding: "5px 12px",
-  },
+  stationDotPassed: { background: color.gold, border: `1px solid ${color.goldLight}`, color: "#12141C" },
+  stationDotTreasure: { fontSize: 15, background: "transparent", border: "none", width: 30, height: 30 },
+  islandImg: { position: "absolute", top: "82%", left: "50%", transform: "translateX(-50%)", width: "50%", maxWidth: 200, opacity: 0.9, filter: "drop-shadow(0 4px 14px rgba(0,0,0,0.5))" },
+  shipImg: { position: "absolute", left: "50%", width: 92, transform: "translateX(-50%)", filter: "drop-shadow(0 3px 6px rgba(0,0,0,0.6))" },
 
-  overlayBackdrop: {
-    position: "absolute", inset: 0, background: "rgba(5,6,12,0.72)",
-    display: "flex", alignItems: "center", justifyContent: "center", padding: 14, overflowY: "auto",
+  pouch: {
+    position: "absolute", top: 10, left: 10, maxWidth: 150,
+    background: "rgba(20,15,8,0.82)", border: `1px dashed ${color.goldBorder}`, borderRadius: radius.sm, padding: "6px 8px",
   },
+  pouchTitle: { fontSize: 8.5, fontWeight: 800, color: color.goldLight, letterSpacing: "0.04em", fontFamily: font.body },
+  pouchRow: { fontSize: 11, fontWeight: 700, color: color.textPrimary, fontFamily: font.body, marginTop: 2 },
+
+  travelingTag: { textAlign: "center", color: color.goldLight, fontSize: 12, fontWeight: 700, fontFamily: font.body, marginTop: 8 },
+
+  overlayBackdrop: { position: "absolute", inset: 0, background: "rgba(5,6,12,0.9)", display: "flex", alignItems: "center", justifyContent: "center", padding: 14 },
   overlayCard: {
-    width: "100%", maxWidth: 380, background: "linear-gradient(180deg, #2A2116, #1C1710)",
-    border: `1px solid ${color.goldBorder}`, borderRadius: radius.lg, padding: "18px 16px", textAlign: "center",
+    width: "100%", maxWidth: 380, maxHeight: "90%", overflowY: "auto",
+    background: "linear-gradient(180deg, #2A2116, #1C1710)", border: `1px solid ${color.goldBorder}`,
+    borderRadius: radius.lg, padding: "16px 14px", textAlign: "center",
   },
-  overlayHeader: { color: color.goldLight, fontSize: 15, fontWeight: 800, fontFamily: font.display, letterSpacing: "0.03em" },
-  overlaySub: { color: color.textSecondary, fontSize: 12, fontFamily: font.body, marginTop: 6, lineHeight: 1.4 },
+  overlayHeader: { color: color.goldLight, fontSize: 14.5, fontWeight: 800, fontFamily: font.display, letterSpacing: "0.03em" },
+  overlaySub: { color: color.textSecondary, fontSize: 11.5, fontFamily: font.body, marginTop: 5, lineHeight: 1.35 },
 
-  lastLifeBanner: {
-    marginTop: 10, padding: "8px 10px", borderRadius: radius.sm, border: "1px solid rgba(220,60,60,0.5)",
-    background: "rgba(220,60,60,0.12)",
-  },
-  lastLifeBannerCompact: { padding: "6px 8px" },
-  lastLifeTitle: { color: "#F08080", fontSize: 12, fontWeight: 800, fontFamily: font.body },
-  lastLifeBody: { color: "#F0A0A0", fontSize: 11, fontFamily: font.body, marginTop: 3, lineHeight: 1.4 },
+  lastLifeBanner: { marginTop: 8, padding: "7px 9px", borderRadius: radius.sm, border: "1px solid rgba(220,60,60,0.5)", background: "rgba(220,60,60,0.12)" },
+  lastLifeBannerCompact: { padding: "5px 7px" },
+  lastLifeTitle: { color: "#F08080", fontSize: 11.5, fontWeight: 800, fontFamily: font.body },
+  lastLifeBody: { color: "#F0A0A0", fontSize: 10.5, fontFamily: font.body, marginTop: 2, lineHeight: 1.35 },
 
-  rewardsPouch: {
-    margin: "12px 0", padding: "8px 10px", borderRadius: radius.md,
-    background: "rgba(255,255,255,0.06)", border: `1px dashed ${color.goldBorder}`,
-  },
-  rewardsPouchTitle: { fontSize: 10, fontWeight: 800, color: color.goldLight, letterSpacing: "0.05em", fontFamily: font.body },
-  rewardsPouchRow: { fontSize: 12, fontWeight: 700, color: color.textPrimary, fontFamily: font.body, marginTop: 4 },
-
-  doorsGrid: { display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 8, marginTop: 6 },
+  doorsGrid: { display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 7, marginTop: 10 },
   doorsGrid4: { gridTemplateColumns: "repeat(2, 1fr)" },
   doorBtn: {
-    display: "flex", flexDirection: "column", alignItems: "center", gap: 4, padding: "14px 6px",
+    display: "flex", flexDirection: "column", alignItems: "center", gap: 3, padding: "12px 6px",
     borderRadius: radius.md, border: `1px solid ${color.goldBorder}`, background: "rgba(212,175,55,0.08)",
-    cursor: "pointer", minHeight: 64,
+    cursor: "pointer", minHeight: 58,
   },
-  doorMark: { fontSize: 22 },
-  doorLabel: { fontSize: 10, fontWeight: 800, color: color.goldLight, fontFamily: font.body, letterSpacing: "0.03em" },
+  doorMark: { fontSize: 19 },
+  doorLabel: { fontSize: 9.5, fontWeight: 800, color: color.goldLight, fontFamily: font.body, letterSpacing: "0.02em" },
 
-  lifeLostBlock: { marginBottom: 10 },
-  lifeLostImg: { width: "78%", maxWidth: 230, filter: "drop-shadow(0 4px 10px rgba(0,0,0,0.6))" },
-  lifeLostLine: { color: "#F08080", fontSize: 13, fontWeight: 800, fontFamily: font.body, marginTop: 6 },
-  smallReactionLine: { color: color.goldLight, fontSize: 13, fontWeight: 700, fontFamily: font.body, marginBottom: 8 },
-
-  revealList: { display: "flex", flexDirection: "column", gap: 6, marginTop: 10, marginBottom: 14 },
-  revealRow: {
-    display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 4,
-    padding: "8px 10px", borderRadius: radius.sm, background: "rgba(255,255,255,0.04)",
+  // ── REACTION — ecran plin, propriu. Fără overflow:hidden, fără
+  // min-height mai mare decât conținutul — imaginea mereu întreagă. ──
+  reactionPanel: {
+    borderRadius: radius.lg, border: `1px solid ${color.border}`,
+    background: "linear-gradient(180deg, #1C0F0F, #0A0505)",
+    display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
+    padding: "20px 16px", textAlign: "center", gap: 4, minHeight: 320,
   },
+  reactionImg: { width: "auto", maxWidth: "min(90vw, 300px)", height: "auto", maxHeight: "56dvh", objectFit: "contain" },
+  reactionLine: { color: "#F08080", fontSize: 14, fontWeight: 800, fontFamily: font.body, marginTop: 10, maxWidth: 300 },
+  primaryBtnGhost: {
+    marginTop: 14, padding: "10px 20px", borderRadius: radius.md, border: `1px solid ${color.goldBorder}`,
+    background: "transparent", color: color.goldLight, fontWeight: 700, fontSize: 12, fontFamily: font.body, cursor: "pointer",
+  },
+
+  // ── REVEAL / CASHOUT / FINALURI — ecran plin propriu, structură
+  // fixă: zonă scrollabilă sus + CTA GARANTAT vizibil jos (flex, nu
+  // absolute — nu poate fi împins sub fold). ──
+  revealPanel: {
+    borderRadius: radius.lg, border: `1px solid ${color.goldBorder}`,
+    background: "linear-gradient(180deg, #2A2116, #1C1710)",
+    display: "flex", flexDirection: "column", padding: "16px 14px", textAlign: "center",
+    minHeight: 320, maxHeight: "70dvh",
+  },
+  revealScroll: { overflowY: "auto", flex: 1 },
+  cinematicDark: { background: "linear-gradient(180deg, #14101F, #05060C)" },
+  cinematicHeader: { color: color.goldLight, fontSize: 17, fontWeight: 800, fontFamily: font.display, letterSpacing: "0.03em", marginTop: 4 },
+
+  revealList: { display: "flex", flexDirection: "column", gap: 5, marginTop: 10 },
+  revealRow: { display: "flex", alignItems: "center", justifyContent: "space-between", padding: "7px 10px", borderRadius: radius.sm, background: "rgba(255,255,255,0.04)" },
   revealRowChosen: { background: "rgba(212,175,55,0.16)", border: `1px solid ${color.gold}` },
-  revealLabel: { fontSize: 12, fontWeight: 700, color: color.textPrimary, fontFamily: font.body },
-  revealValue: { fontSize: 13, fontWeight: 800, fontFamily: font.body, color: color.textSecondary },
+  revealLabel: { fontSize: 11.5, fontWeight: 700, color: color.textPrimary, fontFamily: font.body },
+  revealValue: { fontSize: 12.5, fontWeight: 800, fontFamily: font.body, color: color.textSecondary },
   revealValuePos: { color: color.green },
   revealValueNeg: { color: "#E8837A" },
   revealValueLife: { color: "#E8837A" },
-  chosenTag: { width: "100%", fontSize: 10, fontWeight: 800, color: color.gold, fontFamily: font.body },
 
-  cashoutTotal: { fontSize: 32, fontWeight: 900, color: color.goldLight, fontFamily: font.display, margin: "8px 0" },
-  cashoutRow: { display: "flex", flexDirection: "column", gap: 8, marginTop: 14 },
+  cashoutTotal: { fontSize: 30, fontWeight: 900, color: color.goldLight, fontFamily: font.display, margin: "6px 0" },
+  cashoutRow: { display: "flex", flexDirection: "column", gap: 7, marginTop: 12, flexShrink: 0 },
   cashoutBtn: { background: color.greenBg, border: `2px solid ${color.greenBorder}`, color: color.green },
   continueBtn: { background: "rgba(212,175,55,0.12)", border: `2px solid ${color.gold}`, color: color.goldLight },
 
-  finalCard: {},
-  finalIcon: { fontSize: 38, marginBottom: 4 },
-  finalTotal: { fontSize: 30, fontWeight: 900, color: color.goldLight, fontFamily: font.display, margin: "8px 0" },
+  finalIcon: { fontSize: 34, marginBottom: 4 },
+  finalTotal: { fontSize: 28, fontWeight: 900, color: color.goldLight, fontFamily: font.display, margin: "6px 0" },
 
-  treasureCard: { maxWidth: 400 },
-  treasureChestImg: { width: "70%", maxWidth: 260, margin: "0 auto 10px", display: "block" },
-  treasureBonusLine: { fontSize: 16, fontWeight: 800, color: color.green, fontFamily: font.body, marginTop: 4 },
+  treasureChestImg: { width: "56%", maxWidth: 200, display: "block", margin: "0 auto 8px" },
+  scoreBreakdown: { width: "100%", maxWidth: 260, margin: "10px auto 4px", display: "flex", flexDirection: "column", gap: 5 },
+  scoreBreakdownLine: { display: "flex", justifyContent: "space-between", fontSize: 12, color: color.textSecondary, fontFamily: font.body },
+  scoreBreakdownVal: { fontWeight: 800, color: color.textPrimary },
+  scoreBreakdownTotal: { borderTop: `1px solid ${color.border}`, paddingTop: 6, marginTop: 2, fontWeight: 800, color: color.goldLight, fontSize: 14 },
 
   primaryBtn: {
-    width: "100%", padding: "13px 10px", borderRadius: radius.md, border: "none",
+    width: "100%", padding: "12px 10px", borderRadius: radius.md, border: "none",
     background: color.goldGradient, color: "#12141C", fontWeight: 800, fontSize: 13, fontFamily: font.body,
-    cursor: "pointer", marginTop: 10,
+    cursor: "pointer", marginTop: 10, flexShrink: 0,
   },
 };

@@ -81,18 +81,36 @@ export default function TreasureHuntScreen({ onBack, previewMode, previewState, 
     }
   }
 
-  function travelThenCommit(nextState) {
+  const [shipStationIndex, setShipStationIndex] = useState(null); // override explicit al stației corăbiei — folosit STRICT pe durata travel
+
+  // ── Travel real: FROM se pictează (rămâne stația curentă, neschimbată
+  // sincron), abia după minim 2 frame-uri reale (double rAF — Chrome
+  // Android are nevoie de asta ca să garanteze paint-ul intermediar)
+  // se aplică TO, moment în care CSS transition chiar are ce interpola.
+  // Elementul <img> al corăbiei NU se remontează — rămâne același nod
+  // DOM tot timpul (MapPanel e apelat din același loc din switch,
+  // fără schimbare de key). ──
+  function travelThenCommit(nextState, toStationIndex) {
     setVisualPhase("travel");
-    setGame((g) => ({ ...g, step: nextState.step }));
+    setShipStationIndex(game.step); // FROM — explicit, NU derivat implicit din game.step (care s-ar putea schimba)
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        setShipStationIndex(toStationIndex); // TO — abia acum pornește efectiv tranziția CSS
+      });
+    });
     setTimeout(() => {
       setGame(nextState);
+      setShipStationIndex(null);
       setVisualPhase(nextState.phase === "choosing" ? "choice" : nextState.phase);
-    }, 700);
+    }, 1150); // ~900ms navigare vizibilă + ~250ms settle, înainte să apară faza următoare
   }
 
   function handleContinueAfterReveal() {
     const next = advanceAfterReveal(game);
-    if (next.phase === "choosing" && next.step !== game.step) { travelThenCommit(next); return; }
+    if (next.phase === "choosing" && next.step !== game.step) { travelThenCommit(next, next.step); return; }
+    // ── Pas 7 supraviețuit -> comoara: TOT un travel real, spre ancora
+    // TREASURE (index 8 în STATIONS), nu un salt direct în cinematic. ──
+    if (next.phase === "treasure") { travelThenCommit(next, TREASURE_STATION_INDEX); return; }
     setGame(next);
     setVisualPhase(next.phase === "choosing" ? "choice" : next.phase);
   }
@@ -103,7 +121,8 @@ export default function TreasureHuntScreen({ onBack, previewMode, previewState, 
   }
 
   function handleContinueRisk() {
-    travelThenCommit(continueAfterCashout(game));
+    const next = continueAfterCashout(game);
+    travelThenCommit(next, next.step);
   }
 
   function handleRestart() {
@@ -139,7 +158,7 @@ export default function TreasureHuntScreen({ onBack, previewMode, previewState, 
       case "gameover":
         return <GameOverCinematic onRestart={previewMode ? null : handleRestart} />;
       case "travel":
-        return <MapPanel game={game} zone={zoneForStep(game.step)} travelingTag />;
+        return <MapPanel game={game} zone={zoneForStep(game.step)} travelingTag shipStationIndex={shipStationIndex} />;
       case "choice":
       default:
         return (
@@ -194,12 +213,17 @@ const STATIONS = [
   { label: "3", top: 35, side: -1 }, { label: "4", top: 46, side: 1 }, { label: "5", top: 57, side: -1 },
   { label: "6", top: 68, side: 1 }, { label: "7", top: 79, side: -1 }, { label: "TREASURE", top: 92, side: 0 },
 ];
-function stationTopForStep(step) {
-  return STATIONS[Math.max(0, Math.min(step, TOTAL_STEPS))].top;
+const TREASURE_STATION_INDEX = STATIONS.length - 1; // 8 — ancora reală a comorii, dincolo de pasul 7
+function stationTopByIndex(idx) {
+  return STATIONS[Math.max(0, Math.min(idx, STATIONS.length - 1))].top;
 }
 
-function MapPanel({ game, zone, travelingTag, children }) {
-  const shipTop = stationTopForStep(game.step);
+// ── shipStationIndex: dacă e furnizat explicit (STRICT în travel),
+// e sursa de adevăr pentru poziția corăbiei — nu game.step. Așa
+// separăm curat FROM/TO de starea "oficială" a jocului, care se
+// actualizează abia la finalul animației. ──
+function MapPanel({ game, zone, travelingTag, shipStationIndex, children }) {
+  const shipTop = stationTopByIndex(shipStationIndex != null ? shipStationIndex : Math.min(game.step, TOTAL_STEPS));
   return (
     <>
       <div style={{ ...s.map, ...ZONE_BG[zone] }}>
@@ -432,7 +456,7 @@ const ANIM_CSS = `
 .th-pulse-down { animation: thPulseDown 0.4s ease; }
 .th-shake { animation: thShake 0.5s ease; }
 .th-pop { animation: thPop 0.25s ease; }
-.th-ship-sway { animation: thShipSway 3s ease-in-out infinite; transition: top 0.7s ease; }
+.th-ship-sway { animation: thShipSway 3s ease-in-out infinite; transition: top 0.9s ease; }
 .th-lightning { animation: thLightning 4.5s linear infinite; }
 .th-warn-pulse { animation: thWarnPulse 2s ease-in-out infinite; }
 .th-chest-shake { animation: thChestShake 0.4s ease-in-out 2; }

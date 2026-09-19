@@ -6,6 +6,7 @@ import {
 import {
   INTRO_TITLE, INTRO_LINES, SAFE_ARRIVAL, RISK_ARRIVAL, CURSED_ARRIVAL,
   POSSIBILITIES_SAFE_LINE, POSSIBILITIES_RISK_LINE, POSSIBILITIES_CURSED_LINE,
+  RISK_DECISION_LINES, CURSED_DECISION_LINES,
   LAST_LIFE_WARNING_TITLE, LAST_LIFE_WARNING_BODY, lastLifeCashoutLine,
   bigPositiveLine, negativeLine, LIFE_LOST_FIRST, LIFE_LOST_SECOND,
   GAME_OVER_EARLY_LINES, gameOverLateLine, TREASURE_FOUND_LINES, PERFECT_100_LINES, cashoutLine,
@@ -27,9 +28,9 @@ function outcomeLabel(o) { return o.type === "life" ? "❤️" : `${o.value > 0 
 function zoneForStep(step) { return step <= 3 ? "safe" : step <= 5 ? "danger" : "cursed"; }
 
 const STATIONS = [
-  { label: "START", top: 4, side: 0 }, { label: "1", top: 13, side: -1 }, { label: "2", top: 24, side: 1 },
-  { label: "3", top: 35, side: -1 }, { label: "4", top: 46, side: 1 }, { label: "5", top: 57, side: -1 },
-  { label: "6", top: 68, side: 1 }, { label: "7", top: 79, side: -1 }, { label: "TREASURE", top: 92, side: 0 },
+  { label: "START", top: 4, side: 0 }, { label: "1", top: 13, side: -0.3 }, { label: "2", top: 24, side: -0.6 },
+  { label: "3", top: 35, side: -0.35 }, { label: "4", top: 46, side: 0.15 }, { label: "5", top: 57, side: 0.5 },
+  { label: "6", top: 68, side: 0.6 }, { label: "7", top: 79, side: 0.25 }, { label: "TREASURE", top: 92, side: 0 },
 ];
 const TREASURE_STATION_INDEX = STATIONS.length - 1;
 function stationTopByIndex(idx) { return STATIONS[Math.max(0, Math.min(idx, STATIONS.length - 1))].top; }
@@ -39,7 +40,11 @@ function stationTopByIndex(idx) { return STATIONS[Math.max(0, Math.min(idx, STAT
 const TRAVEL_MS = { 1: 1800, 2: 1800, 3: 2000, 4: 2200, 5: 2200, 6: 2500, 7: 2500, treasure: 3000 };
 const ARRIVAL_PAUSE_MS = 700;
 const CHAPTER_INTRO_MS = 1600;
-const RESULT_REVEAL_MS = 1900;
+function resultRevealMsFor(step) {
+  if (step <= 3) return 2000;
+  if (step <= 5) return 2500;
+  return 2900;
+}
 
 // ══════════════════════════════════════════════════════════════════
 // 🏴‍☠️ COMOARA BLESTEMATĂ — „MAP-FIRST PIRATE ADVENTURE”.
@@ -125,7 +130,7 @@ export default function TreasureHuntScreen({ onBack, previewMode, previewState, 
     later(() => {
       if (outcome.type === "life") setVisualPhase("lifeReaction");
       else proceedAfterResult(next);
-    }, RESULT_REVEAL_MS);
+    }, resultRevealMsFor(game.step));
   }
 
   // ══ Consecință: cash-out / navigare normală / navigare finală ══
@@ -211,6 +216,7 @@ export default function TreasureHuntScreen({ onBack, previewMode, previewState, 
         travelTag={visualPhase === "travel" || visualPhase === "finalTravel"}
         travelLine={visualPhase === "finalTravel" ? pickOnce(FINAL_CROSSING_LINES) : travelLineFor(zone)}
         dimmed={visualPhase === "cashout"}
+        showPrey={visualPhase === "choice"}
       >
         {visualPhase === "arrival" && null}
         {visualPhase === "chapterIntro" && <ChapterIntroCard zone={zone} step={game.step} />}
@@ -279,9 +285,14 @@ function IntroPanel({ onStart }) {
 // ══════════════════════════════════════════════════════════════════
 // MAP — persistă pe toată călătoria (mai puțin cele 3 cinematice).
 // ══════════════════════════════════════════════════════════════════
-function MapPanel({ game, zone, shipStationIndex, travelDurationMs, travelTag, travelLine, dimmed, children }) {
+function stationSideByIndex(idx) {
+  return STATIONS[Math.max(0, Math.min(idx, STATIONS.length - 1))].side;
+}
+
+function MapPanel({ game, zone, shipStationIndex, travelDurationMs, travelTag, travelLine, dimmed, showPrey, children }) {
   const idx = shipStationIndex != null ? shipStationIndex : Math.min(game.step, TOTAL_STEPS);
   const shipTop = stationTopByIndex(idx);
+  const shipLeft = 50 + stationSideByIndex(idx) * 20; // aceeași curbă lină ca stațiile, swing mult redus
   const islandScale = 0.7 + Math.min(game.step, TOTAL_STEPS) * 0.045; // creștere graduală — se apropie
   return (
     <div style={{ ...s.map, ...ZONE_BG[zone] }}>
@@ -289,7 +300,7 @@ function MapPanel({ game, zone, shipStationIndex, travelDurationMs, travelTag, t
 
       <div style={{ ...s.mapLayer, ...(dimmed ? s.mapLayerDimmed : {}) }}>
         {STATIONS.map((st, i) => (
-          <div key={i} style={{ ...s.stationWrap, top: `${st.top}%`, left: `${50 + st.side * 16}%` }}>
+          <div key={i} style={{ ...s.stationWrap, top: `${st.top}%`, left: `${50 + st.side * 20}%` }}>
             <div style={{ ...s.stationDot, ...(i <= game.step ? s.stationDotPassed : {}), ...(st.label === "TREASURE" ? s.stationDotTreasure : {}) }}>
               {st.label === "TREASURE" ? "🏝️" : st.label === "START" ? "⚓" : st.label}
             </div>
@@ -299,11 +310,13 @@ function MapPanel({ game, zone, shipStationIndex, travelDurationMs, travelTag, t
         <img src={ASSET.island} alt="" style={{ ...s.islandImg, transform: `translateX(-50%) scale(${islandScale})` }} />
         <img
           src={ASSET.ship} alt="Corabia" className="th-ship-sway"
-          style={{ ...s.shipImg, top: `${shipTop}%`, transition: `top ${travelDurationMs}ms ease` }}
+          style={{ ...s.shipImg, top: `${shipTop}%`, left: `${shipLeft}%`, transition: `top ${travelDurationMs}ms ease, left ${travelDurationMs}ms ease` }}
         />
       </div>
 
       {travelTag && <div style={s.travelLineTag}>⛵ {travelLine}</div>}
+
+      {showPrey && <PreyMiniHud doors={game.doors} />}
 
       {children && <div style={s.overlayZone}>{children}</div>}
     </div>
@@ -351,13 +364,39 @@ function PossibilitiesRevealCard({ doors, zone }) {
 }
 
 // ══════════════════════════════════════════════════════════════════
-// ALEGERE — integrate ca porți maritime, touch target mare.
+// PRADĂ — mini-HUD PERSISTENT, colț sus-dreapta al hărții, cât timp
+// jucătorul alege. Doar reminder de VALORI (nu de destinații) — nicio
+// asociere spațială cu ușile, ordine amestecată independent, nu
+// derivă/recalculează nimic din motor. Nu acoperă HUD-ul principal
+// (care e DEASUPRA hărții) și nu se suprapune cu corabia (colț, mic). ──
+function PreyMiniHud({ doors }) {
+  const labels = useMemo(() => {
+    const l = doors.map((d) => outcomeLabel(d.outcome));
+    for (let i = l.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [l[i], l[j]] = [l[j], l[i]]; }
+    return l;
+  }, [doors]);
+  return (
+    <div style={s.preyHud}>
+      <div style={s.preyHudTitle}>PRADĂ</div>
+      <div style={s.preyHudGrid}>
+        {labels.map((l, i) => <span key={i} style={s.preyHudChip}>{l}</span>)}
+      </div>
+    </div>
+  );
+}
+
+// ══════════════════════════════════════════════════════════════════
+// ALEGERE — integrate ca porți maritime, touch target mare. Aici
+// revine tonul cu tupeu (decizia propriu-zisă), restaurat.
 // ══════════════════════════════════════════════════════════════════
 function ChoiceOverlay({ doors, onPick, step, lives }) {
   const isLast = step >= TOTAL_STEPS;
+  const zone = zoneForStep(step);
+  const decisionLine = zone === "danger" ? pickOnce(RISK_DECISION_LINES) : zone === "cursed" ? pickOnce(CURSED_DECISION_LINES) : null;
   return (
     <div className="th-pop" style={s.choiceCard}>
       <div style={s.miniCardTitle}>{isLast ? "☠️ ULTIMA TRECERE — ALEGE" : "🏴‍☠️ PE UNDE NAVIGHEZI?"}</div>
+      {decisionLine && <div style={s.miniCardLine}>{decisionLine}</div>}
       {lives === 1 && step >= 4 && <LastLifeBanner compact />}
       <div style={{ ...s.doorsGrid, ...(doors.length === 4 ? s.doorsGrid4 : {}) }}>
         {doors.map((d, i) => (
@@ -557,6 +596,15 @@ const s = {
   travelLineTag: { position: "absolute", bottom: 10, left: "50%", transform: "translateX(-50%)", color: color.goldLight, fontSize: 11.5, fontWeight: 700, fontFamily: font.body, background: "rgba(5,6,12,0.6)", borderRadius: radius.pill, padding: "5px 12px", textAlign: "center", maxWidth: "88%" },
 
   overlayZone: { position: "absolute", left: 10, right: 10, bottom: 10, display: "flex", justifyContent: "center" },
+
+  preyHud: {
+    position: "absolute", top: 8, right: 8, zIndex: 2,
+    background: "rgba(20,15,10,0.85)", border: `1px dashed ${color.goldBorder}`, borderRadius: radius.sm,
+    padding: "5px 7px", maxWidth: 120,
+  },
+  preyHudTitle: { fontSize: 8, fontWeight: 800, color: color.goldLight, letterSpacing: "0.06em", fontFamily: font.body },
+  preyHudGrid: { display: "flex", flexWrap: "wrap", gap: 3, marginTop: 3 },
+  preyHudChip: { fontSize: 9.5, fontWeight: 800, color: color.textPrimary, background: "rgba(212,175,55,0.14)", borderRadius: 5, padding: "1px 5px", fontFamily: font.body },
 
   miniCard: { width: "100%", maxWidth: 380, background: "rgba(20,15,10,0.92)", border: `1px solid ${color.goldBorder}`, borderRadius: radius.md, padding: "12px 14px", textAlign: "center" },
   miniCardTitle: { color: color.goldLight, fontSize: 13.5, fontWeight: 800, fontFamily: font.display, letterSpacing: "0.02em" },

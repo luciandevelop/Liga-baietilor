@@ -256,7 +256,7 @@ const PENALTY_ASSETS = [
 // principale, ÎNAINTE ca primul penalty să poată începe (cerut explicit
 // — fără asta, primul swap idle→kick ar avea un mic delay de rețea și
 // ar arăta ca un "pop"). ──
-function usePreloadPenaltyAssets() {
+export function usePreloadPenaltyAssets() {
   const [ready, setReady] = useState(false);
   useEffect(() => {
     let cancelled = false;
@@ -270,7 +270,7 @@ function usePreloadPenaltyAssets() {
   return ready;
 }
 
-function Stage({ mode, onPick, animKick, assetsReady }) {
+export function Stage({ mode, onPick, animKick, assetsReady }) {
   // animKick: { zone, keeperZone, outcome } | null — null = faza de PICK
   const [phase, setPhase] = useState("idle"); // idle -> approach -> contact -> flying -> result
   const [flashZone, setFlashZone] = useState(null);
@@ -459,7 +459,7 @@ export default function PenaltyExperience({ gameweekId, uid, resolved, myResult 
 // ══════════════════════════════════════════════════════════════════
 // SECVENȚA DE REZULTAT — rundă cu rundă, tempo rapid, pips + scor live.
 // ══════════════════════════════════════════════════════════════════
-function ShootoutSequence({ data, myName, oppName, oppAvatarId, assetsReady }) {
+export function ShootoutSequence({ data, myName, oppName, oppAvatarId, assetsReady }) {
   const hasRounds = Array.isArray(data.rounds) && data.rounds.length > 0;
   const [idx, setIdx] = useState(0); // 0..9
   const [skipped, setSkipped] = useState(!hasRounds);

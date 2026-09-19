@@ -64,6 +64,7 @@ import { HIGHER_LOWER_PREVIEW_STATES } from "../higherLowerMockData";
 import HigherLowerScreen from "./HigherLowerScreen";
 import { TREASURE_HUNT_PREVIEW_STATES } from "../treasureHuntMockData";
 import TreasureHuntScreen from "./TreasureHuntScreen";
+import PenaltyPreviewScreen from "./PenaltyPreviewScreen";
 import { slideUrl, seasonNumberFromList } from "../storyAssets";
 import StoryViewer from "../components/StoryViewer";
 import { EDITORIAL_ARTICLES } from "../feedContent/editorialContent";
@@ -209,6 +210,9 @@ export default function AdminScreen({ onBack }) {
   // stare de generare/Admin reală încă — doar toggle-ul de preview. ──
   const [treasureHuntPreviewOpen, setTreasureHuntPreviewOpen] = useState(false);
   const [treasureHuntPreviewState, setTreasureHuntPreviewState] = useState("A");
+  // ── ⚽ Penalty PvP — PREVIEW MOCK ONLY. Jocul real (Firestore) nu e
+  // atins — doar toggle-ul de preview, ca la celelalte. ──
+  const [penaltyPreviewOpen, setPenaltyPreviewOpen] = useState(false);
   const [higherLowerBusy, setHigherLowerBusy] = useState(false);
   const [higherLowerMsg, setHigherLowerMsg] = useState("");
   const [hlQuestionDrafts, setHlQuestionDrafts] = useState([]); // [{matchId, criteria, threshold, unit}] x6
@@ -3006,6 +3010,16 @@ export default function AdminScreen({ onBack }) {
                 </button>
               </SectionCard>
 
+              <SectionCard title="⚽ Preview Penalty PvP — MOCK · ZERO FIRESTORE">
+                <p style={s.hint}>
+                  Jocul REAL de Penalty (motor + animații), doar cu adversar generat local — poți juca
+                  efectiv cele 10 alegeri (5 șuturi + 5 apărări), zero scris/citit din Firestore.
+                </p>
+                <button type="button" style={s.smallBtn} onClick={() => setPenaltyPreviewOpen(true)}>
+                  👁 Preview Penalty PvP
+                </button>
+              </SectionCard>
+
               <SectionCard title="🥋 Preview Duel — doar în Admin, 100% local">
                 <p style={s.hint}>
                   Verifică grafica temelor de Duel fără să atingi etapa curentă — nimic de-aici nu se scrie
@@ -3708,6 +3722,18 @@ export default function AdminScreen({ onBack }) {
           </div>
           <div style={s.bbPreviewBody}>
             <TreasureHuntScreen previewMode previewState={treasureHuntPreviewState} embedded />
+          </div>
+        </div>
+      )}
+
+      {penaltyPreviewOpen && (
+        <div style={s.bbPreviewOverlay}>
+          <div style={s.bbPreviewBar}>
+            <span style={s.bbPreviewLabel}>👁 PREVIEW Penalty PvP — mock, adversar local, nimic salvat</span>
+            <button type="button" style={s.bbPreviewCloseBtn} onClick={() => setPenaltyPreviewOpen(false)}>✕ Închide</button>
+          </div>
+          <div style={s.bbPreviewBody}>
+            <PenaltyPreviewScreen embedded />
           </div>
         </div>
       )}

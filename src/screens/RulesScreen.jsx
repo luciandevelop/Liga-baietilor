@@ -209,6 +209,56 @@ export default function RulesScreen({ onBack }) {
           <P small>Plus același bonus de duel ca la Trivia: +50p / +25p egalitate / +0p pierdere / bază+25p Bye.</P>
         </Section>
 
+        <Section icon="🗡️" title="Sabotaj">
+          <P>
+            Fiecare jucător, în ordinea clasamentului etapei trecute (cel mai bine clasat alege
+            primul), alege PE RÂND un adversar căruia să-i „fure" puncte — o singură țintă per
+            jucător, deja aleasă de altcineva nu mai poate fi luată.
+          </P>
+          <P>
+            Furtul reușește DOAR dacă tu ai, în etapa asta, mai multe puncte din meciuri decât
+            ținta ta în momentul evaluării. Dacă reușești, iei minim(200p, punctele disponibile ale
+            țintei) — nu o poți duce sub 0p. Dacă ținta are puncte egale sau mai multe decât tine,
+            furtul eșuează și nu se întâmplă nimic.
+          </P>
+          <P small>
+            Toate confruntările se evaluează din ACELAȘI moment — dacă X îl fură pe Y și apoi Z îl
+            fură pe X, furtul lui Z nu ține cont de ce a câștigat X de la Y. Alegerea ta rămâne
+            secretă până Adminul dezvăluie toată rețeaua.
+          </P>
+        </Section>
+
+        <Section icon="🎟️" title="Bet Builder">
+          <P>
+            18 jucători → 9 dueluri, câte 3 per fiecare dintre cele 3 ⭐ Meciuri ale Săptămânii.
+            Pentru meciul tău, faci exact 5 selecții — fiecare corectă = +20p.
+          </P>
+          <Table rows={[["5/5 corecte", "100p din selecții + 50p bonus perfect = 150p"], ["Câștigi duelul", "+50p"], ["Maxim absolut", "200p"]]} />
+          <P small>
+            Deadline: 12 ore înainte de meciul tău. Dacă duelul e egal după cele 5 selecții,
+            decide barajul (cea mai apropiată estimare de un rezultat real); la egalitate perfectă
+            la baraj — 25p fiecare.
+          </P>
+        </Section>
+
+        <Section icon="📈" title="Mai Mare / Mai Mic">
+          <P>
+            18 jucători → 9 dueluri, toți pe ACELAȘI panou: 6 runde, câte 2 din fiecare dintre
+            cele 3 ⭐ Meciuri ale Săptămânii (un prag de tip X,5 — ex. „9,5 cornere").
+          </P>
+          <P>
+            În fiecare duel, unul dintre voi doi are prioritate pe rundele 1/3/5, celălalt pe
+            2/4/6 (stabilit random). Cine are prioritate alege 📈 Mai Mare sau 📉 Mai Mic —
+            adversarul primește AUTOMAT varianta opusă. Fiecare ajunge să aleagă efectiv de 3 ori.
+          </P>
+          <Table rows={[["Fiecare rundă câștigată", "+25p (max 150p din 6 runde)"], ["Câștigi duelul", "+50p"], ["Maxim absolut", "200p"]]} />
+          <P small>
+            Deadline: 12 ore înainte de primul dintre cele 3 meciuri. La 3–3 după cele 6 runde,
+            decide barajul secret (cine estimează mai aproape totalul real de goluri din cele 3
+            meciuri); la egalitate perfectă — 25p fiecare.
+          </P>
+        </Section>
+
         <Section icon="🎰" title="Ruletă (Surpriza Bonus)">
           <P>O singură învârtire, cu 16 segmente posibile. Poți învârti a doua oară, dar pierzi definitiv primul rezultat dacă o faci.</P>
           <Table rows={[["Segmente posibile", "0, 25 sau 50 (cele mai dese) · 75 (mai rar) · 100 (cel mai rar)"]]} />
@@ -234,6 +284,12 @@ export default function RulesScreen({ onBack }) {
             Joker în etapa asta, pe lângă cel normal (dacă rejoci pe o cutie Joker Extra, îl
             pierzi la fel ca orice altă valoare).
           </P>
+          <P small>
+            🃏 <B>Important despre Joker Extra:</B> nu se aplică instant — nu-ți dublează punctajul
+            LIVE în momentul în care îl câștigi. Efectul lui (dublarea punctelor de la meciul unde
+            îl folosești) se calculează abia la Finalizarea etapei, o dată cu toate punctele
+            Surprizei Săptămânii.
+          </P>
         </Section>
 
         <Section icon="🥅" title="Penalty (Surpriza Bonus)">
@@ -244,6 +300,31 @@ export default function RulesScreen({ onBack }) {
             <ExRow pred="Tu tragi stânga, adversarul apără stânga" res="Apărat, 0p la lovitura asta" tone="bad" />
           </ExampleBox>
           <P small>Dacă adversarul nu trimite alegerile la timp, iei automat 50p (5 goluri, nimic de apărat), iar el 0p.</P>
+        </Section>
+
+        <SectionLabel text="Surprize Mici" />
+        <Section icon="🏴‍☠️" title="Comoara Blestemată (Surpriză Mică — max 100p)">
+          <P>
+            O mică aventură solo, pe hartă: pornești cu 0p și ❤️❤️, mergi prin 7 ape până la
+            comoară. La fiecare apă alegi un drum dintre mai multe — prada și pericolele sunt
+            ascunse pe drumuri ÎNAINTE de alegerea ta. După ce alegi, toate drumurile se
+            dezvăluie, ca să vezi exact ce ai ratat.
+          </P>
+          <MiniHeading>Apele 1–3 — fără risc</MiniHeading>
+          <P small>Exact 3 drumuri, ascund +5p / +10p / +15p. Niciun risc de puncte sau viață.</P>
+          <MiniHeading>Apele 4–5</MiniHeading>
+          <P small>Exact 4 drumuri, ascund +10p / +20p / −10p / −1 ❤️.</P>
+          <MiniHeading>Apele 6–7 — Apele Blestemate</MiniHeading>
+          <P small>Exact 4 drumuri — dar acum DOUĂ din patru iau o viață: +10p / +20p / −1 ❤️ / −1 ❤️.</P>
+          <P>
+            Prima ❤️ pierdută nu-ți ia punctele — poți continua. A DOUA ❤️ pierdută înseamnă
+            GAME OVER — scorul final devine 0p, indiferent câte puncte aveai acumulate.
+          </P>
+          <P>
+            După fiecare apă începând cu a 3-a, poți alege 💰 să te oprești (păstrezi punctele) sau
+            🏴‍☠️ să continui mai departe, asumându-ți riscul următoarei ape.
+          </P>
+          <Table rows={[["Supraviețuiești și treci de apa 7", "+25p bonus comoară"], ["Maxim absolut", "100p"]]} />
         </Section>
 
         <div style={s.footerNote}>

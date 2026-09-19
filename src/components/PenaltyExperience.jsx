@@ -6,38 +6,38 @@ import {
 import { getUserPublicProfiles } from "../services/profilesService";
 import PlayerAvatar from "./PlayerAvatar";
 import { color, font, radius } from "../matchdayTheme";
+import {
+  SAVE_LINES, SAVE_CENTER_LINES, GOAL_LINES, WRONG_GUESS_LINES,
+  ROLE_SHOOT_TITLE, ROLE_DEFEND_TITLE, ROLE_SWITCH_TITLE, ROLE_SWITCH_LINE, finalLine,
+} from "../penaltyTexts";
 
 const ZONES = ["left", "center", "right"];
 const ZONE_X = { left: 0.2, center: 0.5, right: 0.8 };
+function pickOnce(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
 
 // ══════════════════════════════════════════════════════════════════
-// SCENA — perspectivă reală din spatele mingii: gazon înclinat în 3D
-// (perspective + rotateX, nu un dreptunghi plat), poartă cu bare
-// cilindrice, plasă cu țesătură, lumini de reflector, tribună schițată.
-// Un singur element static (nu se re-desenează la fiecare cadru) — tot
-// ce se mișcă (minge, portar) sunt elemente separate, animate DOAR prin
-// transform (GPU), niciodată prin left/top/bottom.
+// SCENA — REDESIGN: poarta acum e garantat COMPLET vizibilă (ambele
+// bare + transversala) — în versiunea anterioară geometria (bottom +
+// height) depășea 100% din înălțimea scenei, tăind transversala.
+// Corectat aici: bottom 0.30 + height 0.55 = 0.85, cu margine sigură.
 // ══════════════════════════════════════════════════════════════════
-function Scene({ width, height }) {
-  const postW = width * 0.045;
-  const goalH = height * 0.62;
+function Scene({ width, height, flashGoal }) {
+  const postW = width * 0.05;
+  const goalH = height * 0.55;
+  const goalBottom = height * 0.30;
   return (
     <div style={{ position: "absolute", inset: 0, overflow: "hidden", borderRadius: 12 }}>
-      {/* cer/fundal stadion */}
-      <div style={{ position: "absolute", inset: 0, background: "linear-gradient(180deg, #0a1410 0%, #0d1a12 55%, #14261a 100%)" }} />
-      {/* tribună schițată, sus */}
+      <div style={{ position: "absolute", inset: 0, background: "linear-gradient(180deg, #08110D 0%, #0B1710 55%, #122417 100%)" }} />
       <svg width="100%" height={height * 0.16} viewBox={`0 0 ${width} ${height * 0.16}`} style={{ position: "absolute", top: 0, left: 0 }} preserveAspectRatio="none">
-        <g fill="#03050600" >
+        <g>
           {Array.from({ length: 20 }, (_, i) => (
             <rect key={i} x={(width / 20) * i} y={0} width={width / 20 - 1} height={height * 0.05 + (i % 4) * 1.6} fill="#05080A" opacity={0.9} />
           ))}
         </g>
       </svg>
-      {/* lumini de reflector */}
-      <div style={{ position: "absolute", top: "-10%", left: "-10%", width: "55%", height: "60%", background: "radial-gradient(ellipse, rgba(255,250,220,0.28), transparent 70%)" }} />
-      <div style={{ position: "absolute", top: "-10%", right: "-10%", width: "55%", height: "60%", background: "radial-gradient(ellipse, rgba(255,250,220,0.22), transparent 70%)" }} />
+      <div style={{ position: "absolute", top: "-10%", left: "-10%", width: "55%", height: "60%", background: "radial-gradient(ellipse, rgba(255,250,220,0.3), transparent 70%)" }} />
+      <div style={{ position: "absolute", top: "-10%", right: "-10%", width: "55%", height: "60%", background: "radial-gradient(ellipse, rgba(255,250,220,0.24), transparent 70%)" }} />
 
-      {/* gazon — perspectivă 3D reală (nu doar dungi plate) */}
       <div style={{
         position: "absolute", left: 0, right: 0, bottom: 0, height: height * 0.46,
         perspective: "340px", perspectiveOrigin: "50% 0%", overflow: "hidden",
@@ -47,18 +47,14 @@ function Scene({ width, height }) {
           background: "repeating-linear-gradient(90deg, #1C3D22 0, #1C3D22 8%, #173318 8%, #173318 16%)",
           transform: "rotateX(58deg)", transformOrigin: "50% 0%",
         }} />
-        {/* arcul careului — punctul de 11m NU se mai desenează separat aici:
-            mingea reală (football.webp) stă exact pe punctul de 11m la idle,
-            un al doilea marcaj alb rotund era redundant ȘI citit vizual ca
-            o a doua minge la scară mică — găsit exact prin test vizual. */}
         <svg width="100%" height="100%" style={{ position: "absolute", inset: 0, transform: "rotateX(58deg)", transformOrigin: "50% 0%" }} viewBox={`0 0 ${width} ${height * 0.9}`} preserveAspectRatio="none">
           <path d={`M ${width * 0.22} 0 L ${width * 0.14} ${height * 0.5} L ${width * 0.86} ${height * 0.5} L ${width * 0.78} 0`} fill="none" stroke="rgba(255,255,255,0.55)" strokeWidth={2.5} />
         </svg>
       </div>
 
-      {/* poartă */}
-      <div style={{ position: "absolute", left: "50%", bottom: height * 0.44, width: width * 0.88, height: goalH, transform: "translateX(-50%)" }}>
-        <svg width="100%" height="100%" viewBox={`0 0 ${width * 0.88} ${goalH}`} preserveAspectRatio="none">
+      {/* poartă — DOMINANTĂ, garantat completă (bottom+height < 100%) */}
+      <div style={{ position: "absolute", left: "50%", bottom: goalBottom, width: width * 0.9, height: goalH, transform: "translateX(-50%)" }}>
+        <svg width="100%" height="100%" viewBox={`0 0 ${width * 0.9} ${goalH}`} preserveAspectRatio="none">
           <defs>
             <linearGradient id="postV" x1="0" y1="0" x2="1" y2="0">
               <stop offset="0%" stopColor="#6B7280" /><stop offset="40%" stopColor="#FAFBFC" /><stop offset="60%" stopColor="#FAFBFC" /><stop offset="100%" stopColor="#6B7280" />
@@ -72,40 +68,37 @@ function Scene({ width, height }) {
           </defs>
           <g stroke="rgba(255,255,255,0.28)" strokeWidth={0.6}>
             {Array.from({ length: 16 }, (_, i) => {
-              const off = (i - 8) * (width * 0.88 / 10);
+              const off = (i - 8) * (width * 0.9 / 10);
               return <line key={`d1-${i}`} x1={postW + off} y1={0} x2={postW + off + goalH * 0.85} y2={goalH} />;
             })}
             {Array.from({ length: 16 }, (_, i) => {
-              const off = (i - 8) * (width * 0.88 / 10);
-              return <line key={`d2-${i}`} x1={width * 0.88 - postW + off} y1={0} x2={width * 0.88 - postW + off - goalH * 0.85} y2={goalH} />;
+              const off = (i - 8) * (width * 0.9 / 10);
+              return <line key={`d2-${i}`} x1={width * 0.9 - postW + off} y1={0} x2={width * 0.9 - postW + off - goalH * 0.85} y2={goalH} />;
             })}
           </g>
-          <rect x={postW} y={0} width={width * 0.88 - postW * 2} height={goalH} fill="url(#netShade2)" />
-          <rect x={0} y={0} width={width * 0.88} height={postW} fill="url(#postH)" />
+          <rect x={postW} y={0} width={width * 0.9 - postW * 2} height={goalH} fill="url(#netShade2)" />
+          {/* transversala — SUS, lățime completă, garantat în cadru */}
+          <rect x={0} y={0} width={width * 0.9} height={postW} fill="url(#postH)" />
           <rect x={0} y={0} width={postW} height={goalH} fill="url(#postV)" />
-          <rect x={width * 0.88 - postW} y={0} width={postW} height={goalH} fill="url(#postV)" />
+          <rect x={width * 0.9 - postW} y={0} width={postW} height={goalH} fill="url(#postV)" />
         </svg>
       </div>
+
+      {flashGoal && <div style={{ position: "absolute", inset: 0, background: "rgba(139,217,87,0.16)", animation: "penaltyGoalFlash 420ms ease" }} />}
+      <div style={{ position: "absolute", inset: 0, pointerEvents: "none", borderRadius: 12, background: "radial-gradient(ellipse at 50% 38%, rgba(0,0,0,0) 45%, rgba(0,0,0,0.4) 100%)" }} />
     </div>
   );
 }
 
-// ── Minge — asset real (football.webp), animată DOAR prin transform
-// (translate3d + scale + rotate), niciodată prin left/bottom. `opacity`
-// controlează dispariția temporară exact în clipa de contact (vezi
-// Stage) — aia e mecanismul prin care NU apar două mingi niciodată:
-// mingea separată se ascunde exact când sprite-ul shooter-kick (care
-// are o minge desenată lângă picior) e vizibil, și reapare abia după
-// ce shooter revine la idle. ──
 function Ball({ tx, ty, scale, rotate, blur, opacity }) {
   return (
     <img
       src="/assets/penalty/football.webp"
       alt=""
       style={{
-        position: "absolute", left: "50%", bottom: "6%", width: 22, height: 22, marginLeft: 6,
+        position: "absolute", left: "50%", bottom: "8%", width: 24, height: 24, marginLeft: 8,
         transform: `translate3d(${tx}px, ${ty}px, 0) scale(${scale}) rotate(${rotate}deg)`,
-        transition: "transform 380ms cubic-bezier(.32,.6,.25,1), opacity 90ms linear",
+        transition: "transform 480ms cubic-bezier(.32,.6,.25,1), opacity 90ms linear",
         filter: blur ? "blur(0.6px) drop-shadow(0 3px 3px rgba(0,0,0,0.5))" : "drop-shadow(0 3px 3px rgba(0,0,0,0.5))",
         opacity, willChange: "transform, opacity",
       }}
@@ -113,13 +106,11 @@ function Ball({ tx, ty, scale, rotate, blur, opacity }) {
   );
 }
 
-// ── Executant — văzut din spate, la 2-3 pași de minge. Două sprite-uri
-// (idle/kick), NICIODATĂ afișate simultan — swap instant prin toggle de
-// `src` (ambele preîncărcate la mount, deci fără cerere de rețea în
-// momentul critic = fără flicker). Aceeași ÎNĂLȚIME pentru amândouă
-// (150px), ca scara personajului să nu "sară" la swap — doar lățimea
-// diferă natural (poza de șut e mai lată, piciorul extins). ──
-const SHOOTER_H = 120;
+// ── Executant — idle/kick, elan EXTINS (durată+distanță mai mari, ca
+// să se citească apropierea, nu un swap brusc). Doar 2 cadre reale
+// disponibile (idle/kick) — vezi raportul final pentru cadre lipsă
+// (run-up cu pași intermediari). ──
+const SHOOTER_H = 128;
 function Shooter({ pose, tx }) {
   const src = pose === "kick" ? "/assets/penalty/shooter-kick.webp" : "/assets/penalty/shooter-idle.webp";
   return (
@@ -127,28 +118,31 @@ function Shooter({ pose, tx }) {
       src={src}
       alt=""
       style={{
-        position: "absolute", left: "50%", bottom: "2%", height: SHOOTER_H, marginLeft: -SHOOTER_H * 0.42,
-        transform: `translate3d(${tx}px, 0, 0)`,
-        transition: "transform 170ms cubic-bezier(.3,.5,.3,1)",
+        position: "absolute", left: "50%", bottom: "2%", height: SHOOTER_H,
+        transform: `translate(-50%, 0) translate3d(${tx}px, 0, 0)`,
+        transition: "transform 900ms cubic-bezier(.25,.4,.3,1)",
         willChange: "transform",
       }}
     />
   );
 }
 
-// ── Portar — keeper-idle.webp în poziție de bază, keeper-dive.webp în
-// plonjon (swap de src, nu SVG). Pentru dreapta, ACELAȘI keeper-dive,
-// oglindit cu scaleX(-1) — exact cum s-a stabilit, un singur asset de
-// plonjon ajunge pentru ambele direcții. Mișcarea (translate3d lateral)
-// separată de oglindire, ca să nu interfereze una cu alta. ──
-const KEEPER_H = 78;
+// ── Portar — REPARAT: ancorare prin translate(-50%) (relativă la
+// propria lățime a elementului), NU printr-un marginLeft fix în px
+// calibrat pe sprite-ul idle. Acela era motivul exact pentru care
+// plonjonul (sprite asimetric, diagonal) părea deplasat/inversat pe
+// una din direcții — un offset fix, calibrat pentru o poză simetrică,
+// aplicat neschimbat și peste poza asimetrică (mirror inclus).
+// translate(-50%) centrează corect elementul, identic pentru ambele
+// direcții, indiferent de scaleX.
+//
+// CENTER — crouch REAL (coboară, nu sare în sus): translateY POZITIV
+// (jos) + scaleY comprimat + scaleX ușor lățit — simulează flexarea
+// genunchilor și coborârea centrului de greutate. Rămâne o
+// APROXIMARE CSS pe sprite-ul idle (nu există o poză de prindere
+// dedicată) — vezi raportul final. ──
+const KEEPER_H = 100;
 function Keeper({ tx, diving, side }) {
-  // Pentru centru (side===0), NU comutăm pe sprite-ul de plonjon — ar
-  // arăta anatomic ciudat (poziție orizontală de plonjon, dar fără nicio
-  // deplasare laterală, ca și cum ar sta întins pe loc). Un portar care
-  // apără pe centru rămâne în picioare, doar reacționează — folosim
-  // keeper-idle cu o mică "săritură" reactivă (scale+translateY), nu
-  // pose-ul complet de plonjon. Găsit exact prin test vizual (CENTER TEST).
   const divingToSide = diving && side !== 0;
   const src = divingToSide ? "/assets/penalty/keeper-dive.webp" : "/assets/penalty/keeper-idle.webp";
   const mirror = divingToSide && side > 0 ? -1 : 1;
@@ -158,9 +152,10 @@ function Keeper({ tx, diving, side }) {
       src={src}
       alt=""
       style={{
-        position: "absolute", left: "50%", bottom: "40%", height: KEEPER_H, marginLeft: -KEEPER_H * 0.62,
-        transform: `translate3d(${tx}px, ${centerReact ? -6 : 0}px, 0) scaleX(${mirror}) scale(${centerReact ? 1.08 : 1})`,
-        transition: "transform 300ms cubic-bezier(.34,1.3,.4,1), left 300ms cubic-bezier(.34,1.3,.4,1)",
+        position: "absolute", left: "50%", bottom: "38%", height: KEEPER_H,
+        transform: `translate(-50%, 0) translate3d(${tx}px, ${centerReact ? 10 : 0}px, 0) scaleX(${mirror}) scaleY(${centerReact ? 0.88 : 1}) scale(${centerReact ? 1.04 : 1})`,
+        transformOrigin: "50% 85%",
+        transition: "transform 420ms cubic-bezier(.3,1.15,.35,1)",
         willChange: "transform",
       }}
     />
@@ -172,8 +167,8 @@ function ResultFlash({ show, outcome, forWhom }) {
   const goal = outcome === "goal";
   return (
     <div style={{
-      position: "absolute", top: "34%", left: "50%", transform: "translate(-50%,-50%)",
-      fontSize: 17, fontWeight: 900, fontFamily: font.display, whiteSpace: "nowrap", textAlign: "center",
+      position: "absolute", top: "30%", left: "50%", transform: "translate(-50%,-50%)",
+      fontSize: 18, fontWeight: 900, fontFamily: font.display, whiteSpace: "nowrap", textAlign: "center",
       color: goal ? "#8BD957" : "#F0C24C", textShadow: "0 2px 10px rgba(0,0,0,0.85)",
       animation: "penaltyPop 320ms cubic-bezier(.3,1.5,.4,1)",
     }}>
@@ -182,10 +177,7 @@ function ResultFlash({ show, outcome, forWhom }) {
   );
 }
 
-// ── Zonele de tap — invizibile, direct peste scenă (poartă), pentru
-// faza de alegere. Un puls scurt (150ms) la selectare, apoi se
-// blochează — exact cum a fost cerut, nu butoane separate. ──
-function TapZones({ onPick, flashZone }) {
+function TapZones({ onPick, flashZone, lockZone }) {
   return (
     <div style={{ position: "absolute", left: "6%", right: "6%", top: "6%", bottom: "38%", display: "flex" }}>
       {ZONES.map((z) => (
@@ -193,19 +185,19 @@ function TapZones({ onPick, flashZone }) {
           key={z}
           onClick={() => onPick(z)}
           style={{
-            flex: 1, cursor: "pointer",
+            flex: 1, cursor: "pointer", position: "relative",
             background: flashZone === z ? "rgba(212,175,55,0.32)" : "transparent",
-            transition: "background 150ms ease",
-            borderRadius: 6,
+            transition: "background 150ms ease", borderRadius: 6,
+            display: "flex", alignItems: "center", justifyContent: "center",
           }}
-        />
+        >
+          {lockZone === z && <span className="penalty-lock-pop" style={s.lockBadge}>🔒 ALES</span>}
+        </div>
       ))}
     </div>
   );
 }
 
-// ── Pips — progres vizual "● ● ● ● ●" per rol, umplut pe măsură ce
-// se joacă. ──
 function Pips({ results }) {
   return (
     <div style={{ display: "flex", gap: 4 }}>
@@ -221,30 +213,17 @@ function Pips({ results }) {
 }
 
 // ══════════════════════════════════════════════════════════════════
-// STAGE — combină Scene + Shooter + Ball + Keeper + zonele de tap sau
-// rezultatul unei lovituri. Timing (spec: tap→100-200ms→șut→400-700ms
-// zbor+plonjon→impact→~500ms rezultat):
-//
-//   0ms      tap (puls 130ms, existent)
-//   130ms    APROPIERE — shooter-idle alunecă spre minge (translate3d)
-//   280ms    CONTACT — swap shooter idle→kick; mingea separată devine
-//            invizibilă (opacity 0) EXACT în acest instant — sprite-ul
-//            kick are deja o minge desenată lângă picior, deci în acest
-//            cadru se vede O SINGURĂ minge (cea din imagine). Portarul
-//            își începe plonjonul simultan (regulă explicită: keeper
-//            pornește aproape simultan cu șutul, nu după).
-//   390ms    shooter revine la idle (poza de șut a fost vizibilă doar
-//            ~110ms — destul cât să se "simtă" contactul, dar nu ținută
-//            ca literă moartă) — ȘI, în ACELAȘI moment, mingea separată
-//            devine vizibilă (opacity 1) și pornește să zboare. Pentru
-//            că mingea din imagine nu mai există vizual (shooter e
-//            înapoi pe idle, fără minge desenată) și mingea reală tocmai
-//            a apărut la aceeași poziție, nu există niciun cadru cu
-//            ambele vizibile simultan — verificat exact prin captură.
-//   ~790ms   minge+portar ajung la destinație (zbor 400ms, în ținta
-//            300-500ms)
-//   ~1190ms  rezultat afișat
+// TIMING CINEMATIC — FAZA A-H, ținta explicit cerută. Motorul de
+// rezultat (cine marchează) NU se schimbă aici — doar prezentarea.
 // ══════════════════════════════════════════════════════════════════
+const PREP_MS = 2000;      // FAZA A — pregătire
+const ELAN_MS = 2000;      // FAZA C — apropiere executant
+const MICRO_SUSPANS_MS = 500; // FAZA D — ezitare înainte de contact
+const CONTACT_MS = 160;    // FAZA E — contact
+const FLYING_MS = 520;     // FAZA F — zbor + portar
+const FREEZE_MS = 1800;    // FAZA H — freeze pe rezultat
+const KICK_TOTAL_MS = PREP_MS + ELAN_MS + MICRO_SUSPANS_MS + CONTACT_MS + FLYING_MS + FREEZE_MS; // ~6980ms
+
 const STAGE_W = 340, STAGE_H = 300;
 const PENALTY_ASSETS = [
   "/assets/penalty/shooter-idle.webp", "/assets/penalty/shooter-kick.webp",
@@ -252,10 +231,6 @@ const PENALTY_ASSETS = [
   "/assets/penalty/football.webp",
 ];
 
-// ── Preîncărcare — apelată o singură dată, la mount-ul componentei
-// principale, ÎNAINTE ca primul penalty să poată începe (cerut explicit
-// — fără asta, primul swap idle→kick ar avea un mic delay de rețea și
-// ar arăta ca un "pop"). ──
 export function usePreloadPenaltyAssets() {
   const [ready, setReady] = useState(false);
   useEffect(() => {
@@ -270,49 +245,57 @@ export function usePreloadPenaltyAssets() {
   return ready;
 }
 
+// ── STAGE — mode="pick": tap → puls scurt → 🔒 ALES (450ms) → onPick
+// (deliberat, nu instant). animKick prezent → secvența cinematică
+// completă FAZA A/C/D/E/F/(G/H gestionate de caller via ResultFlash). ──
 export function Stage({ mode, onPick, animKick, assetsReady }) {
-  // animKick: { zone, keeperZone, outcome } | null — null = faza de PICK
-  const [phase, setPhase] = useState("idle"); // idle -> approach -> contact -> flying -> result
+  const [phase, setPhase] = useState("idle"); // idle -> prep -> elan -> microSuspans -> contact -> flying -> result
   const [flashZone, setFlashZone] = useState(null);
+  const [lockZone, setLockZone] = useState(null);
   const timeouts = useRef([]);
 
   useEffect(() => {
     timeouts.current.forEach(clearTimeout);
     timeouts.current = [];
     if (!animKick) { setPhase("idle"); return; }
-    setPhase("approach");
-    timeouts.current.push(setTimeout(() => setPhase("contact"), 150));
-    timeouts.current.push(setTimeout(() => setPhase("flying"), 260));
-    timeouts.current.push(setTimeout(() => setPhase("result"), 660));
+    setPhase("prep");
+    timeouts.current.push(setTimeout(() => setPhase("elan"), PREP_MS));
+    timeouts.current.push(setTimeout(() => setPhase("microSuspans"), PREP_MS + ELAN_MS));
+    timeouts.current.push(setTimeout(() => setPhase("contact"), PREP_MS + ELAN_MS + MICRO_SUSPANS_MS));
+    timeouts.current.push(setTimeout(() => setPhase("flying"), PREP_MS + ELAN_MS + MICRO_SUSPANS_MS + CONTACT_MS));
+    timeouts.current.push(setTimeout(() => setPhase("result"), PREP_MS + ELAN_MS + MICRO_SUSPANS_MS + CONTACT_MS + FLYING_MS));
     return () => timeouts.current.forEach(clearTimeout);
   }, [animKick]);
 
   function handleTap(zone) {
     setFlashZone(zone);
-    setTimeout(() => { setFlashZone(null); onPick(zone); }, 130);
+    setTimeout(() => {
+      setFlashZone(null);
+      setLockZone(zone);
+      setTimeout(() => { setLockZone(null); onPick(zone); }, 450);
+    }, 130);
   }
 
   const isAnimating = !!animKick && phase !== "idle";
-  const shooterPose = phase === "contact" ? "kick" : "idle";
-  const shooterTx = phase === "approach" || phase === "contact" ? -6 : 0;
+  const shooterPose = (phase === "contact") ? "kick" : "idle";
+  const approaching = phase === "elan" || phase === "microSuspans" || phase === "contact";
+  const shooterTx = approaching ? -16 : 0;
 
   const ballFlying = phase === "flying" || phase === "result";
   const ballTx = ballFlying ? (ZONE_X[animKick?.zone] - 0.5) * STAGE_W * 0.8 : 0;
   const ballTy = ballFlying ? -STAGE_H * 0.32 : 0;
-  const ballScale = ballFlying ? 0.62 : 1;
-  const ballRotate = ballFlying ? 260 : 0;
-  // mecanismul anti-"două mingi": invizibilă EXACT în faza de contact
-  // (când shooter-kick își arată propria minge desenată), vizibilă în
-  // rest.
+  const ballScale = ballFlying ? 0.6 : 1;
+  const ballRotate = ballFlying ? 280 : 0;
   const ballOpacity = phase === "contact" ? 0 : 1;
 
   const keeperDiving = phase === "contact" || phase === "flying" || phase === "result";
   const keeperTx = keeperDiving ? (ZONE_X[animKick?.keeperZone] - 0.5) * STAGE_W * 0.62 : 0;
   const keeperSide = animKick ? (animKick.keeperZone === "left" ? -1 : animKick.keeperZone === "right" ? 1 : 0) : 0;
+  const flashGoal = phase === "result" && animKick?.outcome === "goal";
 
   return (
     <div style={{ position: "relative", width: "100%", maxWidth: STAGE_W, aspectRatio: `${STAGE_W}/${STAGE_H}`, margin: "0 auto", borderRadius: 12, boxShadow: "0 14px 36px -10px rgba(0,0,0,0.65)", overflow: "hidden" }}>
-      <Scene width={STAGE_W} height={STAGE_H} />
+      <Scene width={STAGE_W} height={STAGE_H} flashGoal={flashGoal} />
       {!assetsReady && <div style={s.assetLoading}>Se încarcă…</div>}
       {assetsReady && (
         <>
@@ -320,16 +303,134 @@ export function Stage({ mode, onPick, animKick, assetsReady }) {
           <Shooter pose={isAnimating ? shooterPose : "idle"} tx={isAnimating ? shooterTx : 0} />
           <Ball tx={ballTx} ty={ballTy} scale={ballScale} rotate={ballRotate} blur={phase === "flying"} opacity={ballOpacity} />
           {phase === "result" && animKick && <ResultFlash show forWhom={animKick.forWhom || ""} outcome={animKick.outcome} />}
-          {!animKick && <TapZones onPick={handleTap} flashZone={flashZone} />}
+          {!animKick && mode === "pick" && <TapZones onPick={handleTap} flashZone={flashZone} lockZone={lockZone} />}
         </>
       )}
-      <div style={{ position: "absolute", inset: 0, pointerEvents: "none", borderRadius: 12, background: "radial-gradient(ellipse at 50% 40%, rgba(0,0,0,0) 50%, rgba(0,0,0,0.45) 100%)" }} />
+      <div style={s.stagePhaseTag}>
+        {phase === "prep" && "⚫ pregătire..."}
+        {phase === "elan" && "⚫ elan..."}
+        {phase === "microSuspans" && "⚫ ..."}
+      </div>
     </div>
   );
 }
 
 // ══════════════════════════════════════════════════════════════════
-// COMPONENTA PRINCIPALĂ
+// SECVENȚA DE REZULTAT — fiecare lovitură e propriul mic eveniment,
+// schimb de rol marcat explicit, final cu mesaj contextual.
+// ══════════════════════════════════════════════════════════════════
+export function ShootoutSequence({ data, myName, oppName, oppAvatarId, assetsReady }) {
+  const hasRounds = Array.isArray(data.rounds) && data.rounds.length > 0;
+  const [idx, setIdx] = useState(0); // 0..9
+  const [skipped, setSkipped] = useState(!hasRounds);
+  const [animKick, setAnimKick] = useState(null);
+  const [showingRoleSwitch, setShowingRoleSwitch] = useState(false);
+  const timeouts = useRef([]);
+
+  const sequence = hasRounds
+    ? data.rounds.flatMap((r) => [
+        { shooter: "me", zone: r.aShot, keeperZone: r.bDefend, outcome: r.aScores ? "goal" : "save", forWhom: r.aScores ? "" : `pentru ${oppName}` },
+        { shooter: "opp", zone: r.bShot, keeperZone: r.aDefend, outcome: r.bScores ? "goal" : "save", forWhom: r.bScores ? "" : "pentru tine" },
+      ])
+    : [];
+
+  useEffect(() => {
+    timeouts.current.forEach(clearTimeout);
+    timeouts.current = [];
+    if (skipped || idx >= sequence.length) return;
+    // ── Schimb de rol — o singură dată, între lovitura 5 (index 4→5,
+    // adversarul termină de executat/apărat pe rundă) — marcat explicit,
+    // ținut suficient cât să fie înțeles. ──
+    if (idx === 5) {
+      setShowingRoleSwitch(true);
+      timeouts.current.push(setTimeout(() => {
+        setShowingRoleSwitch(false);
+        setAnimKick(sequence[idx]);
+      }, 2600));
+    } else {
+      setAnimKick(sequence[idx]);
+    }
+    timeouts.current.push(setTimeout(() => setIdx((v) => v + 1), idx === 5 ? KICK_TOTAL_MS + 2600 : KICK_TOTAL_MS));
+    return () => timeouts.current.forEach(clearTimeout);
+  }, [idx, skipped]);
+
+  const showingSummary = skipped || idx >= sequence.length;
+  const myPips = Array.from({ length: 5 }, (_, i) => ((showingSummary || i * 2 < idx) ? (sequence[i * 2]?.outcome ?? null) : null));
+  const oppPips = Array.from({ length: 5 }, (_, i) => ((showingSummary || i * 2 + 1 < idx) ? (sequence[i * 2 + 1]?.outcome ?? null) : null));
+  const runningMy = sequence.slice(0, idx).filter((k) => k.shooter === "me" && k.outcome === "goal").length * 10;
+  const runningOpp = sequence.slice(0, idx).filter((k) => k.shooter === "opp" && k.outcome === "goal").length * 10;
+
+  const currentKick = !showingSummary ? sequence[idx] : null;
+  const isMyShotSeries = idx < 5;
+  const reactionLine = currentKick && animKick
+    ? (currentKick.shooter === "me"
+        ? (currentKick.outcome === "goal" ? pickOnce(GOAL_LINES) : (currentKick.keeperZone === "center" ? pickOnce(SAVE_CENTER_LINES) : pickOnce(SAVE_LINES)))
+        : (currentKick.outcome === "save" ? pickOnce(WRONG_GUESS_LINES) : (currentKick.keeperZone === "center" ? pickOnce(SAVE_CENTER_LINES) : pickOnce(SAVE_LINES))))
+    : null;
+
+  return (
+    <div style={s.wrap}>
+      <style>{ANIM_CSS}</style>
+      <div style={s.header}>🥅 PENALTY PVP</div>
+
+      <div style={s.scoreboard}>
+        <div style={s.scoreboardCol}>
+          <PlayerAvatar avatarId={null} nickname={myName} size={30} />
+          <span style={s.scoreboardName}>{myName}</span>
+          <Pips results={myPips} />
+        </div>
+        <div style={s.scoreboardMid}>
+          <span style={s.scoreboardScore}>{showingSummary ? data.myGoals * 10 : runningMy}</span>
+          <span style={s.scoreboardDash}>—</span>
+          <span style={s.scoreboardScore}>{showingSummary ? data.oppGoals * 10 : runningOpp}</span>
+        </div>
+        <div style={s.scoreboardCol}>
+          <PlayerAvatar avatarId={oppAvatarId} nickname={oppName} size={30} />
+          <span style={s.scoreboardName}>{oppName}</span>
+          <Pips results={oppPips} />
+        </div>
+      </div>
+
+      {showingRoleSwitch && (
+        <div className="penalty-pop" style={s.roleSwitchCard}>
+          <div style={s.roleSwitchTitle}>{ROLE_SWITCH_TITLE}</div>
+          <div style={s.roleSwitchLine}>{ROLE_SWITCH_LINE}</div>
+        </div>
+      )}
+
+      {!showingSummary && !showingRoleSwitch && (
+        <>
+          <div style={s.roleBanner}>
+            <span style={{ color: currentKick.shooter === "me" ? "#8BD957" : "#F0C24C" }}>
+              {currentKick.shooter === "me" ? `⚽ ${myName} execută` : `🧤 ${oppName} execută`}
+            </span>
+          </div>
+          <Stage mode="reveal" onPick={() => {}} animKick={animKick} assetsReady={assetsReady} />
+          {reactionLine && animKick && <div className="penalty-pop" style={s.reactionLine}>{reactionLine}</div>}
+          <button type="button" style={s.skipBtn} onClick={() => setSkipped(true)}>Sari peste →</button>
+        </>
+      )}
+
+      {showingSummary && (
+        <div className="penalty-pop" style={s.summaryCard}>
+          <div style={s.fluierFinal}>🏁 FLUIER FINAL</div>
+          <div style={s.summaryRow}>
+            <div style={s.summaryBox}><div style={s.summaryLabel}>LOVITURILE TALE</div><div style={s.summaryValue}>{data.myGoals} gol{data.myGoals !== 1 ? "uri" : ""} / 5</div></div>
+            <div style={s.summaryBox}><div style={s.summaryLabel}>APĂRĂRILE TALE</div><div style={s.summaryValue}>{data.mySaves} apărăr{data.mySaves !== 1 ? "i" : "e"} / 5</div></div>
+          </div>
+          <div style={s.finalScoreCard}>
+            <div style={s.finalScoreLabel}>{data.isFinal ? "PUNCTAJ FINAL" : "PUNCTAJ (preview — se confirmă la Rezolvare)"}</div>
+            <div style={s.finalScoreValue}>{data.myPoints}p</div>
+            <div style={s.finalLine}>{finalLine(data.myGoals, data.mySaves)}</div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ══════════════════════════════════════════════════════════════════
+// COMPONENTA PRINCIPALĂ — interfața/datele NESCHIMBATE.
 // ══════════════════════════════════════════════════════════════════
 export default function PenaltyExperience({ gameweekId, uid, resolved, myResult }) {
   const assetsReady = usePreloadPenaltyAssets();
@@ -339,7 +440,6 @@ export default function PenaltyExperience({ gameweekId, uid, resolved, myResult 
   const [profiles, setProfiles] = useState({});
   const [preview, setPreview] = useState(undefined);
 
-  // faza de alegere — 10 pași (5 lovituri, apoi 5 apărări), un tap = un pas
   const [pickIdx, setPickIdx] = useState(0);
   const [shots, setShots] = useState([]);
   const [defends, setDefends] = useState([]);
@@ -435,16 +535,16 @@ export default function PenaltyExperience({ gameweekId, uid, resolved, myResult 
     );
   }
 
-  // ── FAZA DE ALEGERE — tap direct pe scenă, un pas la un timp. ──
   const isShootingPhase = pickIdx < 5;
   const roundNum = isShootingPhase ? pickIdx + 1 : pickIdx - 5 + 1;
 
   return (
     <div style={s.wrap}>
+      <style>{ANIM_CSS}</style>
       <div style={s.header}>🥅 PENALTY PVP <span style={s.vsOpp}>vs {oppName}</span></div>
       <div style={s.roleBanner}>
         <span style={{ color: isShootingPhase ? "#8BD957" : "#F0C24C" }}>
-          {isShootingPhase ? "⚽ TU EXECUȚI" : "🧤 TU APERI"}
+          {isShootingPhase ? ROLE_SHOOT_TITLE : ROLE_DEFEND_TITLE}
         </span>
         <span style={s.roleRound}>lovitura {roundNum}/5</span>
       </div>
@@ -456,87 +556,17 @@ export default function PenaltyExperience({ gameweekId, uid, resolved, myResult 
   );
 }
 
-// ══════════════════════════════════════════════════════════════════
-// SECVENȚA DE REZULTAT — rundă cu rundă, tempo rapid, pips + scor live.
-// ══════════════════════════════════════════════════════════════════
-export function ShootoutSequence({ data, myName, oppName, oppAvatarId, assetsReady }) {
-  const hasRounds = Array.isArray(data.rounds) && data.rounds.length > 0;
-  const [idx, setIdx] = useState(0); // 0..9
-  const [skipped, setSkipped] = useState(!hasRounds);
-  const [animKick, setAnimKick] = useState(null);
-  const timeouts = useRef([]);
-
-  const sequence = hasRounds
-    ? data.rounds.flatMap((r) => [
-        { shooter: "me", zone: r.aShot, keeperZone: r.bDefend, outcome: r.aScores ? "goal" : "save", forWhom: r.aScores ? "" : `pentru ${oppName}` },
-        { shooter: "opp", zone: r.bShot, keeperZone: r.aDefend, outcome: r.bScores ? "goal" : "save", forWhom: r.bScores ? "" : "pentru tine" },
-      ])
-    : [];
-
-  useEffect(() => {
-    timeouts.current.forEach(clearTimeout);
-    if (skipped || idx >= sequence.length) return;
-    setAnimKick(sequence[idx]);
-    timeouts.current = [setTimeout(() => setIdx((v) => v + 1), 1350)];
-    return () => timeouts.current.forEach(clearTimeout);
-  }, [idx, skipped]);
-
-  const showingSummary = skipped || idx >= sequence.length;
-  const myPips = Array.from({ length: 5 }, (_, i) => ((showingSummary || i * 2 < idx) ? (sequence[i * 2]?.outcome ?? null) : null));
-  const oppPips = Array.from({ length: 5 }, (_, i) => ((showingSummary || i * 2 + 1 < idx) ? (sequence[i * 2 + 1]?.outcome ?? null) : null));
-  const runningMy = sequence.slice(0, idx).filter((k) => k.shooter === "me" && k.outcome === "goal").length * 10;
-  const runningOpp = sequence.slice(0, idx).filter((k) => k.shooter === "opp" && k.outcome === "goal").length * 10;
-
-  return (
-    <div style={s.wrap}>
-      <style>{`@keyframes penaltyPop { 0% { opacity:0; transform: translate(-50%,-50%) scale(0.5);} 60% { opacity:1; transform: translate(-50%,-50%) scale(1.12);} 100% { opacity:1; transform: translate(-50%,-50%) scale(1);} }`}</style>
-      <div style={s.header}>🥅 PENALTY PVP</div>
-
-      <div style={s.scoreboard}>
-        <div style={s.scoreboardCol}>
-          <PlayerAvatar avatarId={null} nickname={myName} size={30} />
-          <span style={s.scoreboardName}>{myName}</span>
-          <Pips results={myPips} />
-        </div>
-        <div style={s.scoreboardMid}>
-          <span style={s.scoreboardScore}>{showingSummary ? data.myGoals * 10 : runningMy}</span>
-          <span style={s.scoreboardDash}>—</span>
-          <span style={s.scoreboardScore}>{showingSummary ? data.oppGoals * 10 : runningOpp}</span>
-        </div>
-        <div style={s.scoreboardCol}>
-          <PlayerAvatar avatarId={oppAvatarId} nickname={oppName} size={30} />
-          <span style={s.scoreboardName}>{oppName}</span>
-          <Pips results={oppPips} />
-        </div>
-      </div>
-
-      {!showingSummary && (
-        <>
-          <div style={s.roleBanner}>
-            <span style={{ color: sequence[idx].shooter === "me" ? "#8BD957" : "#F0C24C" }}>
-              {sequence[idx].shooter === "me" ? `⚽ ${myName} execută` : `🧤 ${oppName} execută`}
-            </span>
-          </div>
-          <Stage mode="reveal" onPick={() => {}} animKick={animKick} assetsReady={assetsReady} />
-          <button type="button" style={s.skipBtn} onClick={() => setSkipped(true)}>Sari peste →</button>
-        </>
-      )}
-
-      {showingSummary && (
-        <div style={s.summaryCard}>
-          <div style={s.summaryRow}>
-            <div style={s.summaryBox}><div style={s.summaryLabel}>LOVITURILE TALE</div><div style={s.summaryValue}>{data.myGoals} gol{data.myGoals !== 1 ? "uri" : ""} / 5</div></div>
-            <div style={s.summaryBox}><div style={s.summaryLabel}>APĂRĂRILE TALE</div><div style={s.summaryValue}>{data.mySaves} apărăr{data.mySaves !== 1 ? "i" : "e"} / 5</div></div>
-          </div>
-          <div style={s.finalScoreCard}>
-            <div style={s.finalScoreLabel}>{data.isFinal ? "PUNCTAJ FINAL" : "PUNCTAJ (preview — se confirmă la Rezolvare)"}</div>
-            <div style={s.finalScoreValue}>{data.myPoints}p</div>
-          </div>
-        </div>
-      )}
-    </div>
-  );
+const ANIM_CSS = `
+@keyframes penaltyPop { 0% { opacity:0; transform: translate(-50%,-50%) scale(0.5);} 60% { opacity:1; transform: translate(-50%,-50%) scale(1.12);} 100% { opacity:1; transform: translate(-50%,-50%) scale(1);} }
+@keyframes penaltyGoalFlash { 0% { opacity: 0; } 30% { opacity: 1; } 100% { opacity: 0; } }
+@keyframes penaltyLockPop { 0% { opacity:0; transform: scale(0.6); } 100% { opacity:1; transform: scale(1); } }
+@keyframes penaltyCardPop { 0% { opacity:0; transform: scale(0.94); } 100% { opacity:1; transform: scale(1); } }
+.penalty-lock-pop { animation: penaltyLockPop 150ms ease; }
+.penalty-pop { animation: penaltyCardPop 250ms ease; }
+@media (prefers-reduced-motion: reduce) {
+  .penalty-lock-pop, .penalty-pop { animation: none !important; }
 }
+`;
 
 const s = {
   wrap: { position: "relative" },
@@ -570,12 +600,22 @@ const s = {
   scoreboardScore: { fontSize: 28, fontWeight: 900, color: color.goldLight || "#D4AF37", fontFamily: font.display, minWidth: 32, textAlign: "center" },
   scoreboardDash: { fontSize: 18, color: color.textFaint, fontFamily: font.display },
 
+  roleSwitchCard: {
+    textAlign: "center", padding: "26px 16px", background: "rgba(212,175,55,0.08)", border: `1px solid ${color.goldBorder}`,
+    borderRadius: radius.lg, margin: "6px 0",
+  },
+  roleSwitchTitle: { fontSize: 16, fontWeight: 900, color: color.goldLight, fontFamily: font.display },
+  roleSwitchLine: { fontSize: 12, color: color.textSecondary, fontFamily: font.body, marginTop: 6 },
+
+  reactionLine: { textAlign: "center", fontSize: 12.5, fontWeight: 700, color: color.textPrimary, fontFamily: font.body, marginTop: 8 },
+
   skipBtn: {
     display: "block", margin: "10px auto 0", background: "transparent", border: "none",
     padding: "4px 10px", fontSize: 10, fontWeight: 500, color: color.textFaint, fontFamily: font.body, cursor: "pointer", opacity: 0.6,
   },
 
   summaryCard: { marginTop: 8 },
+  fluierFinal: { textAlign: "center", fontSize: 13, fontWeight: 800, color: color.goldLight, fontFamily: font.display, marginBottom: 8, letterSpacing: "0.04em" },
   summaryRow: { display: "flex", gap: 8, marginBottom: 4 },
   summaryBox: { flex: 1, background: "rgba(255,255,255,0.03)", border: `1px solid ${color.borderSubtle}`, borderRadius: radius.md, padding: "10px 8px", textAlign: "center" },
   summaryLabel: { fontSize: 9, fontWeight: 700, color: color.textFaint, fontFamily: font.body, marginBottom: 3, letterSpacing: "0.04em" },
@@ -584,4 +624,14 @@ const s = {
   finalScoreCard: { marginTop: 16, textAlign: "center", background: "rgba(212,175,55,0.08)", border: `1px solid ${color.goldBorder}`, borderRadius: radius.md, padding: "14px 12px" },
   finalScoreLabel: { fontSize: 10, fontWeight: 800, letterSpacing: "0.06em", color: color.textFaint, marginBottom: 4, fontFamily: font.body },
   finalScoreValue: { fontSize: 24, fontWeight: 900, color: color.goldLight || "#D4AF37", fontFamily: font.display },
+  finalLine: { fontSize: 11.5, color: color.textSecondary, fontFamily: font.body, marginTop: 8 },
+
+  lockBadge: {
+    position: "absolute", fontSize: 10, fontWeight: 800, color: color.goldLight, fontFamily: font.body,
+    background: "rgba(20,15,10,0.85)", border: `1px solid ${color.goldBorder}`, borderRadius: radius.pill, padding: "3px 8px",
+  },
+  stagePhaseTag: {
+    position: "absolute", bottom: 4, left: "50%", transform: "translateX(-50%)",
+    fontSize: 8, color: "rgba(255,255,255,0.25)", fontFamily: font.body,
+  },
 };

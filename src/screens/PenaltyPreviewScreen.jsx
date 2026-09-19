@@ -6,22 +6,27 @@ import { color, font, radius } from "../matchdayTheme";
 
 // ══════════════════════════════════════════════════════════════════
 // ⚽ PENALTY PvP — Admin Preview / MOCK.
+// Reutilizează 100%: Stage, ShootoutSequence, computePenaltyDuel() —
+// exact motorul/animațiile reale. ZERO Firestore.
 //
-// Nu re-desenăm nimic vizual — reutilizăm 100% componentele reale:
-// Stage (scenă+shooter+minge+portar+zonele de tap) și ShootoutSequence
-// (secvența de reveal rundă-cu-rundă), ambele exportate acum din
-// PenaltyExperience.jsx, plus computePenaltyDuel — funcția PURĂ care
-// calculează rezultatul, IDENTICĂ cu cea folosită live/la Rezolvare.
-// Nicio duplicare de logică/animație, ZERO Firestore.
-//
-// Flux: aici jucăm interactiv cele 10 alegeri (5 șuturi + 5 apărări,
-// exact ca în jocul real), generăm un adversar random local, calculăm
-// rezultatul cu computePenaltyDuel(), apoi redăm ShootoutSequence —
-// exact ce ar vedea un jucător real, doar cu date locale.
+// Scenariile rapide de mai jos există STRICT în acest Preview — nu
+// ating jocul real, nu apar jucătorilor, nu schimbă motorul. Doar
+// construiesc un `data` cu prima lovitură forțată la scenariul cerut,
+// ca să poți verifica rapid GOL/APĂRAT pe fiecare zonă fără să aștepți
+// tot ciclul de 10 alegeri.
 // ══════════════════════════════════════════════════════════════════
 const ZONES = ["left", "center", "right"];
 function randomZone() { return ZONES[Math.floor(Math.random() * ZONES.length)]; }
 function randomFive() { return Array.from({ length: 5 }, randomZone); }
+
+const DEBUG_SCENARIOS = [
+  { id: "goal-left", label: "GOL — stânga", shot: "left", defend: "center" },
+  { id: "goal-center", label: "GOL — centru", shot: "center", defend: "left" },
+  { id: "goal-right", label: "GOL — dreapta", shot: "right", defend: "center" },
+  { id: "save-left", label: "APĂRAT — stânga", shot: "left", defend: "left" },
+  { id: "save-center", label: "APĂRAT — centru", shot: "center", defend: "center" },
+  { id: "save-right", label: "APĂRAT — dreapta", shot: "right", defend: "right" },
+];
 
 export default function PenaltyPreviewScreen({ onBack, embedded }) {
   const assetsReady = usePreloadPenaltyAssets();
@@ -39,8 +44,6 @@ export default function PenaltyPreviewScreen({ onBack, embedded }) {
       const next = [...defends, zone];
       setDefends(next);
       if (pickIdx === 9) {
-        // ── Adversar MOCK, generat local — NU e trimis nicăieri,
-        // există doar cât durează acest Preview. ──
         const opp = { shots: randomFive(), defends: randomFive() };
         const result = computePenaltyDuel({ shots, defends: next }, opp);
         setData({ ...result, isFinal: false });
@@ -48,6 +51,18 @@ export default function PenaltyPreviewScreen({ onBack, embedded }) {
         setPickIdx(pickIdx + 1);
       }
     }
+  }
+
+  // ── Scenariu rapid de debug — prima lovitură forțată, restul random.
+  // Bypass complet al fazei interactive de alegere — DOAR pentru test
+  // vizual rapid, nu există în jocul real. ──
+  function handleDebugScenario(scen) {
+    const myShots = [scen.shot, ...randomFive().slice(1)];
+    const myDefends = randomFive();
+    const oppShots = randomFive();
+    const oppDefends = [scen.defend, ...randomFive().slice(1)];
+    const result = computePenaltyDuel({ shots: myShots, defends: myDefends }, { shots: oppShots, defends: oppDefends });
+    setData({ ...result, isFinal: false });
   }
 
   function handleRestart() {
@@ -62,6 +77,19 @@ export default function PenaltyPreviewScreen({ onBack, embedded }) {
       {!embedded && <PageHeader title="⚽ Penalty PvP — Preview" onBack={onBack} />}
       <div style={s.mockBanner}>👁 PREVIEW — mock, adversar generat local, nimic salvat</div>
 
+      {!data && (
+        <div style={s.debugBox}>
+          <div style={s.debugTitle}>🛠 Scenarii rapide (doar debug, nu apare la jucători)</div>
+          <div style={s.debugGrid}>
+            {DEBUG_SCENARIOS.map((scen) => (
+              <button key={scen.id} type="button" style={s.debugBtn} onClick={() => handleDebugScenario(scen)}>
+                {scen.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
       {data ? (
         <>
           <ShootoutSequence data={data} myName="JUCĂTOR A" oppName="JUCĂTOR B (mock)" oppAvatarId={null} assetsReady={assetsReady} />
@@ -72,7 +100,7 @@ export default function PenaltyPreviewScreen({ onBack, embedded }) {
           <div style={s.header}>🥅 PENALTY PVP <span style={s.vsOpp}>vs JUCĂTOR B (mock)</span></div>
           <div style={s.roleBanner}>
             <span style={{ color: pickIdx < 5 ? "#8BD957" : "#F0C24C" }}>
-              {pickIdx < 5 ? "⚽ TU EXECUȚI" : "🧤 TU APERI"}
+              {pickIdx < 5 ? "🎯 UNDE TRAGI?" : "🧤 UNDE TE ARUNCI?"}
             </span>
             <span style={s.roleRound}>lovitura {(pickIdx < 5 ? pickIdx + 1 : pickIdx - 5 + 1)}/5</span>
           </div>
@@ -94,6 +122,13 @@ const s = {
     textAlign: "center", fontSize: 11, fontWeight: 700, color: color.goldLight, fontFamily: font.body,
     background: "rgba(212,175,55,0.1)", border: `1px solid ${color.goldBorder}`, borderRadius: radius.sm,
     padding: "6px 10px", margin: "10px 0",
+  },
+  debugBox: { background: "rgba(255,255,255,0.03)", border: `1px dashed ${color.border}`, borderRadius: radius.md, padding: "8px 10px", marginBottom: 12 },
+  debugTitle: { fontSize: 9.5, fontWeight: 700, color: color.textFaint, fontFamily: font.body, marginBottom: 6 },
+  debugGrid: { display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 6 },
+  debugBtn: {
+    padding: "7px 4px", borderRadius: radius.sm, border: `1px solid ${color.border}`, background: "rgba(255,255,255,0.04)",
+    color: color.textSecondary, fontSize: 9.5, fontWeight: 700, fontFamily: font.body, cursor: "pointer",
   },
   header: { fontSize: 15, fontWeight: 800, color: color.textPrimary, textAlign: "center", fontFamily: font.display, marginBottom: 8 },
   vsOpp: { fontSize: 11, fontWeight: 600, color: color.textFaint, fontFamily: font.body },

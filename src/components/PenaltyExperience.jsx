@@ -147,13 +147,18 @@ function Keeper({ tx, diving, side }) {
   const src = divingToSide ? "/assets/penalty/keeper-dive.webp" : "/assets/penalty/keeper-idle.webp";
   const mirror = divingToSide && side > 0 ? -1 : 1;
   const centerReact = diving && side === 0;
+  // ── rotate() e PRIMUL în listă => e cel mai EXTERIOR transform,
+  // aplicat în spațiul real al ecranului, NEAFECTAT de scaleX(mirror)
+  // de mai jos — garantează că înclinarea "atacă spre X" arată la fel
+  // indiferent de partea mirror-uită. ──
+  const tiltDeg = divingToSide ? side * 7 : 0;
   return (
     <img
       src={src}
       alt=""
       style={{
         position: "absolute", left: "50%", bottom: "38%", height: KEEPER_H,
-        transform: `translate(-50%, 0) translate3d(${tx}px, ${centerReact ? 10 : 0}px, 0) scaleX(${mirror}) scaleY(${centerReact ? 0.88 : 1}) scale(${centerReact ? 1.04 : 1})`,
+        transform: `rotate(${tiltDeg}deg) translate(-50%, 0) translate3d(${tx}px, ${centerReact ? 10 : 0}px, 0) scaleX(${mirror}) scaleY(${centerReact ? 0.88 : 1}) scale(${centerReact ? 1.04 : 1})`,
         transformOrigin: "50% 85%",
         transition: "transform 420ms cubic-bezier(.3,1.15,.35,1)",
         willChange: "transform",
@@ -282,14 +287,28 @@ export function Stage({ mode, onPick, animKick, assetsReady }) {
   const shooterTx = approaching ? -16 : 0;
 
   const ballFlying = phase === "flying" || phase === "result";
-  const ballTx = ballFlying ? (ZONE_X[animKick?.zone] - 0.5) * STAGE_W * 0.8 : 0;
+  // ── Destinația mingii — calibrată pe geometria REALĂ a porții
+  // (0.9×STAGE_W, minus grosimea barei), nu pe o fracțiune vagă din
+  // toată scena. LEFT/RIGHT trebuie să ajungă clar lângă bară, nu
+  // "aproape de centru". CENTER rămâne exact 0 (centrul porții). ──
+  const goalHalfW = (STAGE_W * 0.9) / 2 - STAGE_W * 0.05; // jumătate poartă minus bara
+  const ballTargetPx = goalHalfW * 0.82; // aproape de bară, cu marjă de siguranță sub grosimea ei
+  const ballTx = ballFlying
+    ? (animKick?.zone === "left" ? -ballTargetPx : animKick?.zone === "right" ? ballTargetPx : 0)
+    : 0;
   const ballTy = ballFlying ? -STAGE_H * 0.32 : 0;
   const ballScale = ballFlying ? 0.6 : 1;
   const ballRotate = ballFlying ? 280 : 0;
   const ballOpacity = phase === "contact" ? 0 : 1;
 
   const keeperDiving = phase === "contact" || phase === "flying" || phase === "result";
-  const keeperTx = keeperDiving ? (ZONE_X[animKick?.keeperZone] - 0.5) * STAGE_W * 0.62 : 0;
+  // ── Distanța de plonjon REDUSĂ (0.62 → 0.42): analiza pixel-cu-pixel
+  // a asset-ului arată mâna conducătoare deja la MARGINEA PROPRIE a
+  // sprite-ului (x=0 din 475px) — cu translatarea veche (0.62×), mâna
+  // ieșea aproape complet din cadru/dincolo de bară, lăsând vizibilă
+  // predominant partea din spate (aproape de centru) => exact iluzia
+  // "vine de la bară spre centru" + "iese absurd din poartă". ──
+  const keeperTx = keeperDiving ? (ZONE_X[animKick?.keeperZone] - 0.5) * STAGE_W * 0.42 : 0;
   const keeperSide = animKick ? (animKick.keeperZone === "left" ? -1 : animKick.keeperZone === "right" ? 1 : 0) : 0;
   const flashGoal = phase === "result" && animKick?.outcome === "goal";
 

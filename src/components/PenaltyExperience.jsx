@@ -309,7 +309,11 @@ export function Stage({ mode, onPick, animKick, assetsReady }) {
   // shot===center ȘI keeper!==center. Toate celelalte combinații
   // (inclusiv center+center) rămân la -0.32×H, neschimbate. ──
   const isCenterOverLateralDive = animKick?.zone === "center" && animKick?.keeperZone && animKick.keeperZone !== "center";
-  const ballTy = ballFlying ? (isCenterOverLateralDive ? -STAGE_H * 0.5 : -STAGE_H * 0.32) : 0;
+  // ── Corecția anterioară (-0.5×H → 174px absolut) era încă SUB
+  // vârful portarului (90+100=190px) — insuficientă, suprapunerea
+  // rămânea garantată matematic. Recalculat: -0.72×H → 240px, cu 50px
+  // marjă clară peste portar. ──
+  const ballTy = ballFlying ? (isCenterOverLateralDive ? -STAGE_H * 0.72 : -STAGE_H * 0.32) : 0;
   const ballScale = ballFlying ? 0.6 : 1;
   const ballRotate = ballFlying ? 280 : 0;
   const ballOpacity = phase === "contact" ? 0 : 1;

@@ -301,7 +301,15 @@ export function Stage({ mode, onPick, animKick, assetsReady }) {
   const ballTx = ballFlying
     ? (animKick?.zone === "left" ? -ballTargetPx : animKick?.zone === "right" ? ballTargetPx : 0)
     : 0;
-  const ballTy = ballFlying ? -STAGE_H * 0.32 : 0;
+  // ── Fix chirurgical: traiectoria mingii era o înălțime FIXĂ
+  // (-0.32×H), identică pentru toate combinațiile. La CENTER+plonjon
+  // lateral, portarul traversează zona centrală chiar pe unde trecea
+  // mingea, la aceeași înălțime — de-aici suprapunerea vizuală minge-
+  // corp. Corectat STRICT pentru acest caz: arc mai înalt, doar când
+  // shot===center ȘI keeper!==center. Toate celelalte combinații
+  // (inclusiv center+center) rămân la -0.32×H, neschimbate. ──
+  const isCenterOverLateralDive = animKick?.zone === "center" && animKick?.keeperZone && animKick.keeperZone !== "center";
+  const ballTy = ballFlying ? (isCenterOverLateralDive ? -STAGE_H * 0.5 : -STAGE_H * 0.32) : 0;
   const ballScale = ballFlying ? 0.6 : 1;
   const ballRotate = ballFlying ? 280 : 0;
   const ballOpacity = phase === "contact" ? 0 : 1;

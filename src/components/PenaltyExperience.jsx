@@ -145,20 +145,25 @@ const KEEPER_H = 100;
 function Keeper({ tx, diving, side }) {
   const divingToSide = diving && side !== 0;
   const src = divingToSide ? "/assets/penalty/keeper-dive.webp" : "/assets/penalty/keeper-idle.webp";
-  const mirror = divingToSide && side > 0 ? -1 : 1;
+  // ── FIX P0: mapping-ul mirror era INVERSAT — confirmat prin test
+  // vizual real pe telefon (de două ori), peste analiza noastră de
+  // pixeli. Schimbat: LEFT foloseşte acum varianta oglindită, RIGHT
+  // varianta nativă — capul + mâna conducătoare trebuie să indice
+  // spre bara țintă, nu spre centru. Rotația compensatorie de 7° din
+  // runda trecută a fost ELIMINATĂ — nu mai e necesară odată ce
+  // orientarea de bază e corectă, și ar fi dublat efectul. ──
+  const mirror = divingToSide && side < 0 ? -1 : 1;
   const centerReact = diving && side === 0;
-  // ── rotate() e PRIMUL în listă => e cel mai EXTERIOR transform,
-  // aplicat în spațiul real al ecranului, NEAFECTAT de scaleX(mirror)
-  // de mai jos — garantează că înclinarea "atacă spre X" arată la fel
-  // indiferent de partea mirror-uită. ──
-  const tiltDeg = divingToSide ? side * 7 : 0;
   return (
     <img
       src={src}
       alt=""
       style={{
-        position: "absolute", left: "50%", bottom: "38%", height: KEEPER_H,
-        transform: `rotate(${tiltDeg}deg) translate(-50%, 0) translate3d(${tx}px, ${centerReact ? 10 : 0}px, 0) scaleX(${mirror}) scaleY(${centerReact ? 0.88 : 1}) scale(${centerReact ? 1.04 : 1})`,
+        // ── Picioarele pe linia porții — 30%, exact goalBottom din
+        // Scene (height*0.30), nu 38% (prea în față). Aceasta e originea
+        // pentru toate plonjoanele. ──
+        position: "absolute", left: "50%", bottom: "30%", height: KEEPER_H,
+        transform: `translate(-50%, 0) translate3d(${tx}px, ${centerReact ? 10 : 0}px, 0) scaleX(${mirror}) scaleY(${centerReact ? 0.88 : 1}) scale(${centerReact ? 1.04 : 1})`,
         transformOrigin: "50% 85%",
         transition: "transform 420ms cubic-bezier(.3,1.15,.35,1)",
         willChange: "transform",
@@ -376,8 +381,18 @@ export function ShootoutSequence({ data, myName, oppName, oppAvatarId, assetsRea
   const showingSummary = skipped || idx >= sequence.length;
   const myPips = Array.from({ length: 5 }, (_, i) => ((showingSummary || i * 2 < idx) ? (sequence[i * 2]?.outcome ?? null) : null));
   const oppPips = Array.from({ length: 5 }, (_, i) => ((showingSummary || i * 2 + 1 < idx) ? (sequence[i * 2 + 1]?.outcome ?? null) : null));
-  const runningMy = sequence.slice(0, idx).filter((k) => k.shooter === "me" && k.outcome === "goal").length * 10;
-  const runningOpp = sequence.slice(0, idx).filter((k) => k.shooter === "opp" && k.outcome === "goal").length * 10;
+  // ── FIX P0: fiecare din cele 10 faze acordă 10 PCT UNUIA dintre cei
+  // doi — fie golul executantului, fie apărarea portarului. Formula
+  // veche număra STRICT golurile ca executant, ignorând complet
+  // apărările => scor imposibil (nu suma la 100). Corect: pentru mine,
+  // punct câștigat quando (eu execut și marchez) SAU (adversarul
+  // execută și eu apăr) — simetric pentru adversar. ──
+  const runningMy = sequence.slice(0, idx).filter((k) =>
+    (k.shooter === "me" && k.outcome === "goal") || (k.shooter === "opp" && k.outcome === "save")
+  ).length * 10;
+  const runningOpp = sequence.slice(0, idx).filter((k) =>
+    (k.shooter === "opp" && k.outcome === "goal") || (k.shooter === "me" && k.outcome === "save")
+  ).length * 10;
 
   const currentKick = !showingSummary ? sequence[idx] : null;
   const isMyShotSeries = idx < 5;
@@ -399,9 +414,9 @@ export function ShootoutSequence({ data, myName, oppName, oppAvatarId, assetsRea
           <Pips results={myPips} />
         </div>
         <div style={s.scoreboardMid}>
-          <span style={s.scoreboardScore}>{showingSummary ? data.myGoals * 10 : runningMy}</span>
+          <span style={s.scoreboardScore}>{showingSummary ? data.myPoints : runningMy}</span>
           <span style={s.scoreboardDash}>—</span>
-          <span style={s.scoreboardScore}>{showingSummary ? data.oppGoals * 10 : runningOpp}</span>
+          <span style={s.scoreboardScore}>{showingSummary ? (data.oppPoints ?? (100 - data.myPoints)) : runningOpp}</span>
         </div>
         <div style={s.scoreboardCol}>
           <PlayerAvatar avatarId={oppAvatarId} nickname={oppName} size={30} />
@@ -530,10 +545,10 @@ export default function PenaltyExperience({ gameweekId, uid, resolved, myResult 
         rounds: null,
         myGoals: myResult.penalty.myGoals, mySaves: myResult.penalty.mySaves,
         oppGoals: myResult.penalty.opponentGoals, oppSaves: myResult.penalty.opponentSaves,
-        myPoints: myResult.bonusPoints, isFinal: true,
+        myPoints: myResult.bonusPoints, oppPoints: 100 - myResult.bonusPoints, isFinal: true,
       }
     : preview
-      ? { rounds: preview.rounds, myGoals: preview.myGoals, mySaves: preview.mySaves, oppGoals: preview.oppGoals, oppSaves: preview.oppSaves, myPoints: preview.myPoints, isFinal: false }
+      ? { rounds: preview.rounds, myGoals: preview.myGoals, mySaves: preview.mySaves, oppGoals: preview.oppGoals, oppSaves: preview.oppSaves, myPoints: preview.myPoints, oppPoints: preview.oppPoints, isFinal: false }
       : null;
 
   if (finalData) {

@@ -192,6 +192,12 @@ export default {
       "files": {
         "1": "leo-carvajal.webp"
       }
+    },
+    "utzy": {
+      "nextIndex": 2,
+      "files": {
+        "1": "utzy-verratti.webp"
+      }
     }
   }
 };

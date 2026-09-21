@@ -162,6 +162,12 @@ export default {
       "files": {
         "1": "cos-livier-ghiroud.webp"
       }
+    },
+    "luck87": {
+      "nextIndex": 2,
+      "files": {
+        "1": "diego-lucaosta.webp"
+      }
     }
   }
 };

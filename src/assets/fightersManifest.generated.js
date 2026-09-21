@@ -198,6 +198,12 @@ export default {
       "files": {
         "1": "utzy-verratti.webp"
       }
+    },
+    "vikigbt": {
+      "nextIndex": 2,
+      "files": {
+        "1": "vikai-davertz.webp"
+      }
     }
   }
 };

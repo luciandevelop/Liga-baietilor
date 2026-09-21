@@ -1212,6 +1212,27 @@ export async function finalizeGameweek(gameweekId) {
   const surpriseByUid = {};
   surpriseResultsSnap.docs.forEach((d) => { surpriseByUid[d.id] = d.data(); });
 
+  // ── Metadata de TRANSPARENȚĂ — CE joc a fost Surpriza Mare/Mică a
+  // etapei (id-ul din MAIN_CATALOG/BONUS_CATALOG), citit din
+  // weeklySurprises/{gwId}/secret/{main,bonus}.type — STRICT informativ,
+  // pentru istoricul afișat jucătorilor (cardul de transparență).
+  // GARDĂ CRITICĂ: absolut orice eșec aici (colecție/document/câmp lipsă,
+  // eroare de citire) rezultă în `null`, NICIODATĂ o excepție — nu poate
+  // opri finalizarea. Nu se scrie nimic secret/confidențial mai departe,
+  // doar id-ul de tip (string), deja public prin cataloagele din cod. ──
+  let mainSurpriseType = null;
+  let bonusSurpriseType = null;
+  try {
+    const [mainSecretSnap, bonusSecretSnap] = await Promise.all([
+      getDoc(doc(db, "weeklySurprises", gameweekId, "secret", "main")),
+      getDoc(doc(db, "weeklySurprises", gameweekId, "secret", "bonus")),
+    ]);
+    if (mainSecretSnap.exists()) mainSurpriseType = mainSecretSnap.data()?.type || null;
+    if (bonusSecretSnap.exists()) bonusSurpriseType = bonusSecretSnap.data()?.type || null;
+  } catch (err) {
+    console.error("Metadata tip Surpriză indisponibilă (non-blocant, finalizarea continuă):", err);
+  }
+
   const gwRef = doc(db, "gameweeks", gameweekId);
 
   const outcome = await runTransaction(db, async (tx) => {
@@ -1247,6 +1268,8 @@ export async function finalizeGameweek(gameweekId) {
         jokerExtraBonus,
         mainSurprisePoints,
         bonusSurprisePoints,
+        mainSurpriseType,
+        bonusSurpriseType,
         totalPoints: finalTotal,
         breakdown: r.breakdown,
         computedAt: serverTimestamp(),
@@ -1266,6 +1289,20 @@ export async function finalizeGameweek(gameweekId) {
   });
 
   return outcome;
+}
+
+// ── Registru public — o SINGURĂ interogare (gameweekScores where
+// gameweekId==X), la cerere, când Adminul/userul alege explicit o etapă
+// din listă. NU se încarcă automat la orice render, NU face query per
+// jucător. Grupează local (client) rezultatele deja aduse. ──
+export async function getGameweekRegistry(gameweekId) {
+  const scoresSnap = await getDocs(query(collection(db, "gameweekScores"), where("gameweekId", "==", gameweekId)));
+  const rows = scoresSnap.docs.map((d) => d.data());
+  const uids = rows.map((r) => r.userId);
+  const nicknames = await getUserNicknames(uids);
+  return rows
+    .map((r) => ({ ...r, nickname: nicknames[r.userId] || r.userId }))
+    .sort((a, b) => (b.totalPoints || 0) - (a.totalPoints || 0));
 }
 
 // Nickname-uri pentru un set de UID-uri — folosit la afișarea preview-ului
@@ -1531,9 +1568,39 @@ export async function getPlayerCardStats(uid, seasonId, etapaGameweekId) {
   const generalTop = await listGeneralLeaderboard();
   const isTopGeneral = generalTop[0]?.uid === uid;
 
+  // ── TRANSPARENȚĂ PUNCTAJ — istoric complet pe etape, pentru cardul
+  // de jucător (secțiunea "📊 PUNCTAJE PE ETAPE"). ZERO citiri noi —
+  // reutilizează `allScores` (deja adus mai sus, un singur query) și
+  // `seasonGameweeks` (deja adus). Lupul Singuratic separat DOAR pentru
+  // afișare (suma componentelor rămâne identică cu totalPoints real —
+  // nicio valoare nouă, doar recombinare a ce există deja în breakdown).
+  const gwNumberById = {};
+  seasonGameweeks.forEach((g) => { gwNumberById[g.id] = g.number; });
+  const etapaHistory = allScores
+    .slice()
+    .sort((a, b) => (gwNumberById[b.gameweekId] ?? 0) - (gwNumberById[a.gameweekId] ?? 0))
+    .map((sc) => {
+      const loneWolfBonus = Object.values(sc.breakdown || {}).reduce((sum, m) => sum + (m.loneWolfBonus || 0), 0);
+      return {
+        gameweekId: sc.gameweekId,
+        gwNumber: gwNumberById[sc.gameweekId] ?? null,
+        rank: sc.rank ?? null,
+        pronosticuriPure: (sc.pointsFromMatches || 0) - loneWolfBonus,
+        loneWolfBonus,
+        mainSurprisePoints: sc.mainSurprisePoints ?? null,
+        mainSurpriseType: sc.mainSurpriseType ?? null,
+        bonusSurprisePoints: sc.bonusSurprisePoints ?? null,
+        bonusSurpriseType: sc.bonusSurpriseType ?? null,
+        jokerExtraBonus: sc.jokerExtraBonus || 0,
+        rankingBonus: sc.rankingBonus || 0,
+        totalPoints: sc.totalPoints || 0,
+      };
+    });
+
   return {
     rank: null, // completat de apelant — poziția AFIȘATĂ pe față, contextuală tabului din care s-a deschis
     isTopGeneral, // determină seria "Icon" — NICIODATĂ contextual
+    etapaHistory,
     etapaPoints: etapaScore?.totalPoints ?? liveEtapaPoints,
     etapaPointsIsLive: !etapaScore && liveEtapaPoints !== null,
     // Pentru REZUMAT ETAPĂ (doar la etapă finalizată) — componentele
@@ -1551,6 +1618,18 @@ export async function getPlayerCardStats(uid, seasonId, etapaGameweekId) {
     etapaMainSurprisePoints: etapaScore?.mainSurprisePoints ?? null,
     etapaBonusSurprisePoints: etapaScore?.bonusSurprisePoints ?? null,
     etapaJokerExtraBonus: etapaScore?.jokerExtraBonus ?? null,
+    // ── TRANSPARENȚĂ — câmpuri noi, adăugate pentru cardul de jucător.
+    // etapaLoneWolfBonus: calculat din breakdown-ul deja citit (etapaScore
+    // sau, dacă live, myBreakdown) — nu e stocat separat, doar recombinat
+    // pentru afișare. etapaMainSurpriseType/etapaBonusSurpriseType: din
+    // gameweekScores (scrise de finalizeGameweek de-acum înainte; null
+    // pe orice etapă finalizată înainte de această schimbare — UI-ul
+    // aplică fallback-ul istoric doar pentru Etapa 1). etapaRank: rangul
+    // REAL folosit de computeRankingBonuses, deja persistat. ──
+    etapaLoneWolfBonus: Object.values((etapaScore || matchesSource || {}).breakdown || {}).reduce((sum, m) => sum + (m.loneWolfBonus || 0), 0),
+    etapaMainSurpriseType: etapaScore?.mainSurpriseType ?? null,
+    etapaBonusSurpriseType: etapaScore?.bonusSurpriseType ?? null,
+    etapaRank: etapaScore?.rank ?? null,
     previousEtapaPoints: previousScore?.totalPoints ?? null,
     seasonPoints,
     generalPoints,

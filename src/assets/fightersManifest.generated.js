@@ -180,6 +180,12 @@ export default {
       "files": {
         "1": "razvao-felix.webp"
       }
+    },
+    "sexu-ciobanu": {
+      "nextIndex": 2,
+      "files": {
+        "1": "sexu-vidal.webp"
+      }
     }
   }
 };

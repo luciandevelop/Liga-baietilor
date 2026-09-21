@@ -2650,9 +2650,6 @@ export default function AdminScreen({ onBack }) {
                       {mainType === "higherLower" && mainRevealed && (
                         <div style={s.triviaBox}>
                           <p style={s.hint}>📈📉 Mai Mare/Mai Mic — 18 jucători, 9 perechi RANDOM, 6 runde comune.</p>
-                          <p style={{ ...s.hint, color: "#F0A94E" }}>
-                            🔧 DIAGNOSTIC TEMPORAR — higherLower: {higherLower ? `există, matchIds.length=${higherLower.matchIds?.length ?? "lipsă"}, duels=${Object.keys(higherLower.duels || {}).length}` : "null (nu s-a încărcat nimic)"}
-                          </p>
                           {(!higherLower || higherLower.matchIds?.length !== 3) ? (
                             <button
                               type="button" style={s.approveBtn} disabled={higherLowerBusy}

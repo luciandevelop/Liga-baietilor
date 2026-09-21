@@ -156,6 +156,12 @@ export default {
       "files": {
         "1": "andrjen-robben.webp"
       }
+    },
+    "ghioca": {
+      "nextIndex": 2,
+      "files": {
+        "1": "cos-livier-ghiroud.webp"
+      }
     }
   }
 };

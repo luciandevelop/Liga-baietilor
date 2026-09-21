@@ -307,6 +307,35 @@ export async function getMyHigherLowerView(gameweekId, uid) {
   };
 }
 
+// ── Toate CELELALTE perechi (exclus a userului) — pentru lista "cine cu
+// cine a picat", cerută explicit, ca la Duel/Bet Builder. O SINGURĂ
+// interogare (toate picks-urile etapei deodată, nu una per pereche),
+// reutilizează EXACT `deriveDuelRounds` — niciun calcul nou de scor. ──
+export async function listOtherHigherLowerPairs(gameweekId, myUid) {
+  const hl = await getHigherLower(gameweekId);
+  if (!hl) return [];
+  const picksSnap = await getDocs(collection(db, "weeklySurprises", gameweekId, "higherLowerPicks"));
+  const picksByDuelUid = {};
+  picksSnap.forEach((d) => {
+    const p = d.data();
+    if (!picksByDuelUid[p.duelId]) picksByDuelUid[p.duelId] = {};
+    if (!picksByDuelUid[p.duelId][p.uid]) picksByDuelUid[p.duelId][p.uid] = {};
+    picksByDuelUid[p.duelId][p.uid][p.questionId] = p.choice;
+  });
+  return Object.entries(hl.duels)
+    .filter(([, duel]) => duel.playerA !== myUid && duel.playerB !== myUid)
+    .map(([duelId, duel]) => {
+      const picksByUid = {
+        [duel.playerA]: picksByDuelUid[duelId]?.[duel.playerA] || {},
+        [duel.playerB]: picksByDuelUid[duelId]?.[duel.playerB] || {},
+      };
+      const rounds = deriveDuelRounds(hl, duel, picksByUid);
+      const winsA = rounds.filter((r) => r.result != null && r.choiceA === r.result).length;
+      const winsB = rounds.filter((r) => r.result != null && r.choiceB === r.result).length;
+      return { duelId, playerA: duel.playerA, playerB: duel.playerB, winsA, winsB };
+    });
+}
+
 // ── O alegere e DEFINITIVĂ la trimitere — Rules interzice update. Aici
 // verificăm întâi client-side dacă documentul există deja, ca eroarea
 // să fie clară ("ai ales deja"), nu un permission-denied brut. ──

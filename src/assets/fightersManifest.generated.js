@@ -174,6 +174,12 @@ export default {
       "files": {
         "1": "miti-isco.webp"
       }
+    },
+    "rzvn": {
+      "nextIndex": 2,
+      "files": {
+        "1": "razvao-felix.webp"
+      }
     }
   }
 };

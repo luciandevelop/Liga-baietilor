@@ -126,6 +126,12 @@ export default {
       "files": {
         "1": "kunicu-aguero.webp"
       }
+    },
+    "andreis": {
+      "nextIndex": 2,
+      "files": {
+        "1": "andrei-cancelo.webp"
+      }
     }
   }
 };

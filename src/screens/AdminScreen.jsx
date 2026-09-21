@@ -239,6 +239,11 @@ export default function AdminScreen({ onBack }) {
       setHigherLowerMsg("✅ 9 perechi generate RANDOM.");
     } catch (err) {
       setHigherLowerMsg("❌ " + (err.message || String(err)));
+      // Chiar dacă generarea a eșuat (ex. perechile există deja),
+      // reîncărcăm starea reală — altfel UI-ul rămâne blocat doar pe
+      // eroare și butonul de generare, fără să arate perechile/
+      // întrebările deja persistate în Firestore.
+      await loadHigherLower(gameweekId);
     } finally {
       setHigherLowerBusy(false);
     }

@@ -168,6 +168,12 @@ export default {
       "files": {
         "1": "diego-lucaosta.webp"
       }
+    },
+    "ooo-micea": {
+      "nextIndex": 2,
+      "files": {
+        "1": "miti-isco.webp"
+      }
     }
   }
 };

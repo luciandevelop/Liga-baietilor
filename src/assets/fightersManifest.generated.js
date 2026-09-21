@@ -138,6 +138,12 @@ export default {
       "files": {
         "1": "bogdan-pepe-bilca.webp"
       }
+    },
+    "bona": {
+      "nextIndex": 2,
+      "files": {
+        "1": "luis-figbona.webp"
+      }
     }
   }
 };

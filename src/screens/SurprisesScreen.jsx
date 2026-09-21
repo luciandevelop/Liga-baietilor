@@ -17,6 +17,7 @@ import HalfHalfExperience from "../components/HalfHalfExperience";
 import TriviaExperience from "../components/TriviaExperience";
 import DiceExperience from "../components/DiceExperience";
 import BetBuilderScreen from "./BetBuilderScreen";
+import HigherLowerScreen from "./HigherLowerScreen";
 import SabotajExperience from "../components/SabotajExperience";
 import RouletteExperience from "../components/RouletteExperience";
 import MysteryBoxExperience from "../components/MysteryBoxExperience";
@@ -323,6 +324,10 @@ export default function SurprisesScreen({ user, onBack }) {
 
                   {secretMain?.type === "betBuilder" && (
                     <BetBuilderScreen user={user} gameweekId={gameweek.id} embedded />
+                  )}
+
+                  {secretMain?.type === "higherLower" && (
+                    <HigherLowerScreen gameweekId={gameweek.id} uid={user.uid} embedded />
                   )}
 
                   {secretMain?.type === "sabotaj" && (

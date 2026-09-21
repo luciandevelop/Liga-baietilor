@@ -55,6 +55,26 @@ export const COMPETITION_THEMES = {
     badgeTextColor: "#5CFFA8",
     pattern: "geometric",
   },
+  // ── UEFA Nations League — competiție între echipe NAȚIONALE, nu
+  // cluburi. Cerut explicit: fundal predominant alb/foarte deschis (opacități
+  // mult mai mici decât restul temelor — 0.06/0.02 față de 0.18/0.05 uzual),
+  // identitate vizuală distinctă de fotbalul de club. Bleumarin + roșu —
+  // cele două culori care apar cel mai des în steagurile echipelor din
+  // etapa asta (România, Danemarca, Elveția, Turcia, Polonia, Croația —
+  // roșu; majoritatea — nuanțe de albastru), nu culorile oficiale de
+  // brand UEFA. Pattern "geometric", ca restul competițiilor UEFA/FIFA.
+  "uefa-nations-league": {
+    name: "UEFA Nations League",
+    primaryColor: "#1A2B6D",
+    secondaryColor: "#5B8DEF",
+    accentColor: "#E63946",
+    borderColor: "rgba(26,43,109,0.25)",
+    glowColor: "rgba(26,43,109,0.18)",
+    backgroundGradient: "linear-gradient(135deg, rgba(26,43,109,0.06), rgba(230,57,70,0.02))",
+    badgeBackground: "rgba(26,43,109,0.12)",
+    badgeTextColor: "#5B8DEF",
+    pattern: "geometric",
+  },
   "fifa-club-world-cup": {
     name: "Club World Cup",
     primaryColor: "#00B8A9",
@@ -231,6 +251,8 @@ const COMPETITION_NAME_ALIASES = {
   "uel": "uefa-europa-league",
   "conference-league": "uefa-conference-league",
   "uecl": "uefa-conference-league",
+  "nations-league": "uefa-nations-league",
+  "unl": "uefa-nations-league",
   "club-world-cup": "fifa-club-world-cup",
   "cwc": "fifa-club-world-cup",
   "premier-league": "english-premier-league",

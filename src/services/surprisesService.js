@@ -1059,6 +1059,17 @@ export async function resolveBonus(gameweekId) {
 
 // ── Perechea userului curent — { opponentUid, isBye }. null dacă
 // Bonusul ăsta nu e (încă) Penalty PvP dezvăluit. ──
+// ── Toate CELELALTE perechi Penalty (exclus a userului) — "cine cu
+// cine a picat", cerut explicit, ca la Duel/Mai Mare-Mai Mic. Citește
+// ACELAȘI document ca getMyPenaltyPairing — nicio interogare nouă
+// per pereche. ──
+export async function listOtherPenaltyPairings(gameweekId, myUid) {
+  const secretSnap = await getDoc(doc(db, "weeklySurprises", gameweekId, "secret", "bonus"));
+  if (!secretSnap.exists()) return [];
+  const { pairings = [] } = secretSnap.data().config || {};
+  return pairings.filter((p) => p.playerA !== myUid && p.playerB !== myUid);
+}
+
 export async function getMyPenaltyPairing(gameweekId, uid) {
   const secretSnap = await getDoc(doc(db, "weeklySurprises", gameweekId, "secret", "bonus"));
   if (!secretSnap.exists()) return null;

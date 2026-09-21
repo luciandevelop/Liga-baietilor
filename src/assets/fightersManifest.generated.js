@@ -175,12 +175,6 @@ export default {
         "1": "miti-isco.webp"
       }
     },
-    "pannnnn": {
-      "nextIndex": 2,
-      "files": {
-        "1": "pannnn.webp"
-      }
-    },
     "rzvn": {
       "nextIndex": 2,
       "files": {

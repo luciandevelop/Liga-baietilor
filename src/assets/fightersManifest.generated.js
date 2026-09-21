@@ -132,6 +132,12 @@ export default {
       "files": {
         "1": "andrei-cancelo.webp"
       }
+    },
+    "bogdanb": {
+      "nextIndex": 2,
+      "files": {
+        "1": "bogdan-pepe-bilca.webp"
+      }
     }
   }
 };

@@ -81,7 +81,17 @@ export async function generateHigherLower(gameweekId, featuredMatchIds, kickoffM
     throw new Error(`Mai Mare/Mai Mic necesită exact 3 Meciuri ale Săptămânii — am găsit ${featuredMatchIds?.length ?? 0}.`);
   }
   const existing = await getDoc(secretRef(gameweekId));
-  if (existing.exists() && existing.data().type === "higherLower") {
+  // ── Verificarea NU se uită doar la `type` — selectarea Surprizei din
+  // dropdown-ul MAIN scrie deja {type: "higherLower"} pe acest document
+  // (configureSurprise, în surprisesService.js), cu MULT înainte ca
+  // "Generează 9 perechi" să fie apăsat vreodată. O verificare doar pe
+  // `type` bloca prima generare reală, confundând stub-ul de configurare
+  // cu perechi deja generate (bug real, confirmat: matchIds lipsă, 0
+  // dueluri, deși eroarea spunea "deja generat"). Acum se verifică
+  // explicit că duelurile chiar există. ──
+  const existingData = existing.exists() ? existing.data() : null;
+  const alreadyGenerated = existingData?.type === "higherLower" && existingData?.duels && Object.keys(existingData.duels).length > 0;
+  if (alreadyGenerated) {
     throw new Error("Mai Mare/Mai Mic pentru această etapă a fost deja generat — perechile sunt deja persistate. Nu se regenerează automat.");
   }
 

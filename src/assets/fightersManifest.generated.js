@@ -144,6 +144,12 @@ export default {
       "files": {
         "1": "luis-figbona.webp"
       }
+    },
+    "cristian": {
+      "nextIndex": 2,
+      "files": {
+        "1": "ivan-rakitic.webp"
+      }
     }
   }
 };

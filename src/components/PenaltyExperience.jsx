@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import {
   getMyPenaltyChoices, getPenaltySubmittedUids, submitPenaltyChoices,
-  getMyPenaltyPairing, getPenaltyDuelPreview,
+  getMyPenaltyPairing, getPenaltyDuelPreview, listOtherPenaltyPairings,
 } from "../services/surprisesService";
 import { getUserPublicProfiles } from "../services/profilesService";
 import PlayerAvatar from "./PlayerAvatar";
@@ -485,6 +485,7 @@ export default function PenaltyExperience({ gameweekId, uid, resolved, myResult 
   const [submittedUids, setSubmittedUids] = useState(new Set());
   const [profiles, setProfiles] = useState({});
   const [preview, setPreview] = useState(undefined);
+  const [otherPairings, setOtherPairings] = useState([]);
 
   const [pickIdx, setPickIdx] = useState(0);
   const [shots, setShots] = useState([]);
@@ -493,15 +494,19 @@ export default function PenaltyExperience({ gameweekId, uid, resolved, myResult 
   const [error, setError] = useState("");
 
   async function refreshAll() {
-    const [choices, submitted, pair] = await Promise.all([
+    const [choices, submitted, pair, others] = await Promise.all([
       getMyPenaltyChoices(gameweekId, uid),
       getPenaltySubmittedUids(gameweekId),
       getMyPenaltyPairing(gameweekId, uid),
+      listOtherPenaltyPairings(gameweekId, uid),
     ]);
     setMyChoices(choices);
     setSubmittedUids(submitted);
     setPairing(pair);
-    if (pair?.opponentUid) setProfiles(await getUserPublicProfiles([pair.opponentUid]));
+    setOtherPairings(others);
+    const otherUids = others.flatMap((p) => [p.playerA, p.playerB]);
+    const profileUids = pair?.opponentUid ? [pair.opponentUid, ...otherUids] : otherUids;
+    if (profileUids.length > 0) setProfiles(await getUserPublicProfiles(profileUids));
     if (choices && pair?.opponentUid) {
       setPreview(await getPenaltyDuelPreview(gameweekId, uid, pair.opponentUid).catch(() => null));
     }
@@ -577,6 +582,7 @@ export default function PenaltyExperience({ gameweekId, uid, resolved, myResult 
           <div style={s.waitText}>Alegerile tale sunt trimise.</div>
           <div style={s.waitSub}>{oppSubmitted ? "Adversarul a trimis și el — se pregătește shootout-ul…" : `Aștepți ca ${oppName} să-și trimită loviturile.`}</div>
         </div>
+        <OtherPenaltyPairings pairings={otherPairings} profiles={profiles} />
       </div>
     );
   }
@@ -598,6 +604,28 @@ export default function PenaltyExperience({ gameweekId, uid, resolved, myResult 
       <div style={s.pickHint}>{isShootingPhase ? "Apasă pe poartă — stânga, mijloc sau dreapta" : "Ghicește unde va trage adversarul"}</div>
       {submitting && <div style={s.pickHint}>Se trimit alegerile…</div>}
       {error && <div style={s.errorText}>{error}</div>}
+      <OtherPenaltyPairings pairings={otherPairings} profiles={profiles} />
+    </div>
+  );
+}
+
+// ── "Cine cu cine a picat" — cerut explicit, ca la Duel/Mai Mare-Mai
+// Mic. Doar numele perechilor (fără scoruri live — Penalty se
+// rezolvă dintr-o dată, nu incremental ca Duel-ul de tip Higher/Lower). ──
+function OtherPenaltyPairings({ pairings, profiles }) {
+  if (!pairings || pairings.length === 0) return null;
+  return (
+    <div style={s.otherPairsSection}>
+      <div style={s.otherPairsLabel}>Celelalte perechi</div>
+      <div style={s.otherPairsList}>
+        {pairings.map((p, i) => (
+          <div key={i} style={s.otherPairRow}>
+            <span style={s.otherPairName}>{profiles[p.playerA]?.nickname || p.playerA}</span>
+            <span style={s.otherPairVs}>vs</span>
+            <span style={s.otherPairName}>{profiles[p.playerB]?.nickname || p.playerB}</span>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
@@ -615,6 +643,16 @@ const ANIM_CSS = `
 `;
 
 const s = {
+  otherPairsSection: { marginTop: 16 },
+  otherPairsLabel: { fontSize: 10, fontWeight: 800, letterSpacing: "0.05em", color: color.textFaint, fontFamily: font.body, marginBottom: 8, textTransform: "uppercase" },
+  otherPairsList: { display: "flex", flexDirection: "column", gap: 6 },
+  otherPairRow: {
+    display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
+    background: color.surface, border: `1px solid ${color.border}`, borderRadius: radius.md,
+    padding: "8px 12px", fontSize: 12, fontFamily: font.body,
+  },
+  otherPairName: { color: color.textSecondary, fontWeight: 600 },
+  otherPairVs: { color: color.textFaint, fontSize: 10, fontWeight: 800 },
   wrap: { position: "relative" },
   assetLoading: {
     position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center",

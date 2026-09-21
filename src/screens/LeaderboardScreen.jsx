@@ -21,6 +21,7 @@ import PageHeader from "../components/PageHeader";
 import PlayerRankRow from "../components/PlayerRankRow";
 import StatusBadge from "../components/StatusBadge";
 import EmptyState from "../components/EmptyState";
+import SurpriseRegistryScreen from "./SurpriseRegistryScreen";
 import { color, font, layout, radius } from "../theme";
 
 // Normalizează rândurile la aceeași formă, indiferent dacă vin din
@@ -37,6 +38,7 @@ function normalizeRow(r) {
 }
 
 export default function LeaderboardScreen({ onBack, user, isAdmin }) {
+  const [showRegistry, setShowRegistry] = useState(false);
   const [tab, setTab] = useState("gameweek"); // gameweek | season | general
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -392,6 +394,10 @@ export default function LeaderboardScreen({ onBack, user, isAdmin }) {
   const liveSeasonRows = mergeLiveSeasonRows();
   const liveGeneralRows = mergeLiveGeneralRows();
 
+  if (showRegistry) {
+    return <SurpriseRegistryScreen seasonId={season?.id} onBack={() => setShowRegistry(false)} />;
+  }
+
   return (
     <div style={{ ...layout.page, paddingBottom: 96 }}>
       <div style={layout.wrap}>
@@ -413,6 +419,10 @@ export default function LeaderboardScreen({ onBack, user, isAdmin }) {
             General
           </button>
         </div>
+
+        <button type="button" style={s.registryEntryBtn} onClick={() => setShowRegistry(true)}>
+          📖 Registru public — verifică punctajele oricui, pe surse
+        </button>
 
         {loading && <div style={s.centerBox}>Se încarcă…</div>}
         {error && <div style={s.centerBox}>Eroare: {error}</div>}
@@ -601,6 +611,12 @@ export default function LeaderboardScreen({ onBack, user, isAdmin }) {
 
 const s = {
   tabRow: { display: "flex", gap: 8, marginBottom: 16 },
+  registryEntryBtn: {
+    width: "100%", marginBottom: 16, padding: "10px 12px", borderRadius: radius.md,
+    border: `1px solid ${color.border}`, background: "rgba(255,255,255,0.04)",
+    color: color.textSecondary, fontSize: 11.5, fontWeight: 700, fontFamily: font.body,
+    cursor: "pointer", textAlign: "center",
+  },
   tabBtn: {
     flex: 1, background: color.surfaceInset, border: `1px solid ${color.border}`, color: color.textMuted,
     borderRadius: radius.sm, padding: "10px 0", fontSize: 12.5, fontWeight: 700, cursor: "pointer", fontFamily: font.body,

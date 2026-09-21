@@ -4,6 +4,7 @@ import { getAvatarUrl } from "../assets/avatars";
 import { getCardSeries, getFunStats, getCollectionId } from "../utils/deterministicHash";
 import { resolveTitle } from "../playerCardConfig";
 import { color, font, radius, shadow } from "../theme";
+import { getSurpriseTypeLabel } from "../services/surpriseLabels";
 
 // SINGURA componentă de card jucător din toată aplicația — Clasament
 // (toate 3 taburi) și Admin (preview Live) o folosesc identic. Conținutul
@@ -71,6 +72,7 @@ export default function PlayerCard({ uid, nickname, avatarId, rank, scope = "eta
   // apăsare, dar tot trebuie să fie", nu ocupă spațiu implicit pentru o
   // etapă care nu e cea din context.
   const [matchesOpen, setMatchesOpen] = useState(!stats?.matchesIsFallback);
+  const [openEtapaId, setOpenEtapaId] = useState(stats?.etapaHistory?.[0]?.gameweekId ?? null);
 
   if (!stats) return null;
 
@@ -209,30 +211,36 @@ export default function PlayerCard({ uid, nickname, avatarId, rank, scope = "eta
                   <div style={s.summaryBox}>
                     <div style={s.summaryLabel}>REZUMAT ETAPĂ</div>
                     <div style={s.summaryRow}>
-                      <span>⚽ Pronosticuri meciuri</span>
-                      <span style={s.summaryVal}>{stats.etapaMatchPoints ?? 0}p</span>
+                      <span>⚽ Pronosticuri</span>
+                      <span style={s.summaryVal}>+{(stats.etapaMatchPoints ?? 0) - (stats.etapaLoneWolfBonus || 0)}p</span>
                     </div>
+                    {stats.etapaLoneWolfBonus > 0 && (
+                      <div style={s.summaryRow}>
+                        <span>🐺 Lupul Singuratic</span>
+                        <span style={s.summaryVal}>+{stats.etapaLoneWolfBonus}p</span>
+                      </div>
+                    )}
                     {stats.etapaRankingBonus != null && stats.etapaRankingBonus !== 0 && (
                       <div style={s.summaryRow}>
-                        <span>🟢 Bonus etapă</span>
+                        <span>{stats.etapaRankingBonus > 0 ? "🏆" : "⚠️"} {stats.etapaRankingBonus > 0 && stats.etapaRank ? `Locul ${stats.etapaRank}` : "Bonus/penalizare clasament"}</span>
                         <span style={s.summaryVal}>{stats.etapaRankingBonus > 0 ? "+" : ""}{stats.etapaRankingBonus}p</span>
                       </div>
                     )}
                     {stats.etapaMainSurprisePoints != null && (
                       <div style={s.summaryRow}>
-                        <span>🏆 Surpriza Principală</span>
+                        <span>🔥 {getSurpriseTypeLabel(stats.etapaMainSurpriseType, "main", stats.etapaGameweekId) || "Surpriză Mare"}</span>
                         <span style={s.summaryVal}>{stats.etapaMainSurprisePoints > 0 ? "+" : ""}{stats.etapaMainSurprisePoints}p</span>
                       </div>
                     )}
                     {stats.etapaBonusSurprisePoints != null && (
                       <div style={s.summaryRow}>
-                        <span>🎰 Bonusul Săptămânii</span>
+                        <span>🎮 {getSurpriseTypeLabel(stats.etapaBonusSurpriseType, "bonus", stats.etapaGameweekId) || "Surpriză Mică"}</span>
                         <span style={s.summaryVal}>{stats.etapaBonusSurprisePoints > 0 ? "+" : ""}{stats.etapaBonusSurprisePoints}p</span>
                       </div>
                     )}
                     {stats.etapaJokerExtraBonus != null && stats.etapaJokerExtraBonus !== 0 && (
-                      <div style={s.summaryRow}>
-                        <span>🃏✨ Joker Extra</span>
+                      <div style={s.summaryRowIndented}>
+                        <span>└ 🃏 Joker Extra <span style={s.summaryNote}>(aplicat la finalul etapei)</span></span>
                         <span style={s.summaryVal}>{stats.etapaJokerExtraBonus > 0 ? "+" : ""}{stats.etapaJokerExtraBonus}p</span>
                       </div>
                     )}
@@ -278,6 +286,15 @@ export default function PlayerCard({ uid, nickname, avatarId, rank, scope = "eta
           </div>
           <div style={s.flipHintOuter}>Apasă cardul {flipped ? "pentru a reveni" : "pentru statistici"}</div>
         </div>
+
+        {stats.etapaHistory && stats.etapaHistory.length > 0 && (
+          <div style={s.transparencySection}>
+            <div style={s.transparencyTitle}>📊 PUNCTAJE PE ETAPE</div>
+            {stats.etapaHistory.map((eh) => (
+              <EtapaBreakdownCard key={eh.gameweekId} eh={eh} expanded={openEtapaId === eh.gameweekId} onToggle={() => setOpenEtapaId((v) => (v === eh.gameweekId ? null : eh.gameweekId))} />
+            ))}
+          </div>
+        )}
 
         <div style={s.list}>
           {matches.length === 0 && (
@@ -334,6 +351,67 @@ function sideStatTierLabel(points) {
 // corect, dar un `||` în loc de `??` undeva ar fi stricat exact asta).
 function fmtSideVal(v) {
   return (v === null || v === undefined) ? "—" : String(v);
+}
+
+// ── Card de transparență per etapă — expandabil, reconciliere vizibilă
+// (fiecare componentă + TOTAL, verificabil prin adunare). Reutilizează
+// EXACT valorile deja persistate în gameweekScores — nu recalculează
+// nimic, doar le grupează pentru afișare. ──
+function EtapaBreakdownCard({ eh, expanded, onToggle }) {
+  const mainLabel = getSurpriseTypeLabel(eh.mainSurpriseType, "main", eh.gameweekId);
+  const bonusLabel = getSurpriseTypeLabel(eh.bonusSurpriseType, "bonus", eh.gameweekId);
+  return (
+    <div style={s.etapaCard}>
+      <button type="button" style={s.etapaCardHeader} onClick={onToggle}>
+        <span style={s.etapaCardTitle}>ETAPA {eh.gwNumber ?? "?"}</span>
+        <span style={s.etapaCardTotal}>{eh.totalPoints >= 0 ? "+" : ""}{eh.totalPoints}p</span>
+        <span style={{ ...s.etapaCardChevron, transform: expanded ? "rotate(180deg)" : "rotate(0deg)" }}>▾</span>
+      </button>
+      {expanded && (
+        <div style={s.etapaCardBody}>
+          <div style={s.summaryRow}>
+            <span>⚽ Pronosticuri</span>
+            <span style={s.summaryVal}>+{eh.pronosticuriPure}p</span>
+          </div>
+          {eh.loneWolfBonus > 0 && (
+            <div style={s.summaryRow}>
+              <span>🐺 Lupul Singuratic</span>
+              <span style={s.summaryVal}>+{eh.loneWolfBonus}p</span>
+            </div>
+          )}
+          {eh.mainSurprisePoints != null && (
+            <div style={s.summaryRow}>
+              <span>🔥 {mainLabel || "Surpriză Mare"}</span>
+              <span style={s.summaryVal}>{eh.mainSurprisePoints >= 0 ? "+" : ""}{eh.mainSurprisePoints}p</span>
+            </div>
+          )}
+          {eh.bonusSurprisePoints != null && (
+            <div style={s.summaryRow}>
+              <span>🎮 {bonusLabel || "Surpriză Mică"}</span>
+              <span style={s.summaryVal}>{eh.bonusSurprisePoints >= 0 ? "+" : ""}{eh.bonusSurprisePoints}p</span>
+            </div>
+          )}
+          {eh.jokerExtraBonus !== 0 && (
+            <div style={s.summaryRowIndented}>
+              <span>└ 🃏 Joker Extra <span style={s.summaryNote}>(la finalul etapei)</span></span>
+              <span style={s.summaryVal}>{eh.jokerExtraBonus >= 0 ? "+" : ""}{eh.jokerExtraBonus}p</span>
+            </div>
+          )}
+          {eh.rankingBonus !== 0 && (
+            <div style={s.summaryRow}>
+              <span>{eh.rankingBonus > 0 ? "🏆" : "⚠️"} {eh.rankingBonus > 0 && eh.rank ? `Locul ${eh.rank}` : "Bonus/penalizare clasament"}</span>
+              <span style={s.summaryVal}>{eh.rankingBonus >= 0 ? "+" : ""}{eh.rankingBonus}p</span>
+            </div>
+          )}
+          <div style={s.summaryDivider} />
+          <div style={s.summaryTotalRow}>
+            <span>TOTAL ETAPĂ</span>
+            <span style={s.summaryTotalVal}>{eh.totalPoints >= 0 ? "+" : ""}{eh.totalPoints}p</span>
+          </div>
+        </div>
+      )}
+    </div>
+  );
 }
 
 function MatchBreakdownRow({ m }) {
@@ -542,12 +620,36 @@ const s = {
     padding: "3px 0", fontFamily: font.body,
   },
   summaryVal: { fontWeight: 700, color: "#fff" },
+  summaryRowIndented: {
+    display: "flex", justifyContent: "space-between", fontSize: 10.5, color: "rgba(255,255,255,0.7)",
+    padding: "2px 0 2px 12px", fontFamily: font.body,
+  },
+  summaryNote: { fontSize: 9, color: "rgba(255,255,255,0.45)", fontWeight: 500 },
   summaryDivider: { height: 1, background: "rgba(255,255,255,0.15)", margin: "6px 0" },
   summaryTotalRow: {
     display: "flex", justifyContent: "space-between", fontSize: 12.5, fontWeight: 800, color: "#fff",
     fontFamily: font.display,
   },
   summaryTotalVal: { fontWeight: 800 },
+  // ── 📊 Secțiunea de transparență — foarte vizibilă, imediat sub card,
+  // înainte de lista de meciuri. Nu necesită flip. ──
+  transparencySection: { padding: "0 16px 14px" },
+  transparencyTitle: {
+    fontSize: 12, fontWeight: 800, letterSpacing: "0.04em", color: color.textPrimary,
+    marginBottom: 8, fontFamily: font.display,
+  },
+  etapaCard: {
+    background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.1)",
+    borderRadius: 10, marginBottom: 6, overflow: "hidden",
+  },
+  etapaCardHeader: {
+    width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8,
+    padding: "10px 12px", background: "transparent", border: "none", cursor: "pointer", textAlign: "left",
+  },
+  etapaCardTitle: { fontSize: 11, fontWeight: 800, color: color.textPrimary, fontFamily: font.display, flex: 1 },
+  etapaCardTotal: { fontSize: 13, fontWeight: 800, color: color.gold || "#D4AF37", fontFamily: font.display },
+  etapaCardChevron: { fontSize: 12, color: "rgba(255,255,255,0.5)", transition: "transform 200ms ease" },
+  etapaCardBody: { padding: "0 12px 10px" },
   realStatsList: { padding: "0 16px", display: "flex", flexDirection: "column", gap: 2 },
   statRow: {
     display: "flex", justifyContent: "space-between", alignItems: "center",

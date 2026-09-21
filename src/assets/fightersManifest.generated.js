@@ -150,6 +150,12 @@ export default {
       "files": {
         "1": "ivan-rakitic.webp"
       }
+    },
+    "doctoru": {
+      "nextIndex": 2,
+      "files": {
+        "1": "andrjen-robben.webp"
+      }
     }
   }
 };

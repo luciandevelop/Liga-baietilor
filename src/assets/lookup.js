@@ -1,13 +1,18 @@
 import { slugify } from "../utils/slugify";
 import { CLUB_LOGOS, CLUB_NAMES, CLUB_ALIASES } from "./clubs/index.js";
 import { EXTRA_CLUB_LOGOS, EXTRA_CLUB_NAMES, EXTRA_CLUB_ALIASES } from "./extra-logos.js";
+import { NATIONAL_FLAG_LOGOS, NATIONAL_FLAG_NAMES, NATIONAL_FLAG_ALIASES } from "./national-flags.js";
 import { COMPETITION_LOGOS, COMPETITION_NAMES, COMPETITION_ALIASES } from "./competitions/index.js";
 
 // Combinate cu sigle adăugate separat (extra-logos.js) — nu mai trebuie
 // niciodată atins clubs/index.js (fișierul mare, generat) pentru sigle noi.
-const ALL_CLUB_LOGOS = { ...CLUB_LOGOS, ...EXTRA_CLUB_LOGOS };
-const ALL_CLUB_NAMES = { ...CLUB_NAMES, ...EXTRA_CLUB_NAMES };
-const ALL_CLUB_ALIASES = { ...CLUB_ALIASES, ...EXTRA_CLUB_ALIASES };
+// Steagurile de naționale (national-flags.js) intră în ACELAȘI pipeline
+// de rezolvare (getClubLogo) — fișier separat, dar mecanism identic, ca
+// meciurile cu echipe naționale să funcționeze automat peste tot unde
+// deja funcționează logo-urile de club, fără nicio componentă nouă.
+const ALL_CLUB_LOGOS = { ...CLUB_LOGOS, ...EXTRA_CLUB_LOGOS, ...NATIONAL_FLAG_LOGOS };
+const ALL_CLUB_NAMES = { ...CLUB_NAMES, ...EXTRA_CLUB_NAMES, ...NATIONAL_FLAG_NAMES };
+const ALL_CLUB_ALIASES = { ...CLUB_ALIASES, ...EXTRA_CLUB_ALIASES, ...NATIONAL_FLAG_ALIASES };
 
 // Rezolvă orice variantă de nume ("Inter", "Inter Milan", "FC Internazionale")
 // la același logo real. Ordinea de căutare:

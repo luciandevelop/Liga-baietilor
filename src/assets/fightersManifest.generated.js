@@ -204,6 +204,12 @@ export default {
       "files": {
         "1": "vikai-davertz.webp"
       }
+    },
+    "vladinhuu": {
+      "nextIndex": 2,
+      "files": {
+        "1": "sneijder-primaru.webp"
+      }
     }
   }
 };

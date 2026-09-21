@@ -113,5 +113,13 @@ export default {
         "1": "file_00000000fea4821188ec96fda839bf0c.png"
       }
     }
+  },
+  "tekken": {
+    "adireal": {
+      "nextIndex": 2,
+      "files": {
+        "1": "ady-alisson.webp"
+      }
+    }
   }
 };

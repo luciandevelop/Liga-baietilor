@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import {
   getMyHigherLowerView, submitHigherLowerPick, submitHigherLowerTiebreaker,
-  CHOICE_MORE, CHOICE_LESS,
+  listOtherHigherLowerPairs, CHOICE_MORE, CHOICE_LESS,
 } from "../services/higherLowerService";
 import { buildMockView } from "../higherLowerMockData";
 import { getUserPublicProfiles } from "../services/profilesService";
@@ -26,6 +26,7 @@ export default function HigherLowerScreen({ onBack, gameweekId, uid, previewMode
   const [busy, setBusy] = useState(false);
   const [selectedRound, setSelectedRound] = useState(null); // null = urmează activeRoundIndex
   const [justPicked, setJustPicked] = useState(null); // pt. micro-animația de impuls
+  const [otherPairs, setOtherPairs] = useState([]);
 
   useEffect(() => {
     if (previewMode) {
@@ -41,7 +42,11 @@ export default function HigherLowerScreen({ onBack, gameweekId, uid, previewMode
         if (cancelled) return;
         setView(v);
         if (v) {
-          const p = await getUserPublicProfiles([v.duel.playerA, v.duel.playerB]);
+          const others = await listOtherHigherLowerPairs(gameweekId, uid);
+          if (cancelled) return;
+          setOtherPairs(others);
+          const otherUids = others.flatMap((p) => [p.playerA, p.playerB]);
+          const p = await getUserPublicProfiles([v.duel.playerA, v.duel.playerB, ...otherUids]);
           if (!cancelled) setProfiles(p);
         }
       })
@@ -130,6 +135,21 @@ export default function HigherLowerScreen({ onBack, gameweekId, uid, previewMode
       {msg && <p style={s.msg}>{msg}</p>}
 
       {view.final && <FinalCard view={view} />}
+
+      {otherPairs.length > 0 && (
+        <div style={s.otherPairsSection}>
+          <div style={s.otherPairsLabel}>Celelalte perechi</div>
+          <div style={s.otherPairsList}>
+            {otherPairs.map((p) => (
+              <div key={p.duelId} style={s.otherPairRow}>
+                <span style={s.otherPairName}>{profiles[p.playerA]?.nickname || p.playerA}</span>
+                <span style={s.otherPairScore}>{p.winsA}–{p.winsB}</span>
+                <span style={s.otherPairName}>{profiles[p.playerB]?.nickname || p.playerB}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 
@@ -481,4 +501,15 @@ const s = {
   finalLine: { display: "flex", justifyContent: "space-between", color: color.textSecondary, fontSize: 12.5, fontFamily: font.body },
   finalLineVal: { color: color.textPrimary, fontWeight: 700 },
   finalLineTotal: { borderTop: `1px solid ${color.border}`, paddingTop: 8, marginTop: 4, fontWeight: 800, color: color.goldLight, fontSize: 15 },
+
+  otherPairsSection: { marginTop: 16 },
+  otherPairsLabel: { fontSize: 10, fontWeight: 800, letterSpacing: "0.05em", color: color.textFaint, fontFamily: font.body, marginBottom: 8, textTransform: "uppercase" },
+  otherPairsList: { display: "flex", flexDirection: "column", gap: 6 },
+  otherPairRow: {
+    display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8,
+    background: color.surface, border: `1px solid ${color.border}`, borderRadius: radius.md,
+    padding: "8px 12px", fontSize: 12, fontFamily: font.body,
+  },
+  otherPairName: { color: color.textSecondary, fontWeight: 600, flex: 1 },
+  otherPairScore: { color: color.textPrimary, fontWeight: 800, fontFamily: font.display, fontSize: 13 },
 };

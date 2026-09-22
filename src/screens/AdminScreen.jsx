@@ -764,37 +764,6 @@ export default function AdminScreen({ onBack }) {
 
   // ── Feed (Admin) ──
   const [feedEvents, setFeedEvents] = useState([]);
-  const [liveDataQuota, setLiveDataQuota] = useState(null);
-  const [liveDataDiagnostics, setLiveDataDiagnostics] = useState({ mapped: 0, unmatched: 0, ambiguous: 0, live: 0, lastEventTitle: null });
-  const [liveDataLoading, setLiveDataLoading] = useState(false);
-  const [testingConnection, setTestingConnection] = useState(false);
-  const [testConnectionResult, setTestConnectionResult] = useState("");
-  // ── 🔄 Verifică API meciurile — diagnostic on-demand de mapping,
-  // per meci al etapei curente. Nicio citire/scriere automată — DOAR
-  // la apăsarea butonului. ──
-  const [fixtureCheckLoading, setFixtureCheckLoading] = useState(false);
-  const [fixtureCheckResults, setFixtureCheckResults] = useState(null); // { totalMatches, alreadyMapped, checkedNow, apiRequestsUsed, results:[...] } | null
-  const [fixtureCheckError, setFixtureCheckError] = useState("");
-
-  async function handleCheckFixtures() {
-    if (!selectedGameweekId) { setFixtureCheckError("Alege o etapă întâi."); return; }
-    setFixtureCheckLoading(true);
-    setFixtureCheckError("");
-    try {
-      const idToken = await auth.currentUser.getIdToken();
-      const resp = await fetch(`/api/football-diagnose?gameweekId=${encodeURIComponent(selectedGameweekId)}`, {
-        headers: { Authorization: `Bearer ${idToken}` },
-      });
-      const data = await resp.json();
-      if (!resp.ok) { setFixtureCheckError(data.error || `Eroare ${resp.status}`); return; }
-      setFixtureCheckResults(data);
-    } catch (err) {
-      setFixtureCheckError("Eroare — vezi consola.");
-      console.error("Eroare la verificarea fixture-urilor:", err);
-    } finally {
-      setFixtureCheckLoading(false);
-    }
-  }
   const [feedAdminFun, setFeedAdminFun] = useState([]);
   const [feedLoading, setFeedLoading] = useState(false);
   const [newFunLabel, setNewFunLabel] = useState("");
@@ -872,65 +841,6 @@ export default function AdminScreen({ onBack }) {
       setCleanupMessage("Eroare — vezi consola.");
     } finally {
       setCleaningLiveEvents(false);
-    }
-  }
-
-  // ── LIVE DATA — citește O DATĂ, când tab-ul se deschide (nu poll
-  // agresiv din Admin; datele reale se actualizează server-side, aici
-  // e doar diagnostic). ──
-  useEffect(() => {
-    if (tab !== "feed") return;
-    setLiveDataLoading(true);
-    (async () => {
-      try {
-        const quotaSnap = await getDoc(doc(db, "externalFootballCache", "_quota"));
-        setLiveDataQuota(quotaSnap.exists() ? quotaSnap.data() : null);
-
-        if (!selectedGameweekId) return;
-        const matchesSnap = await getDocs(query(collection(db, "matches"), where("gameweekId", "==", selectedGameweekId)));
-        const gwMatches = matchesSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
-        const mapped = gwMatches.filter((m) => m.externalFixtureId).length;
-
-        const diagSnap = await getDocs(collection(db, "externalFootballCache"));
-        let unmatched = 0, ambiguous = 0, live = 0, lastEventTitle = null, lastEventTs = 0;
-        diagSnap.docs.forEach((d) => {
-          const data = d.data();
-          if (d.id.startsWith("_diagnostic_")) {
-            if (data.status === "UNMATCHED") unmatched++;
-            if (data.status === "AMBIGUOUS") ambiguous++;
-          } else if (d.id !== "_quota") {
-            if (["1H", "2H", "HT", "ET"].includes(data.status)) live++;
-            if (data.lastDeltaEvents?.length > 0 && data.updatedAt > lastEventTs) {
-              lastEventTs = data.updatedAt;
-              lastEventTitle = `${data.homeTeam} ${data.homeScore}-${data.awayScore} ${data.awayTeam} (${data.status})`;
-            }
-          }
-        });
-        setLiveDataDiagnostics({ mapped, unmatched, ambiguous, live, lastEventTitle });
-      } catch (err) {
-        console.error("Eroare la încărcarea diagnosticului Live Data:", err);
-      } finally {
-        setLiveDataLoading(false);
-      }
-    })();
-  }, [tab, selectedGameweekId]);
-
-  async function handleTestFootballConnection() {
-    setTestingConnection(true);
-    setTestConnectionResult("");
-    try {
-      const idToken = await auth.currentUser.getIdToken();
-      const resp = await fetch("/api/football-test", { headers: { Authorization: `Bearer ${idToken}` } });
-      const data = await resp.json();
-      if (!resp.ok) { setTestConnectionResult(`Eroare: ${data.error || resp.status}`); return; }
-      setTestConnectionResult(
-        `${data.reachable ? "✅ Conectat" : "❌ Neconectat"} · Cotă rămasă azi: ${data.quotaRemaining ?? "necunoscută"} · Răspuns valid: ${data.responseValid ? "da" : "nu"}`
-      );
-    } catch (err) {
-      setTestConnectionResult("Eroare — vezi consola.");
-      console.error("Eroare Test Connection:", err);
-    } finally {
-      setTestingConnection(false);
     }
   }
 
@@ -3170,74 +3080,6 @@ export default function AdminScreen({ onBack }) {
             {/* ── Feed — evenimente automate, articole editoriale, FUN ── */}
             {tab === "feed" && (
               <>
-                <SectionCard title="🔴 LIVE DATA (API-Football)">
-                  {liveDataLoading && <p style={s.hint}>Se încarcă…</p>}
-                  {!liveDataLoading && !liveDataQuota && <p style={s.hint}>Niciun sync încă.</p>}
-                  {!liveDataLoading && liveDataQuota && (
-                    <div style={{ fontSize: 12, lineHeight: 1.8, color: "#C7CCDA" }}>
-                      Provider: API-Football<br />
-                      Ultimă sincronizare: {liveDataQuota.lastSync ? new Date(liveDataQuota.lastSync).toLocaleString("ro-RO") : "—"}<br />
-                      Ultima reușită: {liveDataQuota.lastSuccess ? new Date(liveDataQuota.lastSuccess).toLocaleString("ro-RO") : "—"}<br />
-                      Cotă folosită azi: {liveDataQuota.requestsUsed ?? 0}/100<br />
-                      Meciuri relevante: {liveDataDiagnostics.mapped + liveDataDiagnostics.unmatched + liveDataDiagnostics.ambiguous}<br />
-                      Mapate: {liveDataDiagnostics.mapped} · Nemapate: {liveDataDiagnostics.unmatched} · Ambigue: {liveDataDiagnostics.ambiguous}<br />
-                      Live acum: {liveDataDiagnostics.live}<br />
-                      Ultimul eveniment extern: {liveDataDiagnostics.lastEventTitle || "—"}<br />
-                      Ultima eroare: {liveDataQuota.lastError || "—"}
-                    </div>
-                  )}
-                  <button type="button" style={s.smallBtn} disabled={testingConnection} onClick={handleTestFootballConnection}>
-                    {testingConnection ? "Se testează…" : "🔌 Test Connection"}
-                  </button>
-                  {testConnectionResult && <p style={s.hint}>{testConnectionResult}</p>}
-                </SectionCard>
-
-                <SectionCard title="🎯 Fixture Mapping — verificare per meci">
-                  <p style={s.hint}>
-                    Verifică, pentru cele 20 de meciuri ale etapei selectate mai sus, dacă sunt legate corect
-                    de un fixture real API-Football — ÎNAINTE de kickoff. Nu remapează meciurile deja conectate
-                    (0 request API pentru ele). Consumă request-uri API STRICT la apăsare, niciodată automat.
-                  </p>
-                  <button type="button" style={s.smallBtn} disabled={fixtureCheckLoading} onClick={handleCheckFixtures}>
-                    {fixtureCheckLoading ? "Se verifică…" : "🔄 Verifică API meciurile"}
-                  </button>
-                  {fixtureCheckError && <p style={s.hint}>❌ {fixtureCheckError}</p>}
-                  {fixtureCheckResults && (
-                    <>
-                      <p style={s.hint}>
-                        {fixtureCheckResults.totalMatches} meciuri · {fixtureCheckResults.alreadyMapped} deja conectate ·
-                        {" "}{fixtureCheckResults.checkedNow} verificate acum · {fixtureCheckResults.apiRequestsUsed} request-uri API folosite ·
-                        {" "}cotă azi: {fixtureCheckResults.requestsUsedToday}/100
-                      </p>
-                      <div style={s.bbResolveList}>
-                        {fixtureCheckResults.results.map((r) => (
-                          <div key={r.matchId} style={s.bbResolveRow}>
-                            <span style={s.bbResolveText}>
-                              {r.status === "CONNECTED" ? "🟢" : r.status === "AMBIGUOUS" ? "🔴" : r.status === "ERROR" ? "⚠️" : "🟡"}
-                              {" "}{r.homeTeam} – {r.awayTeam}
-                              {r.status === "CONNECTED" && (
-                                <><br /><span style={s.fixtureDetail}>
-                                  fixture #{r.fixtureId} · API: {r.apiHomeTeam} – {r.apiAwayTeam}
-                                  {r.apiDate ? ` · ${new Date(r.apiDate).toLocaleString("ro-RO")}` : ""}
-                                </span></>
-                              )}
-                              {r.status === "AMBIGUOUS" && (
-                                <><br /><span style={s.fixtureDetail}>{r.candidateIds?.length || 0} variante posibile — neconectat, intenționat</span></>
-                              )}
-                              {r.status === "UNMATCHED" && (
-                                <><br /><span style={s.fixtureDetail}>niciun fixture găsit în ziua respectivă</span></>
-                              )}
-                              {r.status === "ERROR" && (
-                                <><br /><span style={s.fixtureDetail}>{r.error}</span></>
-                              )}
-                            </span>
-                          </div>
-                        ))}
-                      </div>
-                    </>
-                  )}
-                </SectionCard>
-
                 <SectionCard title="Evenimente recente (automate)">
                   <button type="button" style={s.smallBtn} disabled={cleaningLiveEvents} onClick={handleCleanupLiveEvents}>
                     {cleaningLiveEvents ? "Se curăță…" : "🧹 Șterge golurile/cartonașele vechi (text greșit)"}

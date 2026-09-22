@@ -439,19 +439,19 @@ export default function SurprisesScreen({ user, onBack }) {
 
 // ── Lista LIVE cu cine a învârtit și ce a păstrat — nu așteaptă Resolve.
 // Cerută explicit pentru transparență totală: "să nu existe discuții".
-// Reîmprospătare periodică (nu onSnapshot — sunt mai multe query-uri
-// combinate, nu unul singur ușor de urmărit live). ──
+// FĂRĂ polling automat — se încarcă o singură dată la montare, plus
+// reîmprospătare PUNCTUALĂ după propria rotire (refreshKey = spinTick,
+// incrementat în onResolvedChange, mecanism deja existent, neatins).
+// Actualizarea rotirilor ALTOR jucători se vede la următoarea
+// montare/redeschidere a ecranului — cerut explicit, nu introducem
+// realtime suplimentar doar pentru asta. ──
 function RouletteLiveList({ gameweekId, profiles, myUid, refreshKey }) {
   const [rows, setRows] = useState([]);
 
   useEffect(() => {
     let cancelled = false;
-    function load() {
-      getAllRouletteSpinsStatus(gameweekId).then((r) => { if (!cancelled) setRows(r); }).catch(() => {});
-    }
-    load();
-    const interval = setInterval(load, 15000);
-    return () => { cancelled = true; clearInterval(interval); };
+    getAllRouletteSpinsStatus(gameweekId).then((r) => { if (!cancelled) setRows(r); }).catch(() => {});
+    return () => { cancelled = true; };
   }, [gameweekId, refreshKey]);
 
   if (rows.length === 0) return null;

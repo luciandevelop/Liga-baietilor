@@ -355,10 +355,18 @@ export function Stage({ mode, onPick, animKick, assetsReady }) {
 // SECVENȚA DE REZULTAT — fiecare lovitură e propriul mic eveniment,
 // schimb de rol marcat explicit, final cu mesaj contextual.
 // ══════════════════════════════════════════════════════════════════
-export function ShootoutSequence({ data, myName, oppName, oppAvatarId, assetsReady }) {
+export function ShootoutSequence({ data, myName, oppName, oppAvatarId, assetsReady, storageKey }) {
   const hasRounds = Array.isArray(data.rounds) && data.rounds.length > 0;
   const [idx, setIdx] = useState(0); // 0..9
-  const [skipped, setSkipped] = useState(!hasRounds);
+  // ── Dacă acest duel a mai fost vizionat complet (localStorage, per
+  // vizitator/telefon — nu Firestore), sărim direct la rezumat. Cheia
+  // include gameweekId+uid (vine din storageKey), deci o etapă viitoare
+  // NU moștenește starea "văzut" a etapei curente. ──
+  const alreadySeen = (() => {
+    if (!storageKey) return false;
+    try { return localStorage.getItem(storageKey) === "1"; } catch { return false; }
+  })();
+  const [skipped, setSkipped] = useState(!hasRounds || alreadySeen);
   const [animKick, setAnimKick] = useState(null);
   const [showingRoleSwitch, setShowingRoleSwitch] = useState(false);
   const timeouts = useRef([]);
@@ -391,6 +399,24 @@ export function ShootoutSequence({ data, myName, oppName, oppAvatarId, assetsRea
   }, [idx, skipped]);
 
   const showingSummary = skipped || idx >= sequence.length;
+
+  // ── Odată ajunși la rezumat (natural sau prin "Sari peste"), marcăm
+  // duelul ca vizionat — STRICT localStorage, zero Firestore. ──
+  useEffect(() => {
+    if (showingSummary && storageKey) {
+      try { localStorage.setItem(storageKey, "1"); } catch { /* doar confort local, ignorăm eșecul */ }
+    }
+  }, [showingSummary, storageKey]);
+
+  // ── "Revezi duelul" — REPLAY strict vizual: resetează idx la 0 și
+  // skipped la false, pe ACELEAȘI date deja încărcate (data.rounds,
+  // deja primite ca prop). Zero citire, zero scriere, zero recalculare
+  // — doar redă din nou secvența pe baza rezultatelor deja existente. ──
+  function handleReplay() {
+    setIdx(0);
+    setSkipped(false);
+  }
+
   const myPips = Array.from({ length: 5 }, (_, i) => ((showingSummary || i * 2 < idx) ? (sequence[i * 2]?.outcome ?? null) : null));
   const oppPips = Array.from({ length: 5 }, (_, i) => ((showingSummary || i * 2 + 1 < idx) ? (sequence[i * 2 + 1]?.outcome ?? null) : null));
   // ── FIX P0: fiecare din cele 10 faze acordă 10 PCT UNUIA dintre cei
@@ -469,6 +495,9 @@ export function ShootoutSequence({ data, myName, oppName, oppAvatarId, assetsRea
             <div style={s.finalScoreValue}>{data.myPoints}p</div>
             <div style={s.finalLine}>{finalLine(data.myGoals, data.mySaves)}</div>
           </div>
+          {sequence.length > 0 && (
+            <button type="button" style={s.replayBtn} onClick={handleReplay}>🔁 Revezi duelul</button>
+          )}
         </div>
       )}
     </div>
@@ -478,7 +507,7 @@ export function ShootoutSequence({ data, myName, oppName, oppAvatarId, assetsRea
 // ══════════════════════════════════════════════════════════════════
 // COMPONENTA PRINCIPALĂ — interfața/datele NESCHIMBATE.
 // ══════════════════════════════════════════════════════════════════
-export default function PenaltyExperience({ gameweekId, uid, resolved, myResult }) {
+export default function PenaltyExperience({ gameweekId, uid, resolved, myResult, results }) {
   const assetsReady = usePreloadPenaltyAssets();
   const [myChoices, setMyChoices] = useState(undefined);
   const [pairing, setPairing] = useState(undefined);
@@ -569,7 +598,15 @@ export default function PenaltyExperience({ gameweekId, uid, resolved, myResult 
       : null;
 
   if (finalData) {
-    return <ShootoutSequence data={finalData} myName="Tu" oppName={oppName} oppAvatarId={profiles[pairing?.opponentUid]?.avatarId} assetsReady={assetsReady} />;
+    return (
+      <div style={s.wrap}>
+        <ShootoutSequence
+          data={finalData} myName="Tu" oppName={oppName} oppAvatarId={profiles[pairing?.opponentUid]?.avatarId}
+          assetsReady={assetsReady} storageKey={`penalty-seen-${gameweekId}-${uid}`}
+        />
+        <OtherPenaltyPairings pairings={otherPairings} profiles={profiles} results={resolved ? results : null} />
+      </div>
+    );
   }
 
   if (myChoices) {
@@ -612,19 +649,28 @@ export default function PenaltyExperience({ gameweekId, uid, resolved, myResult 
 // ── "Cine cu cine a picat" — cerut explicit, ca la Duel/Mai Mare-Mai
 // Mic. Doar numele perechilor (fără scoruri live — Penalty se
 // rezolvă dintr-o dată, nu incremental ca Duel-ul de tip Higher/Lower). ──
-function OtherPenaltyPairings({ pairings, profiles }) {
+function OtherPenaltyPairings({ pairings, profiles, results }) {
   if (!pairings || pairings.length === 0) return null;
   return (
     <div style={s.otherPairsSection}>
       <div style={s.otherPairsLabel}>Celelalte perechi</div>
       <div style={s.otherPairsList}>
-        {pairings.map((p, i) => (
-          <div key={i} style={s.otherPairRow}>
-            <span style={s.otherPairName}>{profiles[p.playerA]?.nickname || p.playerA}</span>
-            <span style={s.otherPairVs}>vs</span>
-            <span style={s.otherPairName}>{profiles[p.playerB]?.nickname || p.playerB}</span>
-          </div>
-        ))}
+        {pairings.map((p, i) => {
+          const scoreA = results?.[p.playerA]?.bonusPoints;
+          const scoreB = results?.[p.playerB]?.bonusPoints;
+          const hasScores = scoreA != null && scoreB != null;
+          return (
+            <div key={i} style={s.otherPairRow}>
+              <span style={s.otherPairName}>{profiles[p.playerA]?.nickname || p.playerA}</span>
+              {hasScores ? (
+                <span style={s.otherPairScore}>{scoreA}–{scoreB}</span>
+              ) : (
+                <span style={s.otherPairVs}>vs</span>
+              )}
+              <span style={s.otherPairName}>{profiles[p.playerB]?.nickname || p.playerB}</span>
+            </div>
+          );
+        })}
       </div>
     </div>
   );
@@ -653,6 +699,12 @@ const s = {
   },
   otherPairName: { color: color.textSecondary, fontWeight: 600 },
   otherPairVs: { color: color.textFaint, fontSize: 10, fontWeight: 800 },
+  otherPairScore: { color: color.textPrimary, fontWeight: 800, fontFamily: font.display, fontSize: 13 },
+  replayBtn: {
+    marginTop: 12, padding: "10px 18px", borderRadius: radius.pill, border: `1px solid ${color.border}`,
+    background: "rgba(255,255,255,0.05)", color: color.textSecondary, fontSize: 12.5, fontWeight: 700,
+    fontFamily: font.body, cursor: "pointer", display: "block", marginLeft: "auto", marginRight: "auto",
+  },
   wrap: { position: "relative" },
   assetLoading: {
     position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center",

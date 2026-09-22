@@ -287,12 +287,26 @@ export async function getMyHigherLowerView(gameweekId, uid) {
   const [duelId, duel] = entry;
   const opponentUid = duel.playerA === uid ? duel.playerB : duel.playerA;
 
-  const [picksSnap, myTbSnap, oppTbSnap, parentSnap] = await Promise.all([
+  const [picksSnap, myTbSnap, parentSnap] = await Promise.all([
     getDocs(query(collection(db, "weeklySurprises", gameweekId, "higherLowerPicks"), where("duelId", "==", duelId))),
     getDoc(tiebreakerRef(gameweekId, uid)),
-    getDoc(tiebreakerRef(gameweekId, opponentUid)),
     getDoc(parentRef(gameweekId)),
   ]);
+  // ── FIX CRITIC — citirea barajului ADVERSARULUI e izolată separat,
+  // NU în Promise.all-ul de mai sus. Documentul e privat (Rules NU
+  // permit citirea barajului altcuiva) — dacă e citit alături de
+  // datele esențiale ale duelului, un permission-denied acolo dărâma
+  // TOT view-ul, inclusiv identificarea duelului propriu-zis, ceea ce
+  // producea exact "Nu ești repartizat într-un duel" pentru jucători
+  // care CHIAR erau repartizați. Izolat, un eșec aici degradează
+  // corect la "ascuns" (oppTiebreaker: null), nu la eroare totală. ──
+  let oppTiebreaker = null;
+  try {
+    const oppTbSnap = await getDoc(tiebreakerRef(gameweekId, opponentUid));
+    oppTiebreaker = oppTbSnap.exists() ? oppTbSnap.data().value : null;
+  } catch (err) {
+    console.error("Baraj adversar indisponibil (non-blocant):", err);
+  }
   const picksByUid = { [duel.playerA]: {}, [duel.playerB]: {} };
   picksSnap.forEach((d) => {
     const p = d.data();
@@ -314,7 +328,6 @@ export async function getMyHigherLowerView(gameweekId, uid) {
   const activeRoundIndex = rounds.findIndex((r) => !r.decided);
   const allDecided = activeRoundIndex === -1;
   const myTiebreaker = myTbSnap.exists() ? myTbSnap.data().value : null;
-  const oppTiebreaker = oppTbSnap.exists() ? oppTbSnap.data().value : null;
   const tbRevealed = myTiebreaker != null && oppTiebreaker != null && !!parentSnap.data()?.higherLowerRevealed;
 
   return {

@@ -287,9 +287,11 @@ export async function getMyHigherLowerView(gameweekId, uid) {
   const [duelId, duel] = entry;
   const opponentUid = duel.playerA === uid ? duel.playerB : duel.playerA;
 
-  const [picksSnap, myTbSnap] = await Promise.all([
+  const [picksSnap, myTbSnap, oppTbSnap, parentSnap] = await Promise.all([
     getDocs(query(collection(db, "weeklySurprises", gameweekId, "higherLowerPicks"), where("duelId", "==", duelId))),
     getDoc(tiebreakerRef(gameweekId, uid)),
+    getDoc(tiebreakerRef(gameweekId, opponentUid)),
+    getDoc(parentRef(gameweekId)),
   ]);
   const picksByUid = { [duel.playerA]: {}, [duel.playerB]: {} };
   picksSnap.forEach((d) => {
@@ -301,9 +303,24 @@ export async function getMyHigherLowerView(gameweekId, uid) {
   const winsMine = rounds.filter((r) => r.result != null && (uid === duel.playerA ? r.choiceA : r.choiceB) === r.result).length;
   const winsOpp = rounds.filter((r) => r.result != null && (opponentUid === duel.playerA ? r.choiceA : r.choiceB) === r.result).length;
 
+  // ── Rundele avansează după alegerile JUCĂTORILOR (decided), NU după
+  // rezultatele reale din meci (acelea vin abia zile mai târziu, de la
+  // Admin). Baraj-ul se colectează PROACTIV — imediat ce toate cele 6
+  // runde sunt decise — nu doar dacă/quando se dovedește 3-3 mai
+  // târziu (asta se știe abia după rezultatele reale, mult prea târziu
+  // ca să mai ceri estimarea atunci). Anterior aceste 3 câmpuri nu
+  // erau calculate NICĂIERI — secțiunea de baraj era cod mort, nu
+  // putea apărea niciodată, la nimeni. ──
+  const activeRoundIndex = rounds.findIndex((r) => !r.decided);
+  const allDecided = activeRoundIndex === -1;
+  const myTiebreaker = myTbSnap.exists() ? myTbSnap.data().value : null;
+  const oppTiebreaker = oppTbSnap.exists() ? oppTbSnap.data().value : null;
+  const tbRevealed = myTiebreaker != null && oppTiebreaker != null && !!parentSnap.data()?.higherLowerRevealed;
+
   return {
     duelId, duel, opponentUid, rounds, winsMine, winsOpp,
-    myTiebreaker: myTbSnap.exists() ? myTbSnap.data().value : null,
+    activeRoundIndex, tiebreakNeeded: allDecided,
+    myTiebreaker, oppTiebreaker, tbRevealed,
   };
 }
 

@@ -99,6 +99,19 @@ export default function WelcomeScreen({ user, profile, isAdmin, onOpenAdmin, onO
   const jokerFetchedRef = useRef(false);
   const cachedJokerRef = useRef(null);
   const cachedJokerExtraRef = useRef(null);
+  // ── FIX reads — processFinishedMatches reprocesa TOATE meciurile deja
+  // terminate la FIECARE update al listener-ului de meciuri, indiferent
+  // de cauză (chiar și un update la un cu totul alt meci, încă LIVE).
+  // Cache STRICT local, per sesiune de browser (zero Firestore) —
+  // matchId → ultima semnătură de scor procesată. Semnătura e STRICT
+  // realScoreA-realScoreB, pentru că e STRICT ce citește
+  // buildMatchFinalEvent (feedEngine.js) pentru conținutul evenimentului
+  // — nimic altceva din obiectul meciului nu schimbă rezultatul
+  // procesării. O corecție ulterioară de scor a Adminului schimbă
+  // semnătura → reprocesare legitimă, corectă. Un update irelevant la
+  // alt meci → semnătura identică → skip. Reset la reload (o pagină
+  // nouă reprocesează o dată, complet normal — nu e o buclă). ──
+  const processedFinishedRef = useRef(new Map());
   // Throttle pentru refreshFeedTop — sunt peste 8 locuri diferite care
   // pot cere o reîmprospătare aproape simultan (meci terminat, Joker,
   // Joker Extra, clasament, surpriză, fapte de club...). Fără asta,
@@ -167,8 +180,17 @@ export default function WelcomeScreen({ user, profile, isAdmin, onOpenAdmin, onO
         setMatches(m);
 
         const finished = m.filter((x) => x.status === "finished" && x.realScoreA != null && x.realScoreB != null);
+        const toProcess = finished.filter((x) => {
+          const sig = `${x.realScoreA}-${x.realScoreB}`;
+          if (processedFinishedRef.current.get(x.id) === sig) return false;
+          processedFinishedRef.current.set(x.id, sig);
+          return true;
+        });
         if (finished.length > 0) {
-          processFinishedMatches(finished).then((evs) => { if (evs.length > 0) refreshFeedTop(); }).catch((err) => console.error("Eroare Feed meciuri:", err));
+          console.log(`[processFinishedMatches] listener fired: ${finished.length} finished, ${toProcess.length} de procesat (noi/schimbate), ${finished.length - toProcess.length} skip (neschimbate)`, toProcess.map((x) => x.id));
+        }
+        if (toProcess.length > 0) {
+          processFinishedMatches(toProcess).then((evs) => { if (evs.length > 0) refreshFeedTop(); }).catch((err) => console.error("Eroare Feed meciuri:", err));
         }
 
         // ── Joker în Feed — REPARAT. Varianta veche interoga TOATE

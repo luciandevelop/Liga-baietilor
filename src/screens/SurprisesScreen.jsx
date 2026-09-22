@@ -387,6 +387,7 @@ export default function SurprisesScreen({ user, onBack }) {
                       uid={user.uid}
                       resolved={!!pub?.bonusResolved}
                       myResult={myResult}
+                      results={resultsByUid}
                     />
                   )}
                 </>

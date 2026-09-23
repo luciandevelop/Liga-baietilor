@@ -387,6 +387,40 @@ export async function submitHigherLowerTiebreaker(gameweekId, uid, value) {
   await setDoc(ref, { uid, value, createdAt: serverTimestamp() });
 }
 
+// ── Status de completare, pentru Admin — "cine a pus și cine n-a pus",
+// ca să poți avertiza jucătorii înainte de blocarea la 12h. O SINGURĂ
+// interogare (toate picks-urile etapei deodată, nu una per pereche/
+// jucător). Reutilizează EXACT deriveDuelRounds (aceeași sursă de
+// adevăr ca rezolvarea reală) — un jucător poate atinge teoretic orice
+// rundă din cele 6, dar contează STRICT rundele unde el are prioritate
+// (exact 3 din 6), la fel ca la scoring. ──
+export async function getHigherLowerSubmissionStatus(gameweekId) {
+  const hl = await getHigherLower(gameweekId);
+  if (!hl) return [];
+  const picksSnap = await getDocs(collection(db, "weeklySurprises", gameweekId, "higherLowerPicks"));
+  const picksByDuelUid = {};
+  picksSnap.forEach((d) => {
+    const p = d.data();
+    if (!picksByDuelUid[p.duelId]) picksByDuelUid[p.duelId] = {};
+    if (!picksByDuelUid[p.duelId][p.uid]) picksByDuelUid[p.duelId][p.uid] = {};
+    picksByDuelUid[p.duelId][p.uid][p.questionId] = p.choice;
+  });
+  const rows = [];
+  Object.entries(hl.duels).forEach(([duelId, duel]) => {
+    const picksByUid = {
+      [duel.playerA]: picksByDuelUid[duelId]?.[duel.playerA] || {},
+      [duel.playerB]: picksByDuelUid[duelId]?.[duel.playerB] || {},
+    };
+    const rounds = deriveDuelRounds(hl, duel, picksByUid);
+    [duel.playerA, duel.playerB].forEach((uid) => {
+      const myRounds = rounds.filter((r) => r.priorityUid === uid);
+      const done = myRounds.filter((r) => r.decided).length;
+      rows.push({ uid, duelId, opponentUid: uid === duel.playerA ? duel.playerB : duel.playerA, done, total: myRounds.length });
+    });
+  });
+  return rows;
+}
+
 export function isHigherLowerLocked(deadlineAt, now = Date.now()) {
   const ms = deadlineAt?.toMillis ? deadlineAt.toMillis() : deadlineAt;
   if (ms == null) return false;

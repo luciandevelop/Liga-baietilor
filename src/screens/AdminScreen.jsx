@@ -59,6 +59,7 @@ import BetBuilderScreen from "./BetBuilderScreen";
 import {
   generateHigherLower, getHigherLower, setHigherLowerQuestions, activateHigherLower,
   resolveHigherLowerQuestion, revealHigherLowerTiebreakers, resolveAllHigherLowerDuels, computeRealGoalsTotal,
+  getHigherLowerSubmissionStatus,
 } from "../services/higherLowerService";
 import { HIGHER_LOWER_PREVIEW_STATES } from "../higherLowerMockData";
 import HigherLowerScreen from "./HigherLowerScreen";
@@ -78,6 +79,7 @@ import {
   configureTriviaQuestions, markTriviaCorrectAnswer, getTriviaSubmissionStatus,
   configureZaruriQuestions, markZaruriTarget, getZaruriSubmissionStatus,
   getSabotajPublicProgress, revealSabotajNetwork, undoLastSabotajChoice,
+  getPenaltySubmittedUids,
 } from "../services/surprisesService";
 import { DUEL_THEMES, getFighterUrl } from "../assets/fighters";
 import DuelExperience from "../components/DuelExperience";
@@ -582,6 +584,12 @@ export default function AdminScreen({ onBack }) {
   const [zaruriSubmissionPanel, setZaruriSubmissionPanel] = useState(null);
   const [zaruriSubmissionRows, setZaruriSubmissionRows] = useState([]);
   const [zaruriSubmissionLoading, setZaruriSubmissionLoading] = useState(false);
+  const [higherLowerSubmissionPanel, setHigherLowerSubmissionPanel] = useState(null);
+  const [higherLowerSubmissionRows, setHigherLowerSubmissionRows] = useState([]);
+  const [higherLowerSubmissionLoading, setHigherLowerSubmissionLoading] = useState(false);
+  const [penaltySubmissionPanel, setPenaltySubmissionPanel] = useState(null);
+  const [penaltySubmissionRows, setPenaltySubmissionRows] = useState([]);
+  const [penaltySubmissionLoading, setPenaltySubmissionLoading] = useState(false);
 
   function openZaruriEditor(gwId, existingQuestions) {
     if (zaruriEditorOpen === gwId) { setZaruriEditorOpen(null); return; }
@@ -641,6 +649,45 @@ export default function AdminScreen({ onBack }) {
       console.error("Eroare la statusul de completare:", err);
     } finally {
       setZaruriSubmissionLoading(false);
+    }
+  }
+
+  async function openHigherLowerSubmissionPanel(gwId) {
+    if (higherLowerSubmissionPanel === gwId) { setHigherLowerSubmissionPanel(null); return; }
+    setHigherLowerSubmissionPanel(gwId);
+    setHigherLowerSubmissionLoading(true);
+    try {
+      const rows = await getHigherLowerSubmissionStatus(gwId);
+      const names = await getUserPublicProfiles(rows.map((r) => r.uid));
+      setHigherLowerSubmissionRows(
+        rows
+          .map((r) => ({ ...r, nickname: names[r.uid]?.nickname || r.uid }))
+          .sort((a, b) => a.done - b.done)
+      );
+    } catch (err) {
+      console.error("Eroare la statusul de completare Mai Mare/Mai Mic:", err);
+    } finally {
+      setHigherLowerSubmissionLoading(false);
+    }
+  }
+
+  async function openPenaltySubmissionPanel(gwId) {
+    if (penaltySubmissionPanel === gwId) { setPenaltySubmissionPanel(null); return; }
+    setPenaltySubmissionPanel(gwId);
+    setPenaltySubmissionLoading(true);
+    try {
+      const [activeUids, submitted] = await Promise.all([listActiveUserIds(), getPenaltySubmittedUids(gwId)]);
+      const uids = [...activeUids];
+      const names = await getUserPublicProfiles(uids);
+      setPenaltySubmissionRows(
+        uids
+          .map((uid) => ({ uid, nickname: names[uid]?.nickname || uid, done: submitted.has(uid) }))
+          .sort((a, b) => Number(a.done) - Number(b.done))
+      );
+    } catch (err) {
+      console.error("Eroare la statusul de completare Penalty PvP:", err);
+    } finally {
+      setPenaltySubmissionLoading(false);
     }
   }
 
@@ -2581,6 +2628,24 @@ export default function AdminScreen({ onBack }) {
                                 ))}
                               </div>
 
+                              <button type="button" style={s.smallBtn} onClick={() => openHigherLowerSubmissionPanel(gw.id)}>
+                                {higherLowerSubmissionPanel === gw.id ? "▲ Ascunde status" : "👥 Cine a pus și cine n-a pus"}
+                              </button>
+                              {higherLowerSubmissionPanel === gw.id && (
+                                <div style={s.triviaSubmissionList}>
+                                  {higherLowerSubmissionLoading ? <div style={s.hint}>Se încarcă…</div> : (
+                                    higherLowerSubmissionRows.map((r) => (
+                                      <div key={r.uid} style={s.triviaSubmissionRow}>
+                                        <span>{r.nickname}</span>
+                                        <span style={{ color: r.done === r.total ? "#8BD957" : "#F0A94E" }}>
+                                          {r.done}/{r.total}
+                                        </span>
+                                      </div>
+                                    ))
+                                  )}
+                                </div>
+                              )}
+
                               {(!higherLower.questions || higherLower.questions.length !== 6) && (
                                 <>
                                   <p style={s.hint}>Configurează cele 6 întrebări — exact 2 per meci, praguri X,5 (ex. 2.5).</p>
@@ -2831,6 +2896,28 @@ export default function AdminScreen({ onBack }) {
                           <span style={s.doneTag}>✓ gata</span>
                         )}
                       </div>
+
+                      {bonusType === "penalty-pvp" && bonusRevealed && (
+                        <div style={s.triviaBox}>
+                          <button type="button" style={s.smallBtn} onClick={() => openPenaltySubmissionPanel(gw.id)}>
+                            {penaltySubmissionPanel === gw.id ? "▲ Ascunde status" : "👥 Cine a pus și cine n-a pus"}
+                          </button>
+                          {penaltySubmissionPanel === gw.id && (
+                            <div style={s.triviaSubmissionList}>
+                              {penaltySubmissionLoading ? <div style={s.hint}>Se încarcă…</div> : (
+                                penaltySubmissionRows.map((r) => (
+                                  <div key={r.uid} style={s.triviaSubmissionRow}>
+                                    <span>{r.nickname}</span>
+                                    <span style={{ color: r.done ? "#8BD957" : "#F0A94E" }}>
+                                      {r.done ? "✓ trimis" : "— lipsă"}
+                                    </span>
+                                  </div>
+                                ))
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      )}
 
                       {bonusType === "mystery-box" && bonusRevealed && (
                         <div style={s.triviaBox}>

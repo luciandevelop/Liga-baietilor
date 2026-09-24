@@ -49,6 +49,7 @@ import {
   listRecentEventsForAdmin, listAdminFunItems, addFunItem, deleteFunItem, deleteAllLiveMatchEvents,
   regenerateCurrentGameweekFeed, processLiveRankChangesCapped, processTeamDuelPulse, processRankChanges,
   publishManualFeedNews, deleteManualFeedNews, listRecentManualNews,
+  publishFeedEvent, ignoreFeedEvent, setFeedEventPriority,
 } from "../services/feedService";
 import { activateGameweekStory, deactivateGameweekStory, activateSeasonStory, deactivateSeasonStory, storyKey } from "../services/storyService";
 import {
@@ -518,6 +519,8 @@ export default function AdminScreen({ onBack }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [higherLowerGwId]);
   const [surprisesLoading, setSurprisesLoading] = useState(false);
+  const [surprisesArchiveOpen, setSurprisesArchiveOpen] = useState(false);
+  const [surprisesArchiveSelectedId, setSurprisesArchiveSelectedId] = useState(null);
   const [surpriseActionKey, setSurpriseActionKey] = useState(""); // "{gwId}_{action}" cu acțiune în curs
   const [sabotajProgress, setSabotajProgress] = useState({}); // gameweekId -> { chosenPickers, takenTargets }
 
@@ -934,6 +937,33 @@ export default function AdminScreen({ onBack }) {
       })
       .catch((err) => console.error("Eroare la încărcarea Feed-ului (admin):", err))
       .finally(() => setFeedLoading(false));
+  }
+
+  async function handlePublishFeedEvent(id) {
+    try {
+      await publishFeedEvent(id);
+      setFeedEvents((prev) => prev.map((e) => (e.id === id ? { ...e, status: "published" } : e)));
+    } catch (err) {
+      window.alert("Eroare la publicare: " + (err.message || String(err)));
+    }
+  }
+
+  async function handleIgnoreFeedEvent(id) {
+    try {
+      await ignoreFeedEvent(id);
+      setFeedEvents((prev) => prev.map((e) => (e.id === id ? { ...e, status: "ignored" } : e)));
+    } catch (err) {
+      window.alert("Eroare la ignorare: " + (err.message || String(err)));
+    }
+  }
+
+  async function handleSetFeedEventPriority(id, priority) {
+    try {
+      await setFeedEventPriority(id, priority);
+      setFeedEvents((prev) => prev.map((e) => (e.id === id ? { ...e, priority: Number(priority) } : e)));
+    } catch (err) {
+      window.alert("Eroare la schimbarea priorității: " + (err.message || String(err)));
+    }
   }
 
   async function handleAddFun() {
@@ -2380,7 +2410,37 @@ export default function AdminScreen({ onBack }) {
                 {surprisesLoading && <p style={s.hint}>Se încarcă…</p>}
                 {gameweeks.length === 0 && <p style={s.hint}>Niciun sezon/etapă selectate — alege din tab-ul Config.</p>}
 
+                {(() => {
+                  // ── Etapa activă = numărul cel mai mare din sezonul selectat.
+                  // Nicio hardcodare — funcționează identic la Etapa 3 ca la
+                  // Etapa 40. Zero citiri noi — `gameweeks` e deja încărcat. ──
+                  const activeGw = gameweeks.reduce((max, g) => (!max || g.number > max.number ? g : max), null);
+                  const previousGws = gameweeks.filter((g) => g.id !== activeGw?.id).sort((a, b) => a.number - b.number);
+                  return previousGws.length > 0 ? (
+                    <div style={s.surprisesArchiveBox}>
+                      <button type="button" style={s.smallBtn} onClick={() => setSurprisesArchiveOpen((v) => !v)}>
+                        {surprisesArchiveOpen ? "▲" : "▾"} Etape anterioare ({previousGws.length})
+                      </button>
+                      {surprisesArchiveOpen && (
+                        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 8 }}>
+                          {previousGws.map((g) => (
+                            <button
+                              key={g.id} type="button"
+                              style={{ ...s.smallBtn, ...(surprisesArchiveSelectedId === g.id ? { background: color.gold, color: "#12141C" } : {}) }}
+                              onClick={() => setSurprisesArchiveSelectedId((v) => (v === g.id ? null : g.id))}
+                            >
+                              {g.title || `Etapa ${g.number}`}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  ) : null;
+                })()}
+
                 {gameweeks.map((gw) => {
+                  const activeGwId = gameweeks.reduce((max, g) => (!max || g.number > max.number ? g : max), null)?.id;
+                  const isVisible = gw.id === activeGwId || (surprisesArchiveOpen && surprisesArchiveSelectedId === gw.id);
                   const data = surprisesData[gw.id] || {};
                   const status = getSurpriseStatus(data.public);
                   const statusLabel = status === "locked" ? "🔒 BLOCATĂ" : status === "active" ? "⚡ ACTIVĂ" : "✅ REZOLVATĂ";
@@ -2392,6 +2452,8 @@ export default function AdminScreen({ onBack }) {
                   const bonusRevealed = !!data.public?.bonusRevealed;
                   const mainResolved = !!data.public?.mainResolved;
                   const bonusResolved = !!data.public?.bonusResolved;
+
+                  if (!isVisible) return null;
 
                   return (
                     <div key={gw.id} style={s.surpriseGwCard}>
@@ -3204,16 +3266,42 @@ export default function AdminScreen({ onBack }) {
                   {feedLoading && <p style={s.hint}>Se încarcă…</p>}
                   {!feedLoading && feedEvents.length === 0 && <p style={s.hint}>Niciun eveniment încă.</p>}
                   <div style={s.feedAdminList}>
-                    {feedEvents.map((e) => (
-                      <div key={e.id} style={s.feedAdminRow}>
-                        <div style={s.feedAdminRowHead}>
-                          <span style={s.feedAdminCategory}>{e.category}</span>
-                          <span style={s.feedAdminPriority}>prioritate {e.priority}</span>
+                    {feedEvents.map((e) => {
+                      const status = e.status || "published"; // fara camp = scris inainte de acest fix, ramane vizibil (istoric pastrat)
+                      return (
+                        <div key={e.id} style={s.feedAdminRow}>
+                          <div style={s.feedAdminRowHead}>
+                            <span style={s.feedAdminCategory}>{e.category}</span>
+                            <span
+                              style={{
+                                ...s.feedAdminPriority,
+                                color: status === "published" ? "#8BD957" : status === "ignored" ? "#F0555A" : "#F0A94E",
+                              }}
+                            >
+                              {status === "published" ? "✓ publicat" : status === "ignored" ? "✗ ignorat" : "◷ candidat"}
+                            </span>
+                          </div>
+                          <div style={s.feedAdminTitle}>{e.title}</div>
+                          <div style={s.feedAdminMeta}>{new Date(e.ts).toLocaleString("ro-RO")} · sursă: automat</div>
+                          <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 6, flexWrap: "wrap" }}>
+                            <span style={s.hint}>prioritate</span>
+                            <input
+                              type="number" style={{ ...s.input, width: 60 }} defaultValue={e.priority}
+                              onBlur={(ev) => {
+                                const v = Number(ev.target.value);
+                                if (v !== e.priority) handleSetFeedEventPriority(e.id, v);
+                              }}
+                            />
+                            {status !== "published" && (
+                              <button type="button" style={s.smallBtn} onClick={() => handlePublishFeedEvent(e.id)}>📣 Publică</button>
+                            )}
+                            {status !== "ignored" && (
+                              <button type="button" style={s.smallBtn} onClick={() => handleIgnoreFeedEvent(e.id)}>🚫 Ignoră</button>
+                            )}
+                          </div>
                         </div>
-                        <div style={s.feedAdminTitle}>{e.title}</div>
-                        <div style={s.feedAdminMeta}>{new Date(e.ts).toLocaleString("ro-RO")} · sursă: automat</div>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 </SectionCard>
 
@@ -3772,6 +3860,9 @@ const s = {
   },
   surpriseGwCard: {
     background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 10, padding: 12, marginBottom: 10,
+  },
+  surprisesArchiveBox: {
+    background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.06)", borderRadius: 10, padding: 12, marginBottom: 10,
   },
   surpriseGwHead: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 },
   surpriseGwTitle: { fontSize: 12.5, fontWeight: 700, color: "#fff" },

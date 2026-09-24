@@ -1,6 +1,6 @@
 import {
   collection, doc, getDoc, getDocs, setDoc, deleteDoc, runTransaction, serverTimestamp,
-  query, where, orderBy, limit as fbLimit,
+  query, where, orderBy, limit as fbLimit, documentId,
 } from "firebase/firestore";
 import { db } from "../firebase";
 import {
@@ -44,8 +44,34 @@ const UPCOMING_WINDOW_MS = 7 * 24 * 3600 * 1000;
 const MAX_RECENT_BANTER = 12; // cooldown — nu repeta o glumă folosită în ultimele N
 const MAX_RECENT_VARIANTS_PER_SUBTYPE = 3; // anti-repetiție — nu repeta ULTIMELE N variante ale aceluiași subtip
 
+// ── STATUS candidat/publicat/ignorat — cerut explicit de Admin, ca
+// știrile auto-generate să NU mai fie vizibile automat pentru jucători.
+// O SINGURĂ interogare batch (documentId() "in" [...ids]), proporțională
+// cu lotul curent (de obicei 1-câteva evenimente, nu 18 useri) — NU o
+// citire per eveniment. Dacă un id există deja cu un status setat de
+// Admin (publicat SAU ignorat), acel status se PĂSTREAZĂ — generatorul
+// nu-l poate reseta la regenerare. Doar id-urile chiar noi primesc
+// implicit "candidate". Evenimentele scrise ÎNAINTE de această
+// modificare (fără status deloc) rămân "published" la citire — vezi
+// filtrul din getHomeFeedTop — nimic din istoricul deja vizibil nu
+// dispare retroactiv. ──
 export async function saveFeedEvents(events) {
-  await Promise.all(events.map((e) => setDoc(doc(db, "feedEvents", e.id), { ...e }, { merge: true })));
+  if (events.length === 0) return;
+  const ids = events.map((e) => e.id);
+  const existingStatusById = {};
+  try {
+    for (let i = 0; i < ids.length; i += 30) {
+      const chunk = ids.slice(i, i + 30);
+      const snap = await getDocs(query(collection(db, "feedEvents"), where(documentId(), "in", chunk)));
+      snap.forEach((d) => { existingStatusById[d.id] = d.data().status; });
+    }
+  } catch (err) {
+    console.error("Eroare la verificarea statusului existent al evenimentelor (non-blocant):", err);
+  }
+  await Promise.all(events.map((e) => {
+    const status = existingStatusById[e.id] || "candidate";
+    return setDoc(doc(db, "feedEvents", e.id), { ...e, status }, { merge: true });
+  }));
 }
 
 // ══════════════════════════════════════════════════════════════════
@@ -84,6 +110,18 @@ export async function publishManualFeedNews({ title, text, newsType, adminUid })
   };
   await setDoc(doc(db, "feedEvents", id), event);
   return event;
+}
+
+// ── Acțiuni Admin pe candidate — updateDoc țintit, nu rescrie
+// documentul întreg. Reutilizează exact colecția/schema existentă. ──
+export async function publishFeedEvent(id) {
+  await setDoc(doc(db, "feedEvents", id), { status: "published" }, { merge: true });
+}
+export async function ignoreFeedEvent(id) {
+  await setDoc(doc(db, "feedEvents", id), { status: "ignored" }, { merge: true });
+}
+export async function setFeedEventPriority(id, priority) {
+  await setDoc(doc(db, "feedEvents", id), { priority: Number(priority) }, { merge: true });
 }
 
 export async function deleteManualFeedNews(id) {
@@ -1113,9 +1151,14 @@ export async function getHomeFeedTop(matches = [], { max = 8 } = {}) {
   const [live, manualRaw] = await Promise.all([
     listLiveFeedEvents({ max: buffer }), listRecentManualNews(),
   ]);
+  // ── Filtru "candidate" — cerut explicit: știrile auto-generate NU mai
+  // sunt vizibile automat, doar după ce Adminul le publică. Evenimentele
+  // scrise ÎNAINTE de acest fix (fără câmp status) rămân vizibile —
+  // altfel tot istoricul deja publicat ar dispărea retroactiv. ──
+  const liveVisible = live.filter((e) => e.status !== "candidate" && e.status !== "ignored");
   const fun = buildSampledFunEvents();
   const matchesById = Object.fromEntries(matches.map((m) => [m.id, m]));
-  const merged = mergeFeedEvents(matchesById, live, fun, manualRaw);
+  const merged = mergeFeedEvents(matchesById, liveVisible, fun, manualRaw);
   return { merged: ensureQuotesInWindow(merged, max).slice(0, max) };
 }
 

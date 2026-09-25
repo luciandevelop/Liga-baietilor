@@ -101,7 +101,26 @@ export async function generatePlayLeagueBackup(onProgress) {
   addAll(await readCollection(["users"], "Utilizatori"), "users");
 
   report("admins");
-  addAll(await readCollection(["admins"], "Admini"), "admins");
+  // ── EXCEPȚIE, clar marcată — spre deosebire de tot restul acestei
+  // funcții. Descoperit live: Firestore Rules NU permit citirea
+  // colecției `admins` ca listă întreagă (probabil doar per-document
+  // propriu e permis) — nu e o eroare tranzitorie, e o restricție
+  // reală de Rules, pe care NU am voie s-o ating. Colecția e mică,
+  // gestionată STRICT manual în Firebase Console (confirmat în audit —
+  // zero scriitor din aplicație), deci pierderea ei din backup NU e o
+  // pierdere reală de date de joc — e mereu reconstruibilă manual de
+  // Admin. De-aia, STRICT pentru asta, un eșec NU oprește backup-ul —
+  // dar e notat explicit în metadata, niciodată ascuns. ──
+  let adminsIncluded = true;
+  let adminsError = null;
+  try {
+    addAll(await readCollection(["admins"], "Admini"), "admins");
+  } catch (err) {
+    adminsIncluded = false;
+    adminsError = err.message || String(err);
+    counts.admins = 0;
+    console.error("Backup: colecția admins indisponibilă (non-blocant, vezi metadata.adminsIncluded):", err);
+  }
 
   report("seasons");
   const seasonsDocs = await readCollection(["seasons"], "Sezoane");
@@ -212,6 +231,8 @@ export async function generatePlayLeagueBackup(onProgress) {
     consistencyMode: "sequential-client-export",
     currentSeasonId,
     currentGameweekId,
+    adminsIncluded,
+    adminsError,
     counts,
     totalDocuments: documents.length,
     backupStatus: "COMPLETE", // se ajunge aici DOAR dacă nimic de mai sus n-a aruncat

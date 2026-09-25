@@ -43,6 +43,7 @@ import PlayerCard from "../components/PlayerCard";
 import PageHeader from "../components/PageHeader";
 import SectionCard from "../components/SectionCard";
 import StatusBadge from "../components/StatusBadge";
+import { generatePlayLeagueBackup, downloadBackupJson } from "../services/backupService";
 import PlayerRankRow from "../components/PlayerRankRow";
 import EmptyState from "../components/EmptyState";
 import {
@@ -519,6 +520,9 @@ export default function AdminScreen({ onBack }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [higherLowerGwId]);
   const [surprisesLoading, setSurprisesLoading] = useState(false);
+  const [backupRunning, setBackupRunning] = useState(false);
+  const [backupStatus, setBackupStatus] = useState(""); // "" | in-progress label | success text | error text
+  const [backupIsError, setBackupIsError] = useState(false);
   const [surprisesArchiveOpen, setSurprisesArchiveOpen] = useState(false);
   const [surprisesArchiveSelectedId, setSurprisesArchiveSelectedId] = useState(null);
   const [surpriseActionKey, setSurpriseActionKey] = useState(""); // "{gwId}_{action}" cu acțiune în curs
@@ -1808,6 +1812,26 @@ export default function AdminScreen({ onBack }) {
       setNicknameSaveMsg("Eroare: " + err.message);
     } finally {
       setNicknameSaving(false);
+    }
+  }
+
+  async function handleGenerateBackup() {
+    if (backupRunning) return; // fara double-click / doua exporturi simultane
+    if (!window.confirm("Generezi backup-ul complet PLAY LEAGUE? Recomandat când nu sunt meciuri LIVE.")) return;
+    setBackupRunning(true);
+    setBackupIsError(false);
+    setBackupStatus("Se generează backup-ul…");
+    try {
+      const backup = await generatePlayLeagueBackup((label) => setBackupStatus(`Se generează backup-ul… (${label})`));
+      downloadBackupJson(backup);
+      setBackupStatus(`✓ Backup complet — ${backup.metadata.totalDocuments} documente`);
+      setBackupIsError(false);
+    } catch (err) {
+      console.error("Backup PLAY LEAGUE eșuat:", err);
+      setBackupStatus(`❌ Backup eșuat — nu s-a generat un backup complet. ${err.message || err}`);
+      setBackupIsError(true);
+    } finally {
+      setBackupRunning(false);
     }
   }
 
@@ -3465,6 +3489,20 @@ export default function AdminScreen({ onBack }) {
             {/* ── Import / Config ───────────────────────────────────── */}
             {tab === "config" && (
               <>
+              <SectionCard title="📦 Backup PLAY LEAGUE">
+                <p style={s.hint}>
+                  Descarcă un fișier JSON complet — toate datele critice (useri, etape, meciuri, pronosticuri,
+                  Surprize, Speciale, Bet Builder, Feed manual). Rulează STRICT la apăsare, nu afectează aplicația.
+                  Recomandat când nu sunt meciuri LIVE.
+                </p>
+                <button type="button" style={s.btn} disabled={backupRunning} onClick={handleGenerateBackup}>
+                  {backupRunning ? "Se generează…" : "📦 Descarcă backup JSON"}
+                </button>
+                {backupStatus && (
+                  <p style={{ ...s.hint, color: backupIsError ? "#F0555A" : "#8BD957", marginTop: 8 }}>{backupStatus}</p>
+                )}
+              </SectionCard>
+
               <SectionCard title="Import meciuri">
                 <form onSubmit={handleImportMatches} style={s.form}>
                   <p style={s.hint}>

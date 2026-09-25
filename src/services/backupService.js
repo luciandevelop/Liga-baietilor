@@ -9,12 +9,25 @@
 // Aprobat pe baza auditului Firestore anterior (colecțiile/
 // subcolecțiile de mai jos sunt exact cele confirmate din cod, nimic
 // inventat). Vezi comentariile per-secțiune pentru path-urile reale.
+//
+// DESIGN — schimbat live, după test real: firestore.rules din repo NU
+// reflectă Rules-urile chiar deployed (confirmat: betBuilders/
+// betBuilderPicks nici nu apar în fișierul local, deși există real în
+// Firestore) — deci nu se poate ști dinainte, din cod, care colecții
+// au restricții de tip "listă" (admins și betBuilders au eșuat DEJA
+// live, ambele cu "Missing or insufficient permissions", nu eroare de
+// rețea). Din acest motiv, FIECARE secțiune e acum independentă:
+// un eșec la o colecție NU mai aruncă tot exportul — se notează
+// explicit (niciodată ascuns) și restul continuă. backupStatus e
+// "COMPLETE" DOAR dacă absolut totul a reușit, altfel "PARTIAL", cu
+// failedSections listate clar. Fișierul tot se descarcă — conține tot
+// ce s-a putut citi cu succes, plus dovada exactă a ce lipsește. ──
 // ══════════════════════════════════════════════════════════════════
 import { collection, doc, getDoc, getDocs, query, where } from "firebase/firestore";
 import { db } from "../firebase";
 import { getCurrentSeason, getCurrentGameweek } from "./predictionsService";
 
-export const BACKUP_SCHEMA_VERSION = 1;
+export const BACKUP_SCHEMA_VERSION = 2;
 
 // ── Serializare recursivă — Timestamp Firestore păstrat EXPLICIT (nu
 // doar string), ca restore-ul ulterior să poată reconstrui exact
@@ -32,44 +45,27 @@ function serializeValue(v) {
     Object.keys(v).forEach((k) => { out[k] = serializeValue(v[k]); });
     return out;
   }
-  return v; // primitive (string/number/boolean)
+  return v; // primitiv
 }
 
 function docToEntry(path, d) {
   return { path: `${path}/${d.id}`, id: d.id, data: serializeValue(d.data()) };
 }
 
-// ── O colecție/query întreagă → array de {path,id,data}. Zero
-// documente e un rezultat VALID (etapă fără o anumită Surpriză, de
-// exemplu) — doar o excepție reală (permission-denied, rețea) trebuie
-// să oprească tot exportul. Aruncă mai departe, cu path-ul exact,
-// pentru ca apelantul să poată raporta clar ce a eșuat. ──
-async function readCollection(pathSegments, label) {
-  try {
-    const snap = await getDocs(collection(db, ...pathSegments));
-    return snap.docs.map((d) => docToEntry(pathSegments.join("/"), d));
-  } catch (err) {
-    throw new Error(`Citire eșuată: ${label} (${pathSegments.join("/")}) — ${err.message || err}`);
-  }
+async function readCollection(pathSegments) {
+  const snap = await getDocs(collection(db, ...pathSegments));
+  return snap.docs.map((d) => docToEntry(pathSegments.join("/"), d));
 }
 
-async function readFilteredCollection(pathSegments, field, op, value, label) {
-  try {
-    const snap = await getDocs(query(collection(db, ...pathSegments), where(field, op, value)));
-    return snap.docs.map((d) => docToEntry(pathSegments.join("/"), d));
-  } catch (err) {
-    throw new Error(`Citire eșuată: ${label} (${pathSegments.join("/")} where ${field} ${op} ${value}) — ${err.message || err}`);
-  }
+async function readFilteredCollection(pathSegments, field, op, value) {
+  const snap = await getDocs(query(collection(db, ...pathSegments), where(field, op, value)));
+  return snap.docs.map((d) => docToEntry(pathSegments.join("/"), d));
 }
 
-async function readSingleDoc(pathSegments, label) {
-  try {
-    const snap = await getDoc(doc(db, ...pathSegments));
-    if (!snap.exists()) return null; // absent = valid, nu eroare
-    return docToEntry(pathSegments.slice(0, -1).join("/"), snap);
-  } catch (err) {
-    throw new Error(`Citire eșuată: ${label} (${pathSegments.join("/")}) — ${err.message || err}`);
-  }
+async function readSingleDoc(pathSegments) {
+  const snap = await getDoc(doc(db, ...pathSegments));
+  if (!snap.exists()) return null; // absent = valid, nu eroare
+  return docToEntry(pathSegments.slice(0, -1).join("/"), snap);
 }
 
 // ── Subcolecțiile Surprizelor, confirmate exact din audit — NU
@@ -86,126 +82,94 @@ export async function generatePlayLeagueBackup(onProgress) {
   const startedAt = new Date();
   const documents = [];
   const counts = {};
+  const failedSections = []; // { key, label, path, error } — niciodată ascuns
   const report = (label) => { if (onProgress) onProgress(label); };
 
-  function addAll(entries, countKey) {
-    documents.push(...entries);
-    counts[countKey] = (counts[countKey] || 0) + entries.length;
+  // ── O secțiune = o unitate independentă. Reușește → documentele
+  // intră în backup normal. Eșuează → notat în failedSections, restul
+  // secțiunilor continuă neafectat. ──
+  async function runSection(key, label, fn) {
+    report(label);
+    try {
+      const entries = await fn();
+      documents.push(...entries);
+      counts[key] = (counts[key] || 0) + entries.length;
+    } catch (err) {
+      counts[key] = counts[key] || 0;
+      failedSections.push({ key, label, error: err.message || String(err) });
+      console.error(`Backup — secțiune eșuată (non-blocant): ${label}`, err);
+    }
   }
 
   // ── TOP LEVEL / CORE ──
-  report("users");
   // STRICT users/{uid} — NICIODATĂ users/{uid}/private/profile (acolo
   // e email-ul) — excluderea e prin simplul fapt că nu citim acea
   // subcolecție deloc aici, nu printr-un filtru ulterior.
-  addAll(await readCollection(["users"], "Utilizatori"), "users");
+  await runSection("users", "Utilizatori", () => readCollection(["users"]));
+  await runSection("admins", "Admini", () => readCollection(["admins"]));
 
-  report("admins");
-  // ── EXCEPȚIE, clar marcată — spre deosebire de tot restul acestei
-  // funcții. Descoperit live: Firestore Rules NU permit citirea
-  // colecției `admins` ca listă întreagă (probabil doar per-document
-  // propriu e permis) — nu e o eroare tranzitorie, e o restricție
-  // reală de Rules, pe care NU am voie s-o ating. Colecția e mică,
-  // gestionată STRICT manual în Firebase Console (confirmat în audit —
-  // zero scriitor din aplicație), deci pierderea ei din backup NU e o
-  // pierdere reală de date de joc — e mereu reconstruibilă manual de
-  // Admin. De-aia, STRICT pentru asta, un eșec NU oprește backup-ul —
-  // dar e notat explicit în metadata, niciodată ascuns. ──
-  let adminsIncluded = true;
-  let adminsError = null;
-  try {
-    addAll(await readCollection(["admins"], "Admini"), "admins");
-  } catch (err) {
-    adminsIncluded = false;
-    adminsError = err.message || String(err);
-    counts.admins = 0;
-    console.error("Backup: colecția admins indisponibilă (non-blocant, vezi metadata.adminsIncluded):", err);
-  }
+  let seasonsDocs = [];
+  await runSection("seasons", "Sezoane", async () => { seasonsDocs = await readCollection(["seasons"]); return seasonsDocs; });
 
-  report("seasons");
-  const seasonsDocs = await readCollection(["seasons"], "Sezoane");
-  addAll(seasonsDocs, "seasons");
+  let gameweeksDocs = [];
+  await runSection("gameweeks", "Etape", async () => { gameweeksDocs = await readCollection(["gameweeks"]); return gameweeksDocs; });
 
-  report("gameweeks");
-  const gameweeksDocs = await readCollection(["gameweeks"], "Etape");
-  addAll(gameweeksDocs, "gameweeks");
-
-  report("matches");
-  addAll(await readCollection(["matches"], "Meciuri"), "matches");
-
-  report("predictions");
-  addAll(await readCollection(["predictions"], "Pronosticuri"), "predictions");
-
-  report("jokers");
-  addAll(await readCollection(["jokers"], "Jokere"), "jokers");
-
-  report("jokerExtra");
-  addAll(await readCollection(["jokerExtra"], "Joker Extra"), "jokerExtra");
-
-  report("matchPoints");
-  addAll(await readCollection(["matchPoints"], "Puncte per meci"), "matchPoints");
-
-  report("gameweekScores");
-  addAll(await readCollection(["gameweekScores"], "Scoruri finale etape"), "gameweekScores");
+  await runSection("matches", "Meciuri", () => readCollection(["matches"]));
+  await runSection("predictions", "Pronosticuri", () => readCollection(["predictions"]));
+  await runSection("jokers", "Jokere", () => readCollection(["jokers"]));
+  await runSection("jokerExtra", "Joker Extra", () => readCollection(["jokerExtra"]));
+  await runSection("matchPoints", "Puncte per meci", () => readCollection(["matchPoints"]));
+  await runSection("gameweekScores", "Scoruri finale etape", () => readCollection(["gameweekScores"]));
 
   // ── SPECIALE ──
-  report("specialPhases");
-  addAll(await readCollection(["specialPhases"], "Faze Speciale"), "specialPhases");
-
-  report("specialPicks");
-  addAll(await readCollection(["specialPicks"], "Pronosticuri Speciale"), "specialPicks");
-
-  report("specialScores");
-  addAll(await readCollection(["specialScores"], "Scoruri Speciale"), "specialScores");
+  await runSection("specialPhases", "Faze Speciale", () => readCollection(["specialPhases"]));
+  await runSection("specialPicks", "Pronosticuri Speciale", () => readCollection(["specialPicks"]));
+  await runSection("specialScores", "Scoruri Speciale", () => readCollection(["specialScores"]));
 
   // ── BET BUILDER ──
-  report("betBuilders");
-  addAll(await readCollection(["betBuilders"], "Config Bet Builder"), "betBuilders");
-
-  report("betBuilderPicks");
-  addAll(await readCollection(["betBuilderPicks"], "Alegeri Bet Builder"), "betBuilderPicks");
+  await runSection("betBuilders", "Config Bet Builder", () => readCollection(["betBuilders"]));
+  await runSection("betBuilderPicks", "Alegeri Bet Builder", () => readCollection(["betBuilderPicks"]));
 
   // ── WEEKLY SURPRISES — per etapă existentă, toate subcolecțiile
-  // reale confirmate în audit. Zero documente într-o subcolecție e
-  // valid (etapa aia n-a avut acel joc). ──
-  report("weeklySurprises");
-  let wsCount = 0;
+  // reale confirmate în audit. Fiecare etapă + fiecare subcolecție e
+  // propria ei secțiune (cheie unică pe etapă), ca un eșec la o
+  // singură etapă/subcolecție să nu ascundă restul etapelor. Zero
+  // documente într-o subcolecție e valid (etapa aia n-a avut acel
+  // joc), diferit de un eșec real de citire. ──
   for (const gw of gameweeksDocs) {
     const gwId = gw.id;
-    const mainDoc = await readSingleDoc(["weeklySurprises", gwId], `weeklySurprises/${gwId} (principal)`);
-    if (mainDoc) { documents.push(mainDoc); wsCount++; }
-
-    const secretMain = await readSingleDoc(["weeklySurprises", gwId, "secret", "main"], `secret/main (${gwId})`);
-    if (secretMain) { documents.push(secretMain); wsCount++; }
-    const secretBonus = await readSingleDoc(["weeklySurprises", gwId, "secret", "bonus"], `secret/bonus (${gwId})`);
-    if (secretBonus) { documents.push(secretBonus); wsCount++; }
-
+    await runSection(`weeklySurprises_${gwId}_main`, `Surprize — principal (${gwId})`, async () => {
+      const d = await readSingleDoc(["weeklySurprises", gwId]);
+      return d ? [d] : [];
+    });
+    await runSection(`weeklySurprises_${gwId}_secretMain`, `Surprize — secret/main (${gwId})`, async () => {
+      const d = await readSingleDoc(["weeklySurprises", gwId, "secret", "main"]);
+      return d ? [d] : [];
+    });
+    await runSection(`weeklySurprises_${gwId}_secretBonus`, `Surprize — secret/bonus (${gwId})`, async () => {
+      const d = await readSingleDoc(["weeklySurprises", gwId, "secret", "bonus"]);
+      return d ? [d] : [];
+    });
     for (const sub of HIGHER_LOWER_SUB) {
-      const entries = await readCollection(["weeklySurprises", gwId, sub], `${sub} (${gwId})`);
-      documents.push(...entries);
-      wsCount += entries.length;
+      await runSection(`weeklySurprises_${gwId}_${sub}`, `Surprize — ${sub} (${gwId})`, () => readCollection(["weeklySurprises", gwId, sub]));
     }
   }
-  counts.weeklySurprises = wsCount;
 
   // ── FEED — STRICT manual + published, dedupe pe id ──
-  report("feedEvents");
-  const manualNews = await readFilteredCollection(["feedEvents"], "subtype", "==", "manual", "Feed — știri manuale");
-  const publishedNews = await readFilteredCollection(["feedEvents"], "status", "==", "published", "Feed — publicate");
-  const seenFeedIds = new Set();
-  const feedEntries = [];
-  [...manualNews, ...publishedNews].forEach((e) => {
-    if (!seenFeedIds.has(e.id)) { seenFeedIds.add(e.id); feedEntries.push(e); }
+  await runSection("feedEvents", "Feed — știri manuale + publicate", async () => {
+    const manualNews = await readFilteredCollection(["feedEvents"], "subtype", "==", "manual");
+    const publishedNews = await readFilteredCollection(["feedEvents"], "status", "==", "published");
+    const seen = new Set();
+    const out = [];
+    [...manualNews, ...publishedNews].forEach((e) => { if (!seen.has(e.id)) { seen.add(e.id); out.push(e); } });
+    return out;
   });
-  addAll(feedEntries, "feedEvents");
-
-  report("feedFunItems");
-  addAll(await readCollection(["feedFunItems"], "Feed — item-e Fun"), "feedFunItems");
+  await runSection("feedFunItems", "Feed — item-e Fun", () => readCollection(["feedFunItems"]));
 
   // ── METADATA — currentSeasonId/currentGameweekId, cost mic
-  // (funcții deja existente, reutilizate, nu interogări noi construite
-  // special pentru backup). Best-effort — un eșec aici NU invalidează
-  // backup-ul (nu sunt date critice, doar context). ──
+  // (funcții deja existente, reutilizate). Best-effort — un eșec aici
+  // NU e o "secțiune de date", doar context, nu intră în
+  // failedSections. ──
   let currentSeasonId = null, currentGameweekId = null;
   try {
     const cs = await getCurrentSeason();
@@ -231,11 +195,10 @@ export async function generatePlayLeagueBackup(onProgress) {
     consistencyMode: "sequential-client-export",
     currentSeasonId,
     currentGameweekId,
-    adminsIncluded,
-    adminsError,
     counts,
     totalDocuments: documents.length,
-    backupStatus: "COMPLETE", // se ajunge aici DOAR dacă nimic de mai sus n-a aruncat
+    failedSections, // [] dacă totul a reușit
+    backupStatus: failedSections.length === 0 ? "COMPLETE" : "PARTIAL",
   };
 
   return { metadata, documents };

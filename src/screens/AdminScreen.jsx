@@ -1824,12 +1824,18 @@ export default function AdminScreen({ onBack }) {
     try {
       const backup = await generatePlayLeagueBackup((label) => setBackupStatus(`Se generează backup-ul… (${label})`));
       downloadBackupJson(backup);
-      const adminsNote = backup.metadata.adminsIncluded ? "" : " (⚠️ „admins” nu a putut fi citită — Rules — restul e complet)";
-      setBackupStatus(`✓ Backup complet — ${backup.metadata.totalDocuments} documente${adminsNote}`);
-      setBackupIsError(false);
+      const failed = backup.metadata.failedSections || [];
+      if (failed.length === 0) {
+        setBackupStatus(`✓ Backup complet — ${backup.metadata.totalDocuments} documente`);
+        setBackupIsError(false);
+      } else {
+        const list = failed.map((f) => f.label).join(", ");
+        setBackupStatus(`⚠️ Backup PARȚIAL — ${backup.metadata.totalDocuments} documente salvate. Lipsesc (permisiuni): ${list}`);
+        setBackupIsError(true); // culoare de atentionare, dar fisierul TOT s-a descarcat
+      }
     } catch (err) {
-      console.error("Backup PLAY LEAGUE eșuat:", err);
-      setBackupStatus(`❌ Backup eșuat — nu s-a generat un backup complet. ${err.message || err}`);
+      console.error("Backup PLAY LEAGUE eșuat complet:", err);
+      setBackupStatus(`❌ Backup eșuat complet — nu s-a generat niciun fișier. ${err.message || err}`);
       setBackupIsError(true);
     } finally {
       setBackupRunning(false);

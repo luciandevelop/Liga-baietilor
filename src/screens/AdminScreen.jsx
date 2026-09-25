@@ -1824,7 +1824,8 @@ export default function AdminScreen({ onBack }) {
     try {
       const backup = await generatePlayLeagueBackup((label) => setBackupStatus(`Se generează backup-ul… (${label})`));
       downloadBackupJson(backup);
-      setBackupStatus(`✓ Backup complet — ${backup.metadata.totalDocuments} documente`);
+      const adminsNote = backup.metadata.adminsIncluded ? "" : " (⚠️ „admins” nu a putut fi citită — Rules — restul e complet)";
+      setBackupStatus(`✓ Backup complet — ${backup.metadata.totalDocuments} documente${adminsNote}`);
       setBackupIsError(false);
     } catch (err) {
       console.error("Backup PLAY LEAGUE eșuat:", err);

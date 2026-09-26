@@ -901,6 +901,29 @@ export async function processDailyFillerIfQuiet() {
 const CLUB_FACT_HISTORY_COLLECTION = "clubFactHistory";
 const EXCLUSIVE_GROUP_COOLDOWN_MS = 14 * 24 * 3600 * 1000; // ~2 săptămâni înainte să poată reveni ceva din același grup
 
+// ── FIX READS (audit) — WelcomeScreen se remontează la orice navigare
+// Home → alt ecran → Home, iar Club Facts recitea ÎNTREAGA istorie
+// (feedState/clubFactHistory/items) pentru fiecare meci eligibil la
+// FIECARE remount, chiar dacă meciul respectiv fusese deja complet
+// verificat în aceeași sesiune. Gardă MODULE-LEVEL (nu useRef — supra-
+// viețuiește exact traseul Home→altceva→Home în cadrul aceleiași
+// sesiuni SPA, cerut explicit) — matchId intră în Set STRICT dacă
+// fereastra temporală era activă ȘI apelul a reușit fără eroare (dacă
+// meciul încă nu era în fereastră, isClubFactWindowActive întorcea deja
+// [] instant, fără citire — acel caz NU trebuie garda, ca fereastra să
+// poată deveni activă mai târziu). Algoritmul original
+// (processClubFactsForMatch) rămâne complet neatins — wrapper STRICT. ──
+const clubFactsSessionVerified = new Set();
+
+export async function processClubFactsForMatchGuarded(match, now = Date.now()) {
+  if (clubFactsSessionVerified.has(match.id)) return [];
+  const kickoffMs = match.kickoffAt?.toMillis ? match.kickoffAt.toMillis() : null;
+  const windowActive = kickoffMs ? isClubFactWindowActive(kickoffMs, now) : false;
+  const events = await processClubFactsForMatch(match, now);
+  if (windowActive) clubFactsSessionVerified.add(match.id);
+  return events;
+}
+
 export async function processClubFactsForMatch(match, now = Date.now()) {
   const kickoffMs = match.kickoffAt?.toMillis ? match.kickoffAt.toMillis() : null;
   if (!kickoffMs || !isClubFactWindowActive(kickoffMs, now)) return [];

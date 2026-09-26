@@ -7,7 +7,7 @@ import { slideUrl, seasonNumberFromList } from "../storyAssets";
 import StoryViewer from "../components/StoryViewer";
 import { subscribeToGameweekMatches } from "../services/matchesStore";
 import { getUserPublicProfiles } from "../services/profilesService";
-import { processFinishedMatches, processJokerActivation, processUpcomingMatches, getHomeFeedTop, processSurpriseCreated, processSurpriseMatchup, processSurpriseResult, processClubFactsForMatch } from "../services/feedService";
+import { processFinishedMatches, processJokerActivation, processUpcomingMatches, getHomeFeedTop, processSurpriseCreated, processSurpriseMatchup, processSurpriseResult, processClubFactsForMatchGuarded } from "../services/feedService";
 import { doc, getDoc } from "firebase/firestore";
 import { db } from "../firebase";
 import useNow from "../hooks/useNow";
@@ -436,7 +436,7 @@ export default function WelcomeScreen({ user, profile, isAdmin, onOpenAdmin, onO
     // fereastra 08:00→23:59 ziua următoare (verificată intern per
     // meci); istoric persistent, deci refresh-ul nu repetă nimic.
     matches.forEach((m) => {
-      processClubFactsForMatch(m)
+      processClubFactsForMatchGuarded(m)
         .then((events) => { if (events.length > 0) refreshFeedTop(); })
         .catch((err) => console.error(`Eroare fapte club (${m.homeTeam}-${m.awayTeam}):`, err));
     });

@@ -183,10 +183,22 @@ export async function computeRealGoalsTotal(matches) {
 export async function resolveAllHigherLowerDuels(gameweekId, realGoalsTotal) {
   const hl = await getHigherLower(gameweekId);
   if (!hl) throw new Error("Mai Mare/Mai Mic inexistent.");
+  // ── FIX coliziune bonusPoints: Surpriza Mică (ex. Penalty PvP) scrie
+  // results/{uid}.bonusPoints la resolveBonus. Dacă Bonusul NU e încă
+  // rezolvat, orice bonusPoints existent provine din versiunea veche a
+  // acestei funcții (bonusul de duel scris greșit acolo) — îl curățăm
+  // la 0. Dacă Bonusul E deja rezolvat, bonusPoints îi aparține și NU e
+  // atins. O singură citire, doar la apăsarea butonului Admin. ──
+  const parentSnap = await getDoc(parentRef(gameweekId));
+  const bonusAlreadyResolved = !!parentSnap.data()?.bonusResolved;
   const outcomes = [];
   for (const [duelId, duel] of Object.entries(hl.duels)) {
-    const res = await computeAndSaveHigherLowerDuelScore(gameweekId, duelId, duel, hl, realGoalsTotal);
+    const res = await computeAndSaveHigherLowerDuelScore(gameweekId, duelId, duel, hl, realGoalsTotal, bonusAlreadyResolved);
     outcomes.push({ duelId, computed: !!res });
+  }
+  // Totalul real de goluri, persistat ca jucătorii să-l vadă la baraj.
+  if (realGoalsTotal != null) {
+    await updateDoc(parentRef(gameweekId), { higherLowerRealGoalsTotal: realGoalsTotal });
   }
   return outcomes;
 }
@@ -213,7 +225,7 @@ export function computeHigherLowerDuelPoints(winsA, winsB, tbA, tbB, realGoalsTo
   };
 }
 
-async function computeAndSaveHigherLowerDuelScore(gameweekId, duelId, duel, hl, realGoalsTotal) {
+async function computeAndSaveHigherLowerDuelScore(gameweekId, duelId, duel, hl, realGoalsTotal, bonusAlreadyResolved = false) {
   const picksSnap = await getDocs(query(collection(db, "weeklySurprises", gameweekId, "higherLowerPicks"), where("duelId", "==", duelId)));
   const picksByUid = { [duel.playerA]: {}, [duel.playerB]: {} };
   picksSnap.forEach((d) => {
@@ -239,11 +251,18 @@ async function computeAndSaveHigherLowerDuelScore(gameweekId, duelId, duel, hl, 
 
   const { bonusA, bonusB, totalA, totalB } = computeHigherLowerDuelPoints(winsA, winsB, tbA, tbB, realGoalsTotal);
 
+  // ── Bonusul de victorie al duelului face parte din Surpriza Mare
+  // (Mai Mare/Mai Mic, max 200 = 6×25 + 50) → intră în mainPoints, NU în
+  // bonusPoints (câmpul Surprizei Mici — Penalty PvP etc., cu care se
+  // suprascria reciproc). Aceleași valori (totalA/totalB din formula
+  // pură, neschimbată). Top 3 neafectat: se calculează strict din
+  // pointsFromMatches, înainte ca results să fie citite. ──
+  const extraA = bonusAlreadyResolved ? {} : { bonusPoints: 0 };
   await setDoc(doc(db, "weeklySurprises", gameweekId, "results", duel.playerA), {
-    mainPoints: winsA * POINTS_PER_ROUND, bonusPoints: bonusA, source: "higherLower",
+    mainPoints: totalA, higherLowerDuelBonus: bonusA, source: "higherLower", ...extraA,
   }, { merge: true });
   await setDoc(doc(db, "weeklySurprises", gameweekId, "results", duel.playerB), {
-    mainPoints: winsB * POINTS_PER_ROUND, bonusPoints: bonusB, source: "higherLower",
+    mainPoints: totalB, higherLowerDuelBonus: bonusB, source: "higherLower", ...extraA,
   }, { merge: true });
 
   return { winsA, winsB, totalA, totalB };
@@ -329,11 +348,12 @@ export async function getMyHigherLowerView(gameweekId, uid) {
   const allDecided = activeRoundIndex === -1;
   const myTiebreaker = myTbSnap.exists() ? myTbSnap.data().value : null;
   const tbRevealed = myTiebreaker != null && oppTiebreaker != null && !!parentSnap.data()?.higherLowerRevealed;
+  const realGoalsTotal = parentSnap.data()?.higherLowerRealGoalsTotal ?? null;
 
   return {
     duelId, duel, opponentUid, rounds, winsMine, winsOpp,
     activeRoundIndex, tiebreakNeeded: allDecided,
-    myTiebreaker, oppTiebreaker, tbRevealed,
+    myTiebreaker, oppTiebreaker, tbRevealed, realGoalsTotal,
   };
 }
 

@@ -218,6 +218,11 @@ export function computeHigherLowerDuelPoints(winsA, winsB, tbA, tbB, realGoalsTo
     else if (distB < distA) bonusB = DUEL_WIN_BONUS;
     else { bonusA = DUEL_WIN_BONUS / 2; bonusB = DUEL_WIN_BONUS / 2; }
   }
+  // ── Regula stabilită de Admin: la egalitate pe runde, dacă DOAR UNUL a
+  // completat barajul, acela câștigă bonusul. Niciunul → niciun bonus.
+  // Decis tot doar după ce totalul real e cunoscut (toate 3 meciuri Final). ──
+  else if (realGoalsTotal != null && tbA != null && tbB == null) bonusA = DUEL_WIN_BONUS;
+  else if (realGoalsTotal != null && tbB != null && tbA == null) bonusB = DUEL_WIN_BONUS;
   return {
     bonusA, bonusB,
     totalA: winsA * POINTS_PER_ROUND + bonusA,

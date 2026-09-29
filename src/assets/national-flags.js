@@ -27,12 +27,16 @@ import england from "./national-flags/england.svg";
 import spain from "./national-flags/spain.svg";
 import scotland from "./national-flags/scotland.svg";
 import switzerland from "./national-flags/switzerland.svg";
+import argentina from "./national-flags/argentina.svg";
+import benin from "./national-flags/benin.svg";
+import northMacedonia from "./national-flags/north-macedonia.svg";
 
 export const NATIONAL_FLAG_LOGOS = {
   netherlands, germany, serbia, greece, norway, denmark, portugal, wales,
   italy, belgium, turkey, france, poland,
   "bosnia-and-herzegovina": bosniaAndHerzegovina,
   sweden, romania, czechia, croatia, england, spain, scotland, switzerland,
+  argentina, benin, "north-macedonia": northMacedonia,
 };
 
 // Numele AFIȘATE — în română, cerut explicit ("interfața trebuie să
@@ -60,6 +64,9 @@ export const NATIONAL_FLAG_NAMES = {
   spain: "Spania",
   scotland: "Scoția",
   switzerland: "Elveția",
+  argentina: "Argentina",
+  benin: "Benin",
+  "north-macedonia": "Macedonia de Nord",
 };
 
 // Alias-uri — românește (cu/fără diacritice, slugify le normalizează
@@ -109,4 +116,9 @@ export const NATIONAL_FLAG_ALIASES = {
   "scotland": "scotland",
   "elvetia": "switzerland",
   "switzerland": "switzerland",
+  "argentina": "argentina",
+  "benin": "benin",
+  "macedonia-de-nord": "north-macedonia",
+  "north-macedonia": "north-macedonia",
+  "macedonia": "north-macedonia",
 };

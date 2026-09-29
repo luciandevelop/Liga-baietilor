@@ -303,6 +303,7 @@ export default function SurprisesScreen({ user, onBack }) {
                       myMatchScore={myResult?.mainMatchScore}
                       opponentMatchScore={myResult?.mainOpponentMatchScore}
                       deadlinePassed={deadlinePassed}
+                      triviaLocked={!!pub?.triviaLocked}
                     />
                   )}
 

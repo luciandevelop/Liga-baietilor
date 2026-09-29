@@ -78,7 +78,7 @@ import {
 import {
   MAIN_CATALOG, BONUS_CATALOG, getWeeklySurprise, getSecretMain, getSecretBonus,
   configureSurprise, revealMain, revealBonus, resolveMain, resolveBonus, getSurpriseStatus, revealRemainingMysteryBoxes,
-  configureTriviaQuestions, markTriviaCorrectAnswer, getTriviaSubmissionStatus,
+  configureTriviaQuestions, markTriviaCorrectAnswer, getTriviaSubmissionStatus, setTriviaLocked,
   configureZaruriQuestions, markZaruriTarget, getZaruriSubmissionStatus,
   getSabotajPublicProgress, revealSabotajNetwork, undoLastSabotajChoice,
   getPenaltySubmittedUids,
@@ -537,6 +537,29 @@ export default function AdminScreen({ onBack }) {
   const [triviaSubmissionPanel, setTriviaSubmissionPanel] = useState(null); // gwId cu panoul deschis
   const [triviaSubmissionRows, setTriviaSubmissionRows] = useState([]);
   const [triviaSubmissionLoading, setTriviaSubmissionLoading] = useState(false);
+  const [triviaLockBusy, setTriviaLockBusy] = useState(false);
+
+  // ── Blocare/deblocare manuală Trivia — confirmare, scriere în docul
+  // public, actualizare LOCALĂ a stării (zero re-citire). ──
+  async function handleToggleTriviaLock(gwId, lock) {
+    if (triviaLockBusy) return;
+    const ok = window.confirm(lock
+      ? "Blochezi răspunsurile Trivia? Nimeni nu va mai putea trimite sau modifica răspunsuri."
+      : "Deblochezi răspunsurile Trivia? Jucătorii vor putea din nou să răspundă și să modifice.");
+    if (!ok) return;
+    setTriviaLockBusy(true);
+    try {
+      await setTriviaLocked(gwId, lock);
+      setSurprisesData((prev) => ({
+        ...prev,
+        [gwId]: { ...prev[gwId], public: { ...(prev[gwId]?.public || {}), triviaLocked: lock } },
+      }));
+    } catch (err) {
+      window.alert("Eroare: " + (err.message || String(err)));
+    } finally {
+      setTriviaLockBusy(false);
+    }
+  }
 
   function openTriviaEditor(gwId, existingQuestions) {
     if (triviaEditorOpen === gwId) { setTriviaEditorOpen(null); return; }
@@ -2809,6 +2832,26 @@ export default function AdminScreen({ onBack }) {
                             {triviaEditorOpen === gw.id ? "▲ Închide editorul" : "📝 Configurează întrebările"}
                           </button>
 
+                          {mainRevealed && (
+                            <div style={s.triviaLockBox}>
+                              <div style={s.triviaLockRow}>
+                                <span style={s.triviaValidateLabel}>Stare răspunsuri</span>
+                                <span style={data.public?.triviaLocked ? s.triviaLockPillLocked : s.triviaLockPillOpen}>
+                                  {data.public?.triviaLocked ? "BLOCATĂ" : "DESCHISĂ"}
+                                </span>
+                              </div>
+                              {data.public?.triviaLocked ? (
+                                <button type="button" style={{ ...s.btnGhost, width: "100%" }} disabled={triviaLockBusy} onClick={() => handleToggleTriviaLock(gw.id, false)}>
+                                  🔓 Deblochează răspunsurile
+                                </button>
+                              ) : (
+                                <button type="button" style={{ ...s.btn, width: "100%" }} disabled={triviaLockBusy} onClick={() => handleToggleTriviaLock(gw.id, true)}>
+                                  🔒 Blochează răspunsurile
+                                </button>
+                              )}
+                            </div>
+                          )}
+
                           {triviaEditorOpen === gw.id && (
                             <div style={s.triviaEditor}>
                               {triviaDraft.map((q, i) => (
@@ -3976,6 +4019,10 @@ const s = {
     padding: "4px 6px", fontSize: 10.5, color: "#fff",
   },
 
+  triviaLockBox: { marginTop: 10, padding: 10, border: "1px solid rgba(255,255,255,0.1)", borderRadius: 8 },
+  triviaLockRow: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 },
+  triviaLockPillOpen: { fontSize: 10.5, fontWeight: 800, padding: "3px 8px", borderRadius: 6, background: "rgba(139,217,87,0.15)", color: "#8BD957", border: "1px solid rgba(139,217,87,0.4)" },
+  triviaLockPillLocked: { fontSize: 10.5, fontWeight: 800, padding: "3px 8px", borderRadius: 6, background: "rgba(240,85,90,0.15)", color: "#F0555A", border: "1px solid rgba(240,85,90,0.4)" },
   triviaSubmissionSection: { marginTop: 10, paddingTop: 8, borderTop: "1px dashed rgba(255,255,255,0.1)" },
   triviaSubmissionList: { marginTop: 8, display: "flex", flexDirection: "column", gap: 4 },
   triviaSubmissionRow: { display: "flex", justifyContent: "space-between", fontSize: 10.5, color: "#fff", padding: "3px 0" },

@@ -2,10 +2,16 @@ import { useEffect, useState } from "react";
 import { submitTriviaAnswer, getMyTriviaAnswers } from "../services/surprisesService";
 import { color, font, radius } from "../matchdayTheme";
 
-export default function TriviaExperience({ gameweekId, myUid, opponentUid, isBye, questions, profiles, resolved, myPoints, myMatchScore, opponentMatchScore, deadlinePassed }) {
+export default function TriviaExperience({ gameweekId, myUid, opponentUid, isBye, questions, profiles, resolved, myPoints, myMatchScore, opponentMatchScore, deadlinePassed, triviaLocked }) {
   const [myAnswers, setMyAnswers] = useState({});
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(null); // questionId în curs de trimitere
+  // ── Blocare manuală Admin: din documentul public (prop) SAU detectată
+  // la salvare (ecran deschis dinainte de blocare — refuzul serverului
+  // comută imediat interfața pe închis, fără reîncărcare). ──
+  const [lockedNow, setLockedNow] = useState(false);
+  const [saveError, setSaveError] = useState("");
+  const isLocked = deadlinePassed || !!triviaLocked || lockedNow;
 
   useEffect(() => {
     let cancelled = false;
@@ -16,13 +22,23 @@ export default function TriviaExperience({ gameweekId, myUid, opponentUid, isBye
   }, [gameweekId, myUid]);
 
   async function handleAnswer(questionId, answer) {
-    if (deadlinePassed || resolved) return;
+    if (isLocked || resolved) return;
     setSubmitting(questionId);
+    setSaveError("");
+    const previous = myAnswers[questionId];
     setMyAnswers((prev) => ({ ...prev, [questionId]: answer })); // optimist
     try {
       await submitTriviaAnswer(gameweekId, myUid, questionId, answer);
     } catch (err) {
       console.error("Eroare la trimiterea răspunsului:", err);
+      // Revert — altfel jucătorul ar vedea selectată o variantă NEsalvată.
+      setMyAnswers((prev) => {
+        const next = { ...prev };
+        if (previous === undefined) delete next[questionId]; else next[questionId] = previous;
+        return next;
+      });
+      if (String(err?.message || "").includes("Trivia închisă")) setLockedNow(true);
+      else setSaveError("Răspunsul nu s-a salvat. Încearcă din nou.");
     } finally {
       setSubmitting(null);
     }
@@ -38,6 +54,8 @@ export default function TriviaExperience({ gameweekId, myUid, opponentUid, isBye
         <div style={s.progress}>{answeredCount}/{questions.length} răspunsuri date</div>
         {gradedQuestions.length > 0 && <div style={s.baseScore}>Scor de bază: {myBaseScore}p</div>}
       </div>
+      {isLocked && !resolved && <div style={s.lockedMsg}>🔒 Trivia închisă</div>}
+      {saveError && <div style={s.saveErrorMsg}>{saveError}</div>}
 
       {!loading && questions.map((q) => {
         const myAnswer = myAnswers[q.id];
@@ -54,7 +72,7 @@ export default function TriviaExperience({ gameweekId, myUid, opponentUid, isBye
             <div style={s.optionsRow}>
               <button
                 type="button"
-                disabled={deadlinePassed || resolved || submitting === q.id}
+                disabled={isLocked || resolved || submitting === q.id}
                 onClick={() => handleAnswer(q.id, "A")}
                 style={{ ...s.optionBtn, ...(myAnswer === "A" ? s.optionBtnSelected : {}) }}
               >
@@ -62,7 +80,7 @@ export default function TriviaExperience({ gameweekId, myUid, opponentUid, isBye
               </button>
               <button
                 type="button"
-                disabled={deadlinePassed || resolved || submitting === q.id}
+                disabled={isLocked || resolved || submitting === q.id}
                 onClick={() => handleAnswer(q.id, "B")}
                 style={{ ...s.optionBtn, ...(myAnswer === "B" ? s.optionBtnSelected : {}) }}
               >
@@ -108,6 +126,11 @@ export default function TriviaExperience({ gameweekId, myUid, opponentUid, isBye
 }
 
 const s = {
+  lockedMsg: {
+    textAlign: "center", fontSize: 13, fontWeight: 800, color: "#F0A94E", padding: "8px 10px", marginBottom: 12,
+    background: "rgba(240,169,78,0.08)", border: "1px solid rgba(240,169,78,0.3)", borderRadius: 8,
+  },
+  saveErrorMsg: { textAlign: "center", fontSize: 12, color: "#F0555A", marginBottom: 10 },
   wrap: {
     background: "linear-gradient(180deg, rgba(212,175,55,0.08) 0%, rgba(18,20,28,0.97) 30%, rgba(8,9,13,0.99) 100%)",
     border: "1px solid rgba(212,175,55,0.3)", borderRadius: radius.lg, padding: "14px 12px",

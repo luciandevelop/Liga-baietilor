@@ -1289,9 +1289,23 @@ export async function markTriviaCorrectAnswer(gameweekId, questionId, correctAns
 // ── User — răspunde la o întrebare. Editabil liber până la Resolve
 // (fără lock intermediar, Trivia n-are "kickoff" per întrebare). ──
 export async function submitTriviaAnswer(gameweekId, uid, questionId, answer) {
+  // ── Blocare manuală (Admin) — verificată DIRECT la salvare, nu doar în
+  // UI: acoperă și jucătorul care avea ecranul deschis dinainte de
+  // blocare. O singură citire, strict la apăsarea unui răspuns. ──
+  const pubSnap = await getDoc(doc(db, "weeklySurprises", gameweekId));
+  if (pubSnap.exists() && pubSnap.data().triviaLocked === true) {
+    throw new Error("🔒 Trivia închisă — răspunsurile nu mai pot fi trimise sau modificate.");
+  }
   await setDoc(doc(db, "weeklySurprises", gameweekId, "triviaAnswers", `${questionId}_${uid}`), {
     uid, questionId, answer, updatedAt: serverTimestamp(),
   }, { merge: true });
+}
+
+// ── Admin — blochează / deblochează manual răspunsurile Trivia.
+// Câmp în documentul PUBLIC al etapei (deja citit de ecranul Surprize
+// al jucătorilor la deschidere → zero citiri noi pentru ei). ──
+export async function setTriviaLocked(gameweekId, locked) {
+  await setDoc(doc(db, "weeklySurprises", gameweekId), { triviaLocked: !!locked }, { merge: true });
 }
 
 // ── Răspunsurile PROPRII ale userului curent — pentru pre-completarea

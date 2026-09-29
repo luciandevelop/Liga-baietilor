@@ -7,6 +7,13 @@ import { getDisplayMatchState, MATCH_STATUS_LABEL, MATCH_STATUS_TONE } from "../
 import { getCompetitionTheme } from "../competitionThemes";
 import { color, font, radius, shadow } from "../matchdayTheme";
 
+// ── 🐐 Decorativ, pur vizual: Argentina–Benin (referință GOAT / Messi).
+// Nu atinge datele, ID-ul meciului, pronosticurile sau punctajul. ──
+function isGoatMatch(m) {
+  const n = (x) => String(x || "").trim().toLowerCase();
+  return n(m?.homeTeam) === "argentina" && n(m?.awayTeam) === "benin";
+}
+
 function formatKickoff(match) {
   const d = match.kickoffAt?.toDate ? match.kickoffAt.toDate() : null;
   if (!d) return "";
@@ -88,7 +95,7 @@ export default function MatchPredictionCard({
         <div style={s.matchRow}>
           <div style={s.teamCol}>
             <ClubLogo teamName={match.homeTeam} size={46} />
-            <span style={s.teamName}>{match.homeTeam}</span>
+            <span style={s.teamName}>{match.homeTeam}{isGoatMatch(match) && <span title="GOAT" aria-label="GOAT"> 🐐</span>}</span>
           </div>
           <span style={s.vs}>vs</span>
           <div style={s.teamCol}>

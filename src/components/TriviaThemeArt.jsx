@@ -20,7 +20,7 @@ export const TRIVIA_THEMES = {
 };
 
 export function Flag({ team, w = 22, h = 15, style }) {
-  const src = getClubLogo(team);
+  const src = getClubLogo(team)?.url; // getClubLogo întoarce { url, slug, name }
   if (!src) return null;
   return <img src={src} alt={team} width={w} height={h} style={{ width: w, height: h, objectFit: "cover", borderRadius: 3, boxShadow: "0 0 0 1px rgba(255,255,255,0.25)", display: "block", ...style }} />;
 }
@@ -62,7 +62,7 @@ export default function TriviaEmblem({ theme }) {
         </div>
       );
     case "vs": {
-      const fr = getClubLogo("Franța"); const es = getClubLogo("Spania");
+      const fr = getClubLogo("Franța")?.url; const es = getClubLogo("Spania")?.url;
       return (
         <div style={{ ...box, background: "#151823" }}>
           {fr && <img src={fr} alt="Franța" style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover", clipPath: "polygon(0 0, 100% 0, 0 100%)" }} />}

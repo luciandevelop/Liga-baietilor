@@ -1431,7 +1431,77 @@ export async function listSeasonLeaderboard(seasonId) {
 // e etapa deja rezolvată de apelant (curentă sau ultima finalizată) —
 // nu se recalculează aici a doua oară, ca să nu existe două definiții
 // diferite de "etapa curentă" în aceeași aplicație.
-export async function getPlayerCardStats(uid, seasonId, etapaGameweekId) {
+// ══════════════════════════════════════════════════════════════════
+// FAZA 3 reads — punctele LIVE ale etapei pentru UN SINGUR jucător.
+// Aceeași logică, câmp cu câmp, ca getLiveGameweekPointsDiagnostic, dar
+// citind DOAR datele acelui jucător: matchPoints (uid + etapă) și
+// pronosticul lui la fiecare meci Final (id exact matchId_uid), în loc
+// de matchPoints-urile TUTUROR și pronosticurile TUTUROR la fiecare meci.
+// Rezultat identic cu pointsByUid[uid] / breakdownByUid[uid] din calculul
+// complet. Orice eroare aruncă → apelantul revine la calculul complet.
+// ══════════════════════════════════════════════════════════════════
+// FAZA 3 — dacă serverul respinge PERMANENT interogarea per-jucător
+// (index lipsă / regulă), nu o mai încercăm în restul sesiunii: fiecare
+// card merge direct pe calculul complet, fără o cerere eșuată în plus.
+// Erorile temporare (rețea) NU dezactivează nimic.
+let perPlayerLiveDisabled = false;
+function isPermanentFirestoreError(err) {
+  const code = err?.code || "";
+  return code === "failed-precondition" || code === "permission-denied" || code === "invalid-argument";
+}
+
+async function getLivePlayerEtapaBreakdown(gameweekId, uid, isActive, knownMatches = null) {
+  // Calculul complet include DOAR userii activi — un jucător dezactivat
+  // nu are puncte LIVE nici acolo.
+  if (!isActive) return { points: 0, breakdown: {} };
+  const matches = knownMatches || await listMatches(gameweekId);
+  const completedMatches = matches.filter((m) => isMatchFinal(m));
+  if (completedMatches.length === 0) return { points: 0, breakdown: {} };
+
+  const mpSnap = await getDocs(query(collection(db, "matchPoints"),
+    where("gameweekId", "==", gameweekId), where("uid", "==", uid)));
+  if (mpSnap.docs.length === 0) return { points: 0, breakdown: {} };
+
+  const finalIds = new Set(completedMatches.map((m) => m.id));
+  const neededMatchIds = [...new Set(mpSnap.docs.map((d) => d.data().matchId).filter((id) => finalIds.has(id)))];
+  const predByMatch = {};
+  await Promise.all(neededMatchIds.map(async (matchId) => {
+    const ps = await getDoc(doc(db, "predictions", `${matchId}_${uid}`));
+    predByMatch[matchId] = ps.exists() ? ps.data() : null;
+  }));
+
+  let points = 0;
+  const breakdown = {};
+  mpSnap.docs.forEach((d) => {
+    const mp = d.data();
+    points += mp.points || 0;
+    const match = completedMatches.find((m) => m.id === mp.matchId);
+    if (match) {
+      const rawPrediction = predByMatch[mp.matchId] || null;
+      breakdown[mp.matchId] = {
+        matchId: mp.matchId, homeTeam: match.homeTeam, awayTeam: match.awayTeam, kickoffAt: match.kickoffAt,
+        status: "scored", total: mp.points, finalMatchPoints: mp.points,
+        prediction: mp.prediction
+          ? { ...mp.prediction, corners: rawPrediction?.corners, cards: rawPrediction?.cards }
+          : null,
+        real: mp.real
+          ? { ...mp.real, corners: match.realCorners, cards: match.realCards }
+          : { scoreA: match.realScoreA, scoreB: match.realScoreB, corners: match.realCorners, cards: match.realCards },
+        scorePoints: mp.scorePoints ?? 0,
+        cornersPoints: mp.cornersPoints ?? 0,
+        cardsPoints: mp.cardsPoints ?? 0,
+        loneWolfBonus: mp.loneWolfBonus ?? 0,
+        jokerExtraBonus: mp.jokerExtraBonus ?? 0,
+        isFeatured: mp.isFeatured ?? false,
+        isJoker: mp.isJoker ?? false,
+        isJokerExtra: mp.isJokerExtra ?? false,
+      };
+    }
+  });
+  return { points, breakdown };
+}
+
+export async function getPlayerCardStats(uid, seasonId, etapaGameweekId, knownMatches = null) {
   const [scoresSnap, seasonGameweeks, userSnap] = await Promise.all([
     getDocs(query(collection(db, "gameweekScores"), where("userId", "==", uid))),
     seasonId ? listGameweeks(seasonId) : Promise.resolve([]),
@@ -1516,11 +1586,26 @@ export async function getPlayerCardStats(uid, seasonId, etapaGameweekId) {
     // (funcție veche, separată, care producea o cifră diferită de
     // Clasament pentru ACELAȘI user — bug real, reparat aici, nu doar
     // în Clasament).
-    const { pointsByUid, breakdownByUid } = await getLiveGameweekPoints(etapaGameweekId);
-    const myBreakdown = breakdownByUid[uid] || {};
+    // FAZA 3 reads — doar datele acestui jucător; la orice eroare
+    // (ex. regulă/index), revenire la calculul complet de dinainte.
+    let myPoints = 0;
+    let myBreakdown = {};
+    try {
+      if (perPlayerLiveDisabled) throw new Error("per-player dezactivat în această sesiune");
+      const isActive = userSnap.exists() ? getPlayerStatus(userSnap.data()) === "active" : false;
+      const live = await getLivePlayerEtapaBreakdown(etapaGameweekId, uid, isActive, knownMatches);
+      myPoints = live.points;
+      myBreakdown = live.breakdown;
+    } catch (err) {
+      if (isPermanentFirestoreError(err)) perPlayerLiveDisabled = true;
+      if (!perPlayerLiveDisabled || isPermanentFirestoreError(err)) console.error("Card: calculul per-jucător a eșuat, revin la calculul complet:", err);
+      const { pointsByUid, breakdownByUid } = await getLiveGameweekPoints(etapaGameweekId);
+      myPoints = pointsByUid[uid] || 0;
+      myBreakdown = breakdownByUid[uid] || {};
+    }
     if (Object.keys(myBreakdown).length > 0) {
       matchesSource = { breakdown: myBreakdown };
-      liveEtapaPoints = pointsByUid[uid] || 0;
+      liveEtapaPoints = myPoints || 0;
     }
   }
 

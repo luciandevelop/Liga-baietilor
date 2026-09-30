@@ -421,6 +421,33 @@ async function getExactScorersForMatch(matchId) {
 // exact), PLUS facts derivate (distribuția predicțiilor, "nimeni n-a
 // nimerit"), PLUS banter atașat dacă subtipul se pretează, cu cooldown
 // persistat. ──
+// ══════════════════════════════════════════════════════════════════
+// FAZA 1 reads — procesarea meciurilor Final rulează DOAR din fluxul
+// Admin (după publicarea rezultatului + matchPoints), nu pe fiecare
+// telefon la fiecare deschidere de Home. Marker PERSISTENT pe meci
+// (feedProcessedSig = scorul procesat) → zero citiri pentru a verifica
+// „ce e de procesat" (Adminul are deja lista meciurilor), un singur set
+// de scrieri per meci, o singură dată. Corecție de scor ulterioară →
+// semnătura diferă → reprocesare legitimă. Eșec → markerul NU se scrie
+// → se reia la următoarea validare sau din butonul Admin de reluare.
+// Lock în memorie: două apăsări rapide nu rulează în paralel.
+// ══════════════════════════════════════════════════════════════════
+let pendingFinishedRun = null;
+export async function processPendingFinishedMatchesFeed(gwMatches) {
+  if (pendingFinishedRun) return pendingFinishedRun;
+  pendingFinishedRun = (async () => {
+    const sigOf = (m) => `${m.realScoreA}-${m.realScoreB}`;
+    const pending = (gwMatches || []).filter((m) =>
+      m.status === "finished" && m.realScoreA != null && m.realScoreB != null && m.feedProcessedSig !== sigOf(m));
+    if (pending.length === 0) return { processed: 0, events: 0 };
+    const events = await processFinishedMatches(pending);
+    await Promise.all(pending.map((m) =>
+      setDoc(doc(db, "matches", m.id), { feedProcessedSig: sigOf(m) }, { merge: true })));
+    return { processed: pending.length, events: events.length };
+  })();
+  try { return await pendingFinishedRun; } finally { pendingFinishedRun = null; }
+}
+
 export async function processFinishedMatches(matches, allGwMatches) {
   const recentBanter = await getRecentBanterKeys();
   const recentVariants = await getRecentVariantsMap();

@@ -1,6 +1,7 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { getCurrentSeason, getCurrentGameweek } from "../services/predictionsService";
 import { subscribeToLiveSnapshot, isSnapshotStale, getOrRunFallback } from "../services/liveSnapshotStore";
+import { getLastKnownMatches } from "../services/matchesStore";
 import { computeRankingBonuses } from "../services/scoringEngine";
 import {
   listGameweekScores,
@@ -310,6 +311,7 @@ export default function LeaderboardScreen({ onBack, user, isAdmin }) {
   // mereu să arate meciurile etapei curente — dacă jucătorul ăla nu avea
   // date acolo, lista ieșea goală, chiar dacă chiar avea meciuri în etapa
   // pe care tocmai o deschisese.
+  const cardRequestRef = useRef(0);
   async function handleOpenPlayer(uid, rank, contextGwId = gameweek?.id, scope = "etapa") {
     // Card-ul de jucător e un sub-ecran din perspectiva Back-ului — Android
     // Back trebuie să-l închidă întâi, nu să sară direct la Home. Se
@@ -320,13 +322,18 @@ export default function LeaderboardScreen({ onBack, user, isAdmin }) {
     setCardStats(null);
     setCardScope(scope);
     setCardLoading(true);
+    // FAZA 3 — un răspuns întârziat pentru cardul anterior NU mai poate
+    // suprascrie cardul deschis acum (schimbare rapidă între carduri).
+    const reqId = ++cardRequestRef.current;
     try {
-      const stats = await getPlayerCardStats(uid, season?.id, contextGwId);
+      // Meciurile vin din listener-ul activ, dacă există (fără citiri); altfel se citesc.
+      const stats = await getPlayerCardStats(uid, season?.id, contextGwId, getLastKnownMatches(contextGwId));
+      if (reqId !== cardRequestRef.current) return;
       setCardStats({ ...stats, rank });
     } catch (err) {
       console.error("Eroare la încărcarea cardului:", err);
     } finally {
-      setCardLoading(false);
+      if (reqId === cardRequestRef.current) setCardLoading(false);
     }
   }
 
@@ -340,7 +347,9 @@ export default function LeaderboardScreen({ onBack, user, isAdmin }) {
   useEffect(() => {
     function onPopState(event) {
       if (!event.state?.leaderboardPlayerCard) {
+        cardRequestRef.current++; // FAZA 3 — răspunsul cererii în curs e ignorat după închidere
         setOpenUid("");
+        setCardLoading(false);
       }
     }
     window.addEventListener("popstate", onPopState);

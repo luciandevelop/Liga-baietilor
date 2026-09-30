@@ -50,6 +50,8 @@ import {
   listRecentEventsForAdmin, listAdminFunItems, addFunItem, deleteFunItem, deleteAllLiveMatchEvents,
   regenerateCurrentGameweekFeed, processLiveRankChangesCapped, processTeamDuelPulse, processRankChanges,
   publishManualFeedNews, deleteManualFeedNews, listRecentManualNews,
+  processPendingFinishedMatchesFeed, processSurpriseCreated, processSurpriseMatchup, processSurpriseResult,
+  processUpcomingMatches, processClubFactsForMatchGuarded,
   publishFeedEvent, ignoreFeedEvent, setFeedEventPriority,
 } from "../services/feedService";
 import { activateGameweekStory, deactivateGameweekStory, activateSeasonStory, deactivateSeasonStory, storyKey } from "../services/storyService";
@@ -781,6 +783,59 @@ export default function AdminScreen({ onBack }) {
     }
   }
 
+  // ── FAZA 1 reads — generatorii GLOBALI de Feed rulează din Admin, nu
+  // pe fiecare telefon. Aceleași apeluri, aceleași texte/ID-uri
+  // deterministe ca înainte în Home (idempotente). ──
+  async function runSurpriseFeed(gwId, pub, sm, sb) {
+    const jobs = [];
+    if (sm && pub?.mainRevealed) {
+      const mainLabel = MAIN_CATALOG.find((c) => c.id === sm.type)?.label || sm.type;
+      jobs.push(processSurpriseCreated(gwId, "main", sm.type, mainLabel));
+      jobs.push(processSurpriseMatchup(gwId, "main", sm.type, sm.config));
+      if (pub.mainResolved) jobs.push(processSurpriseResult(gwId, "main", sm.type, sm.config, mainLabel));
+    }
+    if (sb && pub?.bonusRevealed) {
+      const bonusLabel = BONUS_CATALOG.find((c) => c.id === sb.type)?.label || sb.type;
+      jobs.push(processSurpriseCreated(gwId, "bonus", sb.type, bonusLabel));
+      jobs.push(processSurpriseMatchup(gwId, "bonus", sb.type, sb.config));
+      if (pub.bonusResolved) jobs.push(processSurpriseResult(gwId, "bonus", sb.type, sb.config, bonusLabel));
+    }
+    await Promise.all(jobs);
+  }
+
+  // Meciuri Final — DUPĂ publicarea punctajelor (apelat din recomputeAndPublish,
+  // care rulează numai după saveMatchResult/updateMatchStatus, ce așteaptă
+  // publishMatchPointsIfFinal). Listă proaspătă (o singură interogare, doar Admin).
+  async function runFinishedMatchesFeed(gwId) {
+    if (!gwId) return { processed: 0, events: 0 };
+    const gwMatches = await listMatches(gwId);
+    return processPendingFinishedMatchesFeed(gwMatches);
+  }
+
+  const [globalFeedBusy, setGlobalFeedBusy] = useState(false);
+  const [globalFeedMsg, setGlobalFeedMsg] = useState("");
+  // Reluare manuală — sigură de repetat: meciurile deja procesate sunt sărite
+  // (marker), evenimentele au ID-uri deterministe (fără duplicate).
+  async function handleRunGlobalFeed() {
+    if (globalFeedBusy || !selectedGameweekId) return;
+    setGlobalFeedBusy(true);
+    setGlobalFeedMsg("");
+    try {
+      const gwMatches = await listMatches(selectedGameweekId);
+      const fin = await processPendingFinishedMatchesFeed(gwMatches);
+      const [pub, sm, sb] = await Promise.all([getWeeklySurprise(selectedGameweekId), getSecretMain(selectedGameweekId), getSecretBonus(selectedGameweekId)]);
+      await runSurpriseFeed(selectedGameweekId, pub, sm, sb);
+      const gw = gameweeks.find((g) => g.id === selectedGameweekId);
+      await processUpcomingMatches(gwMatches, gw?.featuredMatchIds || [], selectedGameweekId);
+      await Promise.all(gwMatches.map((m) => processClubFactsForMatchGuarded(m).catch(() => [])));
+      setGlobalFeedMsg(`✓ Feed global procesat — meciuri Final noi: ${fin.processed}.`);
+    } catch (err) {
+      setGlobalFeedMsg(`Eroare: ${err.message || err} — poți relua în siguranță.`);
+    } finally {
+      setGlobalFeedBusy(false);
+    }
+  }
+
   async function handleSurpriseAction(gameweekId, action) {
     const key = `${gameweekId}_${action}`;
     setSurpriseActionKey(key);
@@ -793,6 +848,7 @@ export default function AdminScreen({ onBack }) {
       else if (action === "undoSabotaj") await undoLastSabotajChoice(gameweekId);
       else if (action === "revealRemainingMystery") await revealRemainingMysteryBoxes(gameweekId);
       const [pub, sm, sb] = await Promise.all([getWeeklySurprise(gameweekId), getSecretMain(gameweekId), getSecretBonus(gameweekId)]);
+      runSurpriseFeed(gameweekId, pub, sm, sb).catch((err) => console.error("Eroare Feed Surprize (Admin):", err));
       setSurprisesData((prev) => ({ ...prev, [gameweekId]: { public: pub, secretMain: sm, secretBonus: sb } }));
       if (sm?.type === "sabotaj") {
         const order = sm.config?.order || [];
@@ -1430,6 +1486,7 @@ export default function AdminScreen({ onBack }) {
 
       if (result.rows.length > 0 && currentGameweek?.status !== "completed") {
         await publishLiveScores(selectedGameweekId);
+        runFinishedMatchesFeed(selectedGameweekId).catch((err) => console.error("Eroare Feed meciuri Final (Admin):", err));
         // Feed-ul viu — chiar acum, imediat după ce clasamentul etapei
         // s-a schimbat, nu doar dacă Adminul apasă separat "Regenerează
         // Feed" (asta era cauza reală a Feed-ului "mort": mecanismul de
@@ -3332,6 +3389,10 @@ export default function AdminScreen({ onBack }) {
                   <p style={s.hint}>
                     <b>Regenerate Feed pentru: {regenerateGameweeks.find((g) => g.id === regenerateGameweekId)?.title || "— alege o etapă —"}</b>
                   </p>
+                  <button type="button" style={s.smallBtn} disabled={globalFeedBusy || !selectedGameweekId} onClick={handleRunGlobalFeed}>
+                    {globalFeedBusy ? "Se procesează…" : "🔁 Procesează Feed-ul global (reluare)"}
+                  </button>
+                  {globalFeedMsg && <p style={s.hint}>{globalFeedMsg}</p>}
                   <button type="button" style={s.smallBtn} disabled={regeneratingFeed || !regenerateGameweekId} onClick={handleRegenerateFeed}>
                     {regeneratingFeed ? "Se regenerează…" : "🔄 Regenerează Feed"}
                   </button>

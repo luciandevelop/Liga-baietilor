@@ -7,7 +7,7 @@ import { slideUrl, seasonNumberFromList } from "../storyAssets";
 import StoryViewer from "../components/StoryViewer";
 import { subscribeToGameweekMatches } from "../services/matchesStore";
 import { getUserPublicProfiles } from "../services/profilesService";
-import { processFinishedMatches, processJokerActivation, processUpcomingMatches, getHomeFeedTop, processSurpriseCreated, processSurpriseMatchup, processSurpriseResult, processClubFactsForMatchGuarded } from "../services/feedService";
+import { processJokerActivation, processUpcomingMatches, getHomeFeedTop, processClubFactsForMatchGuarded } from "../services/feedService";
 import { doc, getDoc } from "firebase/firestore";
 import { db } from "../firebase";
 import useNow from "../hooks/useNow";
@@ -47,6 +47,12 @@ const CTA_LABEL = {
 // Home — Sprint 1 "Home Premium". Aceeași logică de date ca înainte
 // (niciun apel nou către Firestore) — doar experiența Home + navigarea
 // s-au schimbat, cum a fost cerut explicit.
+// ── FAZA 1 reads — gărzi la nivel de MODUL (supraviețuiesc Home →
+// alt ecran → Home în aceeași sesiune; useRef se golea la fiecare
+// revenire pe Home și relua scrierile). ──
+const publishedJokerKeys = new Set();       // Joker propriu deja publicat în Feed
+const staticFeedDoneForGw = new Set();      // meciuri viitoare + fapte de club, o dată/sesiune (doar Admin)
+
 export default function WelcomeScreen({ user, profile, isAdmin, onOpenAdmin, onOpenPredictions, onOpenLeaderboard, onOpenLive, onOpenFeaturedMatch, onOpenSpecials, onOpenFeed, onOpenSurprises, onOpenProfile, onOpenStoriesArchive }) {
   const now = useNow(1000);
   const reduced = usePrefersReducedMotion();
@@ -91,7 +97,7 @@ export default function WelcomeScreen({ user, profile, isAdmin, onOpenAdmin, onO
   const [selectedFeedEvent, setSelectedFeedEvent] = useState(null);
   const [revealMatch, setRevealMatch] = useState(null); // meciul LIVE deschis cu 👁, sau null
   const [surpriseTeaser, setSurpriseTeaser] = useState(null); // { mainLabel, bonusLabel } | null
-  const processedJokersRef = useRef(new Set());
+  const processedJokersRef = { current: publishedJokerKeys };
   // Cache local — joker-ul/joker extra ale userului curent nu se schimbă
   // din update-uri EXTERNE de meciuri; le citim o singură dată per
   // montare (nu la fiecare re-fire a listenMatches), la fel ca la
@@ -99,19 +105,6 @@ export default function WelcomeScreen({ user, profile, isAdmin, onOpenAdmin, onO
   const jokerFetchedRef = useRef(false);
   const cachedJokerRef = useRef(null);
   const cachedJokerExtraRef = useRef(null);
-  // ── FIX reads — processFinishedMatches reprocesa TOATE meciurile deja
-  // terminate la FIECARE update al listener-ului de meciuri, indiferent
-  // de cauză (chiar și un update la un cu totul alt meci, încă LIVE).
-  // Cache STRICT local, per sesiune de browser (zero Firestore) —
-  // matchId → ultima semnătură de scor procesată. Semnătura e STRICT
-  // realScoreA-realScoreB, pentru că e STRICT ce citește
-  // buildMatchFinalEvent (feedEngine.js) pentru conținutul evenimentului
-  // — nimic altceva din obiectul meciului nu schimbă rezultatul
-  // procesării. O corecție ulterioară de scor a Adminului schimbă
-  // semnătura → reprocesare legitimă, corectă. Un update irelevant la
-  // alt meci → semnătura identică → skip. Reset la reload (o pagină
-  // nouă reprocesează o dată, complet normal — nu e o buclă). ──
-  const processedFinishedRef = useRef(new Map());
   // Throttle pentru refreshFeedTop — sunt peste 8 locuri diferite care
   // pot cere o reîmprospătare aproape simultan (meci terminat, Joker,
   // Joker Extra, clasament, surpriză, fapte de club...). Fără asta,
@@ -179,19 +172,9 @@ export default function WelcomeScreen({ user, profile, isAdmin, onOpenAdmin, onO
       unsubMatches = subscribeToGameweekMatches(gw.id, (m) => {
         setMatches(m);
 
-        const finished = m.filter((x) => x.status === "finished" && x.realScoreA != null && x.realScoreB != null);
-        const toProcess = finished.filter((x) => {
-          const sig = `${x.realScoreA}-${x.realScoreB}`;
-          if (processedFinishedRef.current.get(x.id) === sig) return false;
-          processedFinishedRef.current.set(x.id, sig);
-          return true;
-        });
-        if (finished.length > 0) {
-          console.log(`[processFinishedMatches] listener fired: ${finished.length} finished, ${toProcess.length} de procesat (noi/schimbate), ${finished.length - toProcess.length} skip (neschimbate)`, toProcess.map((x) => x.id));
-        }
-        if (toProcess.length > 0) {
-          processFinishedMatches(toProcess).then((evs) => { if (evs.length > 0) refreshFeedTop(); }).catch((err) => console.error("Eroare Feed meciuri:", err));
-        }
+        // FAZA 1 reads — procesarea meciurilor Final NU mai rulează aici
+        // (pe fiecare telefon, la fiecare deschidere de Home). Rulează din
+        // Admin, după publicarea punctajelor: processPendingFinishedMatchesFeed.
 
         // ── Joker în Feed — REPARAT. Varianta veche interoga TOATE
         // jokerele etapei într-un singur query (where gameweekId==) —
@@ -378,27 +361,9 @@ export default function WelcomeScreen({ user, profile, isAdmin, onOpenAdmin, onO
         bonusLabel: sb ? (BONUS_CATALOG.find((c) => c.id === sb.type)?.label || sb.type) : null,
       });
 
-      // ── Feed — CREATED nu adaugă nicio citire nouă (pub/sm/sb erau
-      // deja încărcate pentru teaser). Id-ul evenimentului e stabil
-      // (surprise_created_{gwId}_{kind}) — save-ul repetat, la fiecare
-      // deschidere a Home-ului, e idempotent prin design, nu prin
-      // verificare separată "am mai procesat asta?". ──
-      if (sm) {
-        const mainLabel = MAIN_CATALOG.find((c) => c.id === sm.type)?.label || sm.type;
-        processSurpriseCreated(gameweek.id, "main", sm.type, mainLabel).catch((err) => console.error("Eroare Feed surpriză principală:", err));
-        processSurpriseMatchup(gameweek.id, "main", sm.type, sm.config).catch((err) => console.error("Eroare Feed matchup principal:", err));
-        if (pub.mainResolved) {
-          processSurpriseResult(gameweek.id, "main", sm.type, sm.config, mainLabel).catch((err) => console.error("Eroare Feed rezultat principal:", err));
-        }
-      }
-      if (sb) {
-        const bonusLabel = BONUS_CATALOG.find((c) => c.id === sb.type)?.label || sb.type;
-        processSurpriseCreated(gameweek.id, "bonus", sb.type, bonusLabel).catch((err) => console.error("Eroare Feed surpriză bonus:", err));
-        processSurpriseMatchup(gameweek.id, "bonus", sb.type, sb.config).catch((err) => console.error("Eroare Feed matchup bonus:", err));
-        if (pub.bonusResolved) {
-          processSurpriseResult(gameweek.id, "bonus", sb.type, sb.config, bonusLabel).catch((err) => console.error("Eroare Feed rezultat bonus:", err));
-        }
-      }
+      // FAZA 1 reads — generatorii de Feed ai Surprizelor (created /
+      // matchup / result) NU mai rulează aici, pe fiecare telefon. Rulează
+      // din Admin, la dezvăluire/rezolvare (handleSurpriseAction).
     })();
     return () => { cancelled = true; };
   }, [gameweek?.id]);
@@ -416,8 +381,13 @@ export default function WelcomeScreen({ user, profile, isAdmin, onOpenAdmin, onO
   const matchesRef = useRef(matches);
   useEffect(() => { matchesRef.current = matches; }, [matches]);
   useEffect(() => {
-    if (staticFeedRef.current || !gameweek || matches.length === 0) return;
+    // FAZA 1 reads — generare GLOBALĂ (meciuri viitoare + fapte de club):
+    // rulează DOAR pe dispozitivul Adminului, o singură dată pe sesiune
+    // per etapă — nu pe fiecare telefon la fiecare deschidere de Home.
+    if (!isAdmin || staticFeedRef.current || !gameweek || matches.length === 0) return;
+    if (staticFeedDoneForGw.has(gameweek.id)) { staticFeedRef.current = true; return; }
     staticFeedRef.current = true;
+    staticFeedDoneForGw.add(gameweek.id);
     const featuredIds = gameweek.featuredMatchIds || [];
     // Toate meciurile care urmează (fereastră 7 zile), nu doar Meciul
     // Săptămânii — fiecare primește context editorial STRICT dacă

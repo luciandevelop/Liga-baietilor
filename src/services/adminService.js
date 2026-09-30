@@ -256,7 +256,7 @@ export async function updateMatchStatus(matchId, status) {
     const matchSnap = await getDoc(doc(db, "matches", matchId));
     const gwId = matchSnap.exists() ? matchSnap.data().gameweekId : null;
     if (gwId) {
-      await updateDoc(doc(db, "gameweeks", gwId), { resultsVersion: increment(1) }).catch((err) => {
+      await updateDoc(doc(db, "gameweeks", gwId), { resultsVersion: increment(1), resultsVersionAt: serverTimestamp() }).catch((err) => {
         console.error("Eroare la incrementarea resultsVersion:", err);
       });
     }
@@ -721,7 +721,7 @@ export async function saveMatchResult(matchId, { realScoreA, realScoreB, realCor
   // dacă snapshot-ul clasamentului e depășit (vezi liveSnapshotStore.js
   // și recomputeAndPublish din AdminScreen) — fără el, un write eșuat
   // al snapshot-ului rămânea nedetectabil pentru useri. ──
-  await updateDoc(doc(db, "gameweeks", gameweekId), { resultsVersion: increment(1) }).catch((err) => {
+  await updateDoc(doc(db, "gameweeks", gameweekId), { resultsVersion: increment(1), resultsVersionAt: serverTimestamp() }).catch((err) => {
     console.error("Eroare la incrementarea resultsVersion:", err);
   });
 }

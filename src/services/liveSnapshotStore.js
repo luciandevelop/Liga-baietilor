@@ -37,15 +37,64 @@ const stores = new Map(); // gameweekId -> { unsubscribe, subscribers: Set, last
 // inițial al optimizării rămâne intact). ──
 const fallbackPromises = new Map(); // gameweekId -> { version, promise }
 
+// ── FAZA 2 reads — FEREASTRĂ DE GRAȚIE. Adminul incrementează
+// resultsVersion la validare și publică snapshot-ul nou câteva secunde
+// mai târziu. În acest interval, snapshot-ul pare „depășit" pe TOATE
+// telefoanele, care porneau fiecare recalcularea scumpă (~400 citiri/
+// telefon). Acum, dacă există deja un snapshot (doar vechi) și
+// incrementarea e recentă, telefonul AȘTEAPTĂ — fără nicio citire —
+// snapshot-ul nou, care vine prin listener-ul existent. Recalcularea
+// rulează doar dacă publicarea nu sosește în fereastră (publicare
+// eșuată) sau dacă snapshot-ul lipsește complet. Un singur timer per
+// etapă (nu polling), o singură recalculare per telefon. ──
+export const FALLBACK_GRACE_MS = 90 * 1000;
+const graceWaiters = new Map(); // gameweekId -> { version, resolve, timer }
+
+function settleGraceWaiter(gameweekId, value) {
+  const w = graceWaiters.get(gameweekId);
+  if (!w) return;
+  clearTimeout(w.timer);
+  graceWaiters.delete(gameweekId);
+  w.resolve(value);
+}
+
 export function getOrRunFallback(gameweekId, resultsVersion, computeFn) {
   const existing = fallbackPromises.get(gameweekId);
   if (existing && existing.version === resultsVersion) {
     console.log(`[FS-TRACE] liveFallback REUSED promise gw=${gameweekId} v=${resultsVersion}`);
     return existing.promise;
   }
-  console.log(`[FS-TRACE] liveFallback START gw=${gameweekId} v=${resultsVersion}`);
-  const promise = computeFn();
-  fallbackPromises.set(gameweekId, { version: resultsVersion, promise });
+  const last = stores.get(gameweekId)?.lastData;
+  const hasOldSnapshot = !!(last && last.pointsByUid != null);
+  const ageMs = last?.resultsVersionAtMs ? Date.now() - last.resultsVersionAtMs : Infinity;
+  let promise;
+  let kind = "computed";
+  if (hasOldSnapshot && ageMs < FALLBACK_GRACE_MS) {
+    kind = "grace";
+    console.log(`[FS-TRACE] liveFallback GRACE gw=${gameweekId} v=${resultsVersion} (aștept snapshot-ul nou, fără citiri)`);
+    const prev = graceWaiters.get(gameweekId);
+    promise = new Promise((resolve) => {
+      const timer = setTimeout(() => {
+        graceWaiters.delete(gameweekId);
+        const cur = stores.get(gameweekId)?.lastData;
+        if (cur && !isSnapshotStale(cur)) resolve({ pointsByUid: cur.pointsByUid, diagnostic: null });
+        else {
+          console.log(`[FS-TRACE] liveFallback START (după grație) gw=${gameweekId} v=${resultsVersion}`);
+          const fp = fallbackPromises.get(gameweekId);
+          if (fp && fp.version === resultsVersion) fp.kind = "computed"; // rezultatul se refolosește la remount
+          resolve(computeFn());
+        }
+      }, Math.min(FALLBACK_GRACE_MS, Math.max(0, FALLBACK_GRACE_MS - ageMs))); // ceas decalat → niciodată peste 90 s
+      graceWaiters.set(gameweekId, { version: resultsVersion, resolve, timer });
+    });
+    // O versiune și mai nouă înlocuiește așteptarea precedentă: cine
+    // aștepta versiunea veche primește rezultatul celei noi (lanț).
+    if (prev) { clearTimeout(prev.timer); prev.resolve(promise); }
+  } else {
+    console.log(`[FS-TRACE] liveFallback START gw=${gameweekId} v=${resultsVersion}`);
+    promise = computeFn();
+  }
+  fallbackPromises.set(gameweekId, { version: resultsVersion, promise, kind });
   // Dacă rulează cu eroare, nu blocăm PERMANENT versiunea asta — la
   // următoarea încercare (ex. altă navigare) se poate reîncerca curat.
   promise.catch(() => { fallbackPromises.delete(gameweekId); });
@@ -66,9 +115,17 @@ export function subscribeToLiveSnapshot(gameweekId, callback) {
             updatedAt: snap.data().liveSnapshotUpdatedAt || null,
             snapshotVersion: snap.data().liveSnapshotResultsVersion ?? null,
             resultsVersion: snap.data().resultsVersion || 0,
+            // "estimate": pe dispozitivul Adminului, timestamp-ul încă nescris pe server nu e null.
+            resultsVersionAtMs: (() => { const t = snap.data({ serverTimestamps: "estimate" }).resultsVersionAt; return t?.toMillis ? t.toMillis() : null; })(),
           }
         : { pointsByUid: null, updatedAt: null, snapshotVersion: null, resultsVersion: 0 };
       entry.lastData = data;
+      // Snapshot proaspăt sosit → cine aștepta în fereastra de grație îl
+      // primește direct; recalcularea NU mai pornește.
+      if (!isSnapshotStale(data)) {
+        settleGraceWaiter(gameweekId, { pointsByUid: data.pointsByUid, diagnostic: null });
+        fallbackPromises.delete(gameweekId);
+      }
       entry.subscribers.forEach((cb) => cb(data));
     }, (err) => {
       console.error("Eroare la ascultarea snapshot-ului live al clasamentului:", err);
@@ -82,6 +139,15 @@ export function subscribeToLiveSnapshot(gameweekId, callback) {
   return () => {
     entry.subscribers.delete(callback);
     if (entry.subscribers.size === 0) {
+      // FAZA 2 — nimeni nu mai ascultă: anulăm așteptarea în curs (altfel
+      // timer-ul ar porni o recalculare scumpă în fundal, pentru nimeni).
+      // Un rezultat DEJA calculat rămâne în cache, ca remount-ul să nu
+      // recalculeze din nou.
+      if (graceWaiters.has(gameweekId)) {
+        settleGraceWaiter(gameweekId, { pointsByUid: entry.lastData?.pointsByUid || {}, diagnostic: null });
+        const fp = fallbackPromises.get(gameweekId);
+        if (fp && fp.kind === "grace") fallbackPromises.delete(gameweekId);
+      }
       console.log(`[FS-TRACE] liveSnapshot listener STOP gw=${gameweekId}`);
       entry.unsubscribe();
       stores.delete(gameweekId);

@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { doc, getDoc, collection, getDocs, query, where, updateDoc, serverTimestamp } from "firebase/firestore";
+import { doc, getDoc, collection, getDocs, query, where, updateDoc, serverTimestamp, runTransaction } from "firebase/firestore";
 import { db, auth } from "../firebase";
 import { listAllSpecialCompetitions, listSpecialPhases, openSpecialPhase, closeSpecialPhase, resolveSpecialPhase, listAllSpecialPicksForPhases, SPECIALS_EDITION_ID, migrateSpecialPhasesToEdition } from "../services/specialsService";
 import { PICK_TYPES, getPhaseDefinition } from "../specialDefinitions";
@@ -1118,18 +1118,27 @@ export default function AdminScreen({ onBack }) {
     setSnapshotRegenLoading(true);
     setSnapshotRegenMessage("");
     try {
+      // FAZA 2 — aceeași regulă ca la publicarea automată: versiune
+      // capturată ÎNAINTE de calcul + scriere monotonă.
+      const preGwSnap = await getDoc(doc(db, "gameweeks", selectedGameweekId));
+      const capturedResultsVersion = preGwSnap.exists() ? (preGwSnap.data().resultsVersion || 0) : 0;
       const result = await previewGameweekResults(selectedGameweekId);
-      const freshGwSnap = await getDoc(doc(db, "gameweeks", selectedGameweekId));
-      const currentResultsVersion = freshGwSnap.exists() ? (freshGwSnap.data().resultsVersion || 0) : 0;
       const activeUids = await listActiveUserIds();
       const pointsByUid = {};
       result.rows.forEach((r) => { if (activeUids.has(r.uid)) pointsByUid[r.uid] = r.pointsFromMatches || 0; });
-      await updateDoc(doc(db, "gameweeks", selectedGameweekId), {
-        liveSnapshotPointsByUid: pointsByUid,
-        liveSnapshotUpdatedAt: serverTimestamp(),
-        liveSnapshotResultsVersion: currentResultsVersion,
+      const gwRef = doc(db, "gameweeks", selectedGameweekId);
+      let skipped = false;
+      await runTransaction(db, async (tx) => {
+        const cur = await tx.get(gwRef);
+        const publishedVersion = cur.exists() ? (cur.data().liveSnapshotResultsVersion ?? -1) : -1;
+        if (publishedVersion > capturedResultsVersion) { skipped = true; return; }
+        tx.update(gwRef, {
+          liveSnapshotPointsByUid: pointsByUid,
+          liveSnapshotUpdatedAt: serverTimestamp(),
+          liveSnapshotResultsVersion: capturedResultsVersion,
+        });
       });
-      setSnapshotRegenMessage("✅ Snapshot regenerat cu succes.");
+      setSnapshotRegenMessage(skipped ? "✅ Există deja un snapshot mai nou — nimic de suprascris." : "✅ Snapshot regenerat cu succes.");
     } catch (err) {
       console.error("Eroare la regenerarea snapshot-ului:", err);
       setSnapshotRegenMessage("❌ " + (err.message || String(err)));
@@ -1478,6 +1487,12 @@ export default function AdminScreen({ onBack }) {
     setPreviewLoading(true);
     setPreviewMessage("");
     try {
+      // ── FAZA 2 — versiunea e capturată ÎNAINTE de calcul (nu după).
+      // Snapshot-ul e etichetat cu versiunea datelor pe care chiar le-a
+      // calculat; o validare nouă apărută între timp îl face „depășit",
+      // nu corect-în-mod-fals. O singură citire (mutată, nu adăugată). ──
+      const preGwSnap = await getDoc(doc(db, "gameweeks", selectedGameweekId));
+      const capturedResultsVersion = preGwSnap.exists() ? (preGwSnap.data().resultsVersion || 0) : 0;
       const result = await previewGameweekResults(selectedGameweekId);
       setPreviewRows(result.rows);
       setPreviewIncomplete(result.incompleteMatchIds.length);
@@ -1527,8 +1542,6 @@ export default function AdminScreen({ onBack }) {
         // fost calculat. Clientul compară cele două — dacă diferă, știe
         // SIGUR că snapshot-ul e depășit, fără nicio presupunere. ──
         try {
-          const freshGwSnap = await getDoc(doc(db, "gameweeks", selectedGameweekId));
-          const currentResultsVersion = freshGwSnap.exists() ? (freshGwSnap.data().resultsVersion || 0) : 0;
           // ── HOTFIX PRODUCȚIE — REGRESIE reparată. computeGameweekResults
           // include DELIBERAT toți userii din users/ (necesar pentru
           // finalizare/bonusuri — NEATINS, nu se schimbă asta). DAR
@@ -1544,10 +1557,20 @@ export default function AdminScreen({ onBack }) {
           const activeUids = await listActiveUserIds();
           const pointsByUid = {};
           result.rows.forEach((r) => { if (activeUids.has(r.uid)) pointsByUid[r.uid] = r.pointsFromMatches || 0; });
-          await updateDoc(doc(db, "gameweeks", selectedGameweekId), {
-            liveSnapshotPointsByUid: pointsByUid,
-            liveSnapshotUpdatedAt: serverTimestamp(),
-            liveSnapshotResultsVersion: currentResultsVersion,
+          // ── FAZA 2 — scriere MONOTONĂ: dacă între timp a fost publicat un
+          // snapshot pentru o versiune mai nouă (două validări rapide,
+          // publicări terminate în ordine inversă), cel vechi NU îl mai
+          // suprascrie. Tranzacție pe același document. ──
+          const gwRef = doc(db, "gameweeks", selectedGameweekId);
+          await runTransaction(db, async (tx) => {
+            const cur = await tx.get(gwRef);
+            const publishedVersion = cur.exists() ? (cur.data().liveSnapshotResultsVersion ?? -1) : -1;
+            if (publishedVersion > capturedResultsVersion) return; // există deja unul mai nou
+            tx.update(gwRef, {
+              liveSnapshotPointsByUid: pointsByUid,
+              liveSnapshotUpdatedAt: serverTimestamp(),
+              liveSnapshotResultsVersion: capturedResultsVersion,
+            });
           });
         } catch (err) {
           console.error("Eroare la scrierea snapshot-ului live al clasamentului:", err);

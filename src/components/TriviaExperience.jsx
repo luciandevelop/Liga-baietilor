@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { submitTriviaAnswer, getMyTriviaAnswers } from "../services/surprisesService";
+import { submitTriviaAnswer, getMyTriviaAnswers, getWeeklySurprise } from "../services/surprisesService";
 import { color, font, radius } from "../matchdayTheme";
 import TriviaEmblem, { TRIVIA_THEMES, Flag } from "./TriviaThemeArt";
 import { detectTriviaTheme, teamsInText } from "./triviaThemes";
@@ -14,6 +14,20 @@ export default function TriviaExperience({ gameweekId, myUid, opponentUid, isBye
   const [lockedNow, setLockedNow] = useState(false);
   const [saveError, setSaveError] = useState("");
   const isLocked = deadlinePassed || !!triviaLocked || lockedNow;
+
+  // ── Răspunsurile ADVERSARULUI — vizibile DOAR după blocare. Le publică
+  // Adminul în documentul public al etapei (triviaAnswers sunt owner-only în
+  // Firestore Rules). O singură citire a documentului public, doar când
+  // Trivia e blocată; null = încă nepublicate / ascunse. ──
+  const [oppAnswers, setOppAnswers] = useState(null);
+  useEffect(() => {
+    if (!isLocked || isBye || !opponentUid) { setOppAnswers(null); return; }
+    let cancelled = false;
+    getWeeklySurprise(gameweekId)
+      .then((pub) => { if (!cancelled) setOppAnswers(pub?.triviaLocked === true ? (pub?.triviaAnswersPublic?.[opponentUid] || null) : null); })
+      .catch(() => { if (!cancelled) setOppAnswers(null); });
+    return () => { cancelled = true; };
+  }, [gameweekId, opponentUid, isBye, isLocked]);
 
   useEffect(() => {
     let cancelled = false;
@@ -49,6 +63,11 @@ export default function TriviaExperience({ gameweekId, myUid, opponentUid, isBye
   const answeredCount = questions.filter((q) => myAnswers[q.id]).length;
   const gradedQuestions = questions.filter((q) => q.correctAnswer);
   const myBaseScore = gradedQuestions.reduce((sum, q) => sum + (myAnswers[q.id] === q.correctAnswer ? 15 : 0), 0);
+  // Scor provizoriu al adversarului (aceeași regulă: 15p / răspuns corect validat).
+  const oppBaseScore = oppAnswers
+    ? gradedQuestions.reduce((sum, q) => sum + (oppAnswers[q.id] === q.correctAnswer ? 15 : 0), 0)
+    : null;
+  const optionLabel = (q, key) => (key === "A" ? q.optionALabel : key === "B" ? q.optionBLabel : null);
 
   return (
     <div style={s.wrap}>
@@ -122,6 +141,12 @@ export default function TriviaExperience({ gameweekId, myUid, opponentUid, isBye
               {renderOption("A", q.optionALabel)}
               {renderOption("B", q.optionBLabel)}
             </div>
+            {oppAnswers && isLocked && !isBye && (
+              <div style={{ ...s.oppLine, ...(isGraded && oppAnswers[q.id] ? (oppAnswers[q.id] === q.correctAnswer ? s.oppLineOk : s.oppLineBad) : {}) }}>
+                👤 {profiles[opponentUid]?.nickname || "Adversar"}: <b>{oppAnswers[q.id] ? optionLabel(q, oppAnswers[q.id]) : "nu a răspuns"}</b>
+                {isGraded && oppAnswers[q.id] ? (oppAnswers[q.id] === q.correctAnswer ? " ✓" : " ✗") : ""}
+              </div>
+            )}
           </div>
         );
       })}
@@ -136,7 +161,20 @@ export default function TriviaExperience({ gameweekId, myUid, opponentUid, isBye
         <div style={s.duelBox}>
           <div style={s.duelTitle}>🃏 Duel — vs {profiles[opponentUid]?.nickname || opponentUid}</div>
           {!resolved ? (
-            <div style={s.duelPending}>Comparația se rezolvă după ce Admin validează toate răspunsurile.</div>
+            gradedQuestions.length === 0 ? (
+              <div style={s.duelPending}>Comparația se rezolvă după ce Admin validează toate răspunsurile.</div>
+            ) : (
+              <>
+                <div style={s.duelScores}>
+                  <span>Tu: <b style={{ color: color.goldLight }}>{myBaseScore}p</b></span>
+                  {oppBaseScore != null && <span>Adversar: <b>{oppBaseScore}p</b></span>}
+                </div>
+                <div style={s.duelPending}>
+                  {gradedQuestions.length}/{questions.length} întrebări validate — scor provizoriu. Rezultatul duelului (cu bonusul) apare după ce Adminul rezolvă Trivia.
+                  {isLocked && oppAnswers == null ? " Răspunsurile adversarului nu sunt încă publicate." : ""}
+                </div>
+              </>
+            ) 
           ) : (
             <>
               <div style={s.duelScores}>
@@ -191,6 +229,12 @@ const s = {
   correctTag: { color: "#8BD957", fontWeight: 800 },
   wrongTag: { color: "#F0555A", fontWeight: 800 },
   optionsRow: { display: "flex", gap: 8 },
+  oppLine: {
+    marginTop: 8, fontSize: 11.5, color: color.textSecondary, fontFamily: font.body, padding: "6px 9px",
+    borderRadius: 8, background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.1)",
+  },
+  oppLineOk: { background: "rgba(139,217,87,0.12)", border: "1px solid rgba(139,217,87,0.4)", color: "#CFF5B5" },
+  oppLineBad: { background: "rgba(240,85,90,0.12)", border: "1px solid rgba(240,85,90,0.4)", color: "#FFC2C4" },
   optionBtn: {
     flex: 1, minHeight: 42, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 4,
     background: "rgba(18,20,28,0.75)", border: "1.5px solid rgba(255,255,255,0.16)", borderRadius: 10,

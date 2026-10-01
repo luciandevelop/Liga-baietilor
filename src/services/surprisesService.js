@@ -1,4 +1,4 @@
-import { collection, doc, getDoc, getDocs, setDoc, query, where, runTransaction, serverTimestamp } from "firebase/firestore";
+import { collection, doc, getDoc, getDocs, setDoc, query, where, runTransaction, serverTimestamp, deleteField } from "firebase/firestore";
 import { db } from "../firebase";
 import { listActiveUserIds, listGameweeks, getLiveGameweekPoints, isGameweekReadyToResolve, getLastCompletedGameweek, listGameweekScores } from "./adminService";
 import { teamScore } from "./scoringEngine";
@@ -1278,12 +1278,19 @@ export async function configureTriviaQuestions(gameweekId, questions) {
 // pe un singur element din array direct). ──
 export async function markTriviaCorrectAnswer(gameweekId, questionId, correctAnswer) {
   const secretRef = doc(db, "weeklySurprises", gameweekId, "secret", "main");
-  const snap = await getDoc(secretRef);
-  if (!snap.exists()) throw new Error("Trivia nu e configurată încă pentru etapa asta.");
-  const questions = (snap.data().config?.questions || []).map((q) =>
-    q.id === questionId ? { ...q, correctAnswer } : q
-  );
-  await setDoc(secretRef, { config: { ...snap.data().config, questions } }, { merge: true });
+  // ── Validare individuală, în TRANZACȚIE: întrebările se validează una
+  // după alta, rapid, iar fiecare validare rescrie lista întreagă de
+  // întrebări. Fără tranzacție, două validări apropiate ar putea să-și
+  // suprascrie reciproc rezultatul (se pierdea una). Aceeași semantică
+  // ca înainte; corectarea unei validări = aceeași funcție, alt răspuns. ──
+  await runTransaction(db, async (tx) => {
+    const snap = await tx.get(secretRef);
+    if (!snap.exists()) throw new Error("Trivia nu e configurată încă pentru etapa asta.");
+    const questions = (snap.data().config?.questions || []).map((q) =>
+      q.id === questionId ? { ...q, correctAnswer } : q
+    );
+    tx.set(secretRef, { config: { ...snap.data().config, questions } }, { merge: true });
+  });
 }
 
 // ── User — răspunde la o întrebare. Editabil liber până la Resolve
@@ -1305,7 +1312,31 @@ export async function submitTriviaAnswer(gameweekId, uid, questionId, answer) {
 // Câmp în documentul PUBLIC al etapei (deja citit de ecranul Surprize
 // al jucătorilor la deschidere → zero citiri noi pentru ei). ──
 export async function setTriviaLocked(gameweekId, locked) {
-  await setDoc(doc(db, "weeklySurprises", gameweekId), { triviaLocked: !!locked }, { merge: true });
+  const payload = { triviaLocked: !!locked };
+  // Deblocarea reascunde răspunsurile publicate (se pot modifica din nou).
+  if (!locked) { payload.triviaAnswersPublic = deleteField(); payload.triviaAnswersPublishedAt = deleteField(); }
+  await setDoc(doc(db, "weeklySurprises", gameweekId), payload, { merge: true });
+}
+
+// ── Admin — publică răspunsurile Triviei în documentul PUBLIC al etapei,
+// ca fiecare jucător să vadă și alegerile adversarului. Răspunsurile din
+// triviaAnswers sunt owner-only (Firestore Rules) — de aceea publicarea o
+// face Adminul, nu clientul jucătorului, FĂRĂ nicio schimbare de Rules.
+// Refuză dacă Trivia nu e blocată: înainte de blocare răspunsurile
+// rămân ascunse. Citește exact ca Resolve/„Cine a răspuns" (per user),
+// o singură dată, la apăsare. Idempotent; deblocarea le șterge. ──
+export async function publishTriviaAnswers(gameweekId, questionIds) {
+  const publicRef = doc(db, "weeklySurprises", gameweekId);
+  const pubSnap = await getDoc(publicRef);
+  if (!pubSnap.exists() || pubSnap.data().triviaLocked !== true) {
+    throw new Error("Blochează întâi răspunsurile — înainte de blocare, răspunsurile rămân ascunse.");
+  }
+  const activeUids = [...(await listActiveUserIds())];
+  const rows = await Promise.all(activeUids.map((uid) => getMyTriviaAnswers(gameweekId, uid, questionIds)));
+  const answersByUid = {};
+  activeUids.forEach((uid, i) => { answersByUid[uid] = rows[i]; });
+  await setDoc(publicRef, { triviaAnswersPublic: answersByUid, triviaAnswersPublishedAt: serverTimestamp() }, { merge: true });
+  return answersByUid;
 }
 
 // ── Răspunsurile PROPRII ale userului curent — pentru pre-completarea

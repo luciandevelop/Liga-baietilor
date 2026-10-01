@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { getCurrentSeason, getCurrentGameweek } from "../services/predictionsService";
 import { getLiveGameweekPoints } from "../services/adminService";
 import { getLastKnownMatches } from "../services/matchesStore";
@@ -59,6 +59,36 @@ export default function SurprisesScreen({ user, onBack }) {
   const [liveScores, setLiveScores] = useState(null); // null = incă neîncărcat; DIFERIT explicit de {} (gol dar valid)
   const [liveScoresStatus, setLiveScoresStatus] = useState("loading"); // loading | ready | error
   const [history, setHistory] = useState([]);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const historyReqRef = useRef(0);         // răspuns întârziat după închidere → ignorat
+  const historyInflightRef = useRef(null); // { seasonId, promise } — fără cereri duplicate
+
+  function toggleHistory() {
+    if (historyOpen) {
+      historyReqRef.current++;
+      setHistoryOpen(false);
+      setHistoryLoading(false);
+      return;
+    }
+    setHistoryOpen(true);
+    if (!season) return;
+    setHistoryLoading(true);
+    setHistory([]);
+    const reqId = ++historyReqRef.current;
+    let inflight = historyInflightRef.current;
+    if (!inflight || inflight.seasonId !== season.id) {
+      // Proaspăt la fiecare deschidere (statusurile se schimbă când Adminul rezolvă).
+      const promise = listSeasonSurprises(season.id);
+      inflight = { seasonId: season.id, promise };
+      historyInflightRef.current = inflight;
+      promise.finally(() => { if (historyInflightRef.current === inflight) historyInflightRef.current = null; }).catch(() => {});
+    }
+    inflight.promise
+      .then((hist) => { if (reqId === historyReqRef.current) setHistory(hist); })
+      .catch((err) => { if (reqId === historyReqRef.current) console.error("Eroare la încărcarea istoricului Surprizelor:", err); })
+      .finally(() => { if (reqId === historyReqRef.current) setHistoryLoading(false); });
+  }
   const [allResults, setAllResults] = useState(null); // null = nu s-a incarcat / nu-i inca vizibil
   const [spinTick, setSpinTick] = useState(0); // forteaza reimprospatarea listei live de rotiri
 
@@ -114,7 +144,15 @@ export default function SurprisesScreen({ user, onBack }) {
         // loading/error, separată de valoarea 0 reală — vezi
         // liveScoresStatus, verificat mai jos în randare (gate-ul
         // LiveScoresGate) înainte să ajungă la orice componentă de Duel.
-        getLiveGameweekPoints(gw.id, getLastKnownMatches(gw.id))
+        // FAZA 4 — punctele LIVE (calcul complet: ~18 + 36 × meciuri Final)
+        // sunt afișate DOAR de Duel 1v1 / Extrem / Rivali, Duel pe echipe,
+        // Half & Half și Sabotaj, și DOAR după dezvăluirea Surprizei
+        // Principale (blocurile lor sunt în ramura mainRevealed). Pentru
+        // Trivia, Mai Mare/Mai Mic, Zaruri, Bet Builder sau înainte de
+        // dezvăluire, calculul era citit și aruncat. Aceeași funcție,
+        // aceleași date, rulată doar când chiar se afișează.
+        const LIVE_SCORE_TYPES = ["duel-random", "duel-extreme", "duel-rivali", "team-duel-random", "half-random", "half-topbottom", "sabotaj"];
+        if (p?.mainRevealed && LIVE_SCORE_TYPES.includes(sm?.type)) getLiveGameweekPoints(gw.id, getLastKnownMatches(gw.id))
           .then(({ pointsByUid }) => { setLiveScores(pointsByUid); setLiveScoresStatus("ready"); })
           .catch((err) => {
             console.error("Eroare la încărcarea scorurilor live pentru Surprize (gameweekId=" + gw.id + "):", err);
@@ -132,8 +170,7 @@ export default function SurprisesScreen({ user, onBack }) {
         }
       }
 
-      const hist = await listSeasonSurprises(s.id);
-      setHistory(hist);
+      // FAZA 4 — istoricul sezonului se încarcă doar la deschiderea secțiunii.
       setLoading(false);
     })();
   }, [user.uid]);
@@ -419,9 +456,13 @@ export default function SurprisesScreen({ user, onBack }) {
         )}
 
         <div style={s.historySection}>
-          <div style={s.historyLabel}>📚 SEZONUL SURPRIZELOR</div>
-          {history.length === 0 && !loading && <div style={s.hint}>Niciun sezon activ.</div>}
-          {history.map((h) => (
+          <button type="button" style={s.historyToggle} onClick={toggleHistory}>
+            <span style={{ ...s.historyLabel, marginBottom: 0 }}>📚 SEZONUL SURPRIZELOR</span>
+            <span style={{ ...s.historyLabel, marginBottom: 0 }}>{historyOpen ? "▲" : "▼"}</span>
+          </button>
+          {historyOpen && historyLoading && <div style={s.hint}>Se încarcă…</div>}
+          {historyOpen && !historyLoading && history.length === 0 && !loading && <div style={s.hint}>Niciun sezon activ.</div>}
+          {historyOpen && history.map((h) => (
             <div key={h.gameweek.id} style={s.historyRow}>
               <div style={s.historyTitle}>{h.gameweek.title || `Etapa ${h.gameweek.number}`}</div>
               <div style={s.historyLine}>
@@ -505,6 +546,10 @@ const s = {
   resultTotal: { fontSize: 12.5, fontWeight: 800, color: color.goldLight, fontFamily: font.body, flexShrink: 0, minWidth: 40, textAlign: "right" },
 
   historySection: { marginTop: 26 },
+  historyToggle: {
+    width: "100%", display: "flex", justifyContent: "space-between", alignItems: "center",
+    background: "transparent", border: "none", padding: "0 0 10px", cursor: "pointer",
+  },
   historyLabel: { fontSize: 11, fontWeight: 800, letterSpacing: "0.05em", color: color.textFaint, fontFamily: font.body, marginBottom: 10, textTransform: "uppercase" },
   historyRow: {
     background: color.surfaceInset, border: `1px solid ${color.border}`, borderRadius: radius.md,

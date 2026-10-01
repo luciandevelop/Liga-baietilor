@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   getMyHigherLowerView, submitHigherLowerPick, submitHigherLowerTiebreaker,
   listOtherHigherLowerPairs, CHOICE_MORE, CHOICE_LESS,
@@ -27,6 +27,12 @@ export default function HigherLowerScreen({ onBack, gameweekId, uid, previewMode
   const [selectedRound, setSelectedRound] = useState(null); // null = urmează activeRoundIndex
   const [justPicked, setJustPicked] = useState(null); // pt. micro-animația de impuls
   const [otherPairs, setOtherPairs] = useState([]);
+  // FAZA 4 — „Celelalte perechi" se încarcă DOAR la deschidere (citea
+  // alegerile tuturor perechilor, ~108 documente, la fiecare intrare).
+  const [othersOpen, setOthersOpen] = useState(false);
+  const [othersLoading, setOthersLoading] = useState(false);
+  const othersReqRef = useRef(0);          // răspunsuri întârziate (închidere / altă etapă) ignorate
+  const othersInflightRef = useRef(null);  // { gameweekId, promise } — fără cereri duplicate
 
   useEffect(() => {
     if (previewMode) {
@@ -42,18 +48,60 @@ export default function HigherLowerScreen({ onBack, gameweekId, uid, previewMode
         if (cancelled) return;
         setView(v);
         if (v) {
-          const others = await listOtherHigherLowerPairs(gameweekId, uid);
-          if (cancelled) return;
-          setOtherPairs(others);
-          const otherUids = others.flatMap((p) => [p.playerA, p.playerB]);
-          const p = await getUserPublicProfiles([v.duel.playerA, v.duel.playerB, ...otherUids]);
-          if (!cancelled) setProfiles(p);
+          const p = await getUserPublicProfiles([v.duel.playerA, v.duel.playerB]);
+          if (!cancelled) setProfiles((prev) => ({ ...prev, ...p }));
         }
       })
       .catch((err) => console.error("Eroare la încărcarea Mai Mare/Mai Mic:", err))
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
   }, [gameweekId, uid, previewMode, previewState]);
+
+  // Altă etapă / alt user → lista celorlalte perechi se golește și se închide.
+  useEffect(() => {
+    othersReqRef.current++;
+    othersInflightRef.current = null;
+    setOtherPairs([]);
+    setOthersOpen(false);
+    setOthersLoading(false);
+  }, [gameweekId, uid]);
+
+  function toggleOtherPairs() {
+    if (othersOpen) {
+      othersReqRef.current++; // răspunsul încă în curs NU mai e aplicat după închidere
+      setOthersOpen(false);
+      setOthersLoading(false);
+      return;
+    }
+    setOthersOpen(true);
+    setOthersLoading(true);
+    setOtherPairs([]); // fără scoruri vechi afișate cât se încarcă cele noi
+    const reqId = ++othersReqRef.current;
+    const forGw = gameweekId;
+    let inflight = othersInflightRef.current;
+    if (!inflight || inflight.gameweekId !== forGw) {
+      // Date proaspete la fiecare deschidere (scorurile se schimbă când Adminul validează).
+      const promise = (async () => {
+        const others = await listOtherHigherLowerPairs(forGw, uid);
+        const otherUids = others.flatMap((p) => [p.playerA, p.playerB]);
+        const prof = otherUids.length > 0 ? await getUserPublicProfiles(otherUids) : {};
+        return { others, prof };
+      })();
+      inflight = { gameweekId: forGw, promise };
+      othersInflightRef.current = inflight;
+      promise.finally(() => { if (othersInflightRef.current === inflight) othersInflightRef.current = null; }).catch(() => {});
+    }
+    inflight.promise
+      .then(({ others, prof }) => {
+        if (reqId !== othersReqRef.current) return;
+        setProfiles((prev) => ({ ...prev, ...prof }));
+        setOtherPairs(others);
+      })
+      .catch((err) => {
+        if (reqId === othersReqRef.current) console.error("Eroare la încărcarea celorlalte perechi:", err);
+      })
+      .finally(() => { if (reqId === othersReqRef.current) setOthersLoading(false); });
+  }
 
   async function handlePick(round, choice) {
     if (previewMode || busy) return;
@@ -136,9 +184,15 @@ export default function HigherLowerScreen({ onBack, gameweekId, uid, previewMode
 
       {view.final && <FinalCard view={view} />}
 
-      {otherPairs.length > 0 && (
+      {!previewMode && view && (
         <div style={s.otherPairsSection}>
-          <div style={s.otherPairsLabel}>Celelalte perechi</div>
+          <button type="button" style={s.otherPairsToggle} onClick={toggleOtherPairs}>
+            <span style={{ ...s.otherPairsLabel, marginBottom: 0 }}>Celelalte perechi</span>
+            <span style={{ ...s.otherPairsLabel, marginBottom: 0 }}>{othersOpen ? "▲" : "▼"}</span>
+          </button>
+          {othersOpen && othersLoading && otherPairs.length === 0 && <div style={s.otherPairsHint}>Se încarcă…</div>}
+          {othersOpen && !othersLoading && otherPairs.length === 0 && <div style={s.otherPairsHint}>Nicio altă pereche.</div>}
+          {othersOpen && otherPairs.length > 0 && (
           <div style={s.otherPairsList}>
             {otherPairs.map((p) => (
               <div key={p.duelId} style={s.otherPairRow}>
@@ -148,6 +202,7 @@ export default function HigherLowerScreen({ onBack, gameweekId, uid, previewMode
               </div>
             ))}
           </div>
+          )}
         </div>
       )}
     </div>
@@ -503,6 +558,11 @@ const s = {
   finalLineTotal: { borderTop: `1px solid ${color.border}`, paddingTop: 8, marginTop: 4, fontWeight: 800, color: color.goldLight, fontSize: 15 },
 
   otherPairsSection: { marginTop: 16 },
+  otherPairsToggle: {
+    width: "100%", display: "flex", justifyContent: "space-between", alignItems: "center",
+    background: "transparent", border: "none", padding: "0 0 8px", cursor: "pointer",
+  },
+  otherPairsHint: { fontSize: 11, color: color.textFaint, fontFamily: font.body, padding: "4px 0" },
   otherPairsLabel: { fontSize: 10, fontWeight: 800, letterSpacing: "0.05em", color: color.textFaint, fontFamily: font.body, marginBottom: 8, textTransform: "uppercase" },
   otherPairsList: { display: "flex", flexDirection: "column", gap: 6 },
   otherPairRow: {

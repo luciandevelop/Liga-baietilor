@@ -80,7 +80,7 @@ import {
 import {
   MAIN_CATALOG, BONUS_CATALOG, getWeeklySurprise, getSecretMain, getSecretBonus,
   configureSurprise, revealMain, revealBonus, resolveMain, resolveBonus, getSurpriseStatus, revealRemainingMysteryBoxes,
-  configureTriviaQuestions, markTriviaCorrectAnswer, getTriviaSubmissionStatus, setTriviaLocked,
+  configureTriviaQuestions, markTriviaCorrectAnswer, getTriviaSubmissionStatus, setTriviaLocked, publishTriviaAnswers,
   configureZaruriQuestions, markZaruriTarget, getZaruriSubmissionStatus,
   getSabotajPublicProgress, revealSabotajNetwork, undoLastSabotajChoice,
   getPenaltySubmittedUids,
@@ -546,18 +546,44 @@ export default function AdminScreen({ onBack }) {
   async function handleToggleTriviaLock(gwId, lock) {
     if (triviaLockBusy) return;
     const ok = window.confirm(lock
-      ? "Blochezi răspunsurile Trivia? Nimeni nu va mai putea trimite sau modifica răspunsuri."
-      : "Deblochezi răspunsurile Trivia? Jucătorii vor putea din nou să răspundă și să modifice.");
+      ? "Blochezi răspunsurile Trivia? Nimeni nu va mai putea trimite sau modifica răspunsuri. Răspunsurile vor deveni vizibile adversarilor."
+      : "Deblochezi răspunsurile Trivia? Jucătorii vor putea din nou să răspundă și să modifice. Răspunsurile publicate adversarilor se vor ascunde din nou.");
     if (!ok) return;
     setTriviaLockBusy(true);
     try {
       await setTriviaLocked(gwId, lock);
-      setSurprisesData((prev) => ({
-        ...prev,
-        [gwId]: { ...prev[gwId], public: { ...(prev[gwId]?.public || {}), triviaLocked: lock } },
-      }));
+      setSurprisesData((prev) => {
+        const pub = { ...(prev[gwId]?.public || {}), triviaLocked: lock };
+        if (!lock) { delete pub.triviaAnswersPublic; delete pub.triviaAnswersPublishedAt; }
+        return { ...prev, [gwId]: { ...prev[gwId], public: pub } };
+      });
+      if (lock) {
+        // Blocarea e deja făcută. Publicarea răspunsurilor adversarilor e un pas
+        // separat: dacă eșuează, rămâne butonul „Publică răspunsurile".
+        try {
+          await publishTriviaAnswers(gwId, (surprisesData[gwId]?.secretMain?.config?.questions || []).map((q) => q.id));
+          setSurprisesData((prev) => ({ ...prev, [gwId]: { ...prev[gwId], public: { ...(prev[gwId]?.public || {}), triviaAnswersPublishedAt: Date.now() } } }));
+        } catch (pubErr) {
+          window.alert("Răspunsurile sunt blocate, dar publicarea lor către adversari a eșuat: " + (pubErr.message || String(pubErr)) + "\nApasă „Publică răspunsurile\" pentru a reîncerca.");
+        }
+      }
     } catch (err) {
       window.alert("Eroare: " + (err.message || String(err)));
+    } finally {
+      setTriviaLockBusy(false);
+    }
+  }
+
+  // Publicare răspunsuri (adversarii le văd) — pentru Trivia deja blocată, sau reluare după eșec.
+  async function handlePublishTriviaAnswers(gwId) {
+    if (triviaLockBusy) return;
+    if (!window.confirm("Publici răspunsurile Trivia? Fiecare jucător va vedea ce a răspuns adversarul lui la fiecare întrebare.")) return;
+    setTriviaLockBusy(true);
+    try {
+      await publishTriviaAnswers(gwId, (surprisesData[gwId]?.secretMain?.config?.questions || []).map((q) => q.id));
+      setSurprisesData((prev) => ({ ...prev, [gwId]: { ...prev[gwId], public: { ...(prev[gwId]?.public || {}), triviaAnswersPublishedAt: Date.now() } } }));
+    } catch (err) {
+      window.alert("Eroare la publicare: " + (err.message || String(err)));
     } finally {
       setTriviaLockBusy(false);
     }
@@ -2921,9 +2947,18 @@ export default function AdminScreen({ onBack }) {
                                 </span>
                               </div>
                               {data.public?.triviaLocked ? (
+                                <>
+                                {data.public?.triviaAnswersPublishedAt ? (
+                                  <div style={{ ...s.hint, marginBottom: 8 }}>✓ Răspunsurile sunt publicate — adversarii le văd.</div>
+                                ) : (
+                                  <button type="button" style={{ ...s.btn, width: "100%", marginBottom: 8 }} disabled={triviaLockBusy} onClick={() => handlePublishTriviaAnswers(gw.id)}>
+                                    📣 Publică răspunsurile (adversarii le văd)
+                                  </button>
+                                )}
                                 <button type="button" style={{ ...s.btnGhost, width: "100%" }} disabled={triviaLockBusy} onClick={() => handleToggleTriviaLock(gw.id, false)}>
                                   🔓 Deblochează răspunsurile
                                 </button>
+                                </>
                               ) : (
                                 <button type="button" style={{ ...s.btn, width: "100%" }} disabled={triviaLockBusy} onClick={() => handleToggleTriviaLock(gw.id, true)}>
                                   🔒 Blochează răspunsurile

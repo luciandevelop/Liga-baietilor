@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import ClubCrest from "./ClubCrest";
 import { getAvatarUrl } from "../assets/avatars";
 import { getCardSeries, getFunStats, getCollectionId } from "../utils/deterministicHash";
@@ -73,6 +73,9 @@ export default function PlayerCard({ uid, nickname, avatarId, rank, scope = "eta
   // etapă care nu e cea din context.
   const [matchesOpen, setMatchesOpen] = useState(!stats?.matchesIsFallback);
   const [openEtapaId, setOpenEtapaId] = useState(stats?.etapaHistory?.[0]?.gameweekId ?? null);
+  // Selector „Meciuri din": "" = comportamentul de dinainte (etapa din context).
+  const [selectedMatchesGwId, setSelectedMatchesGwId] = useState("");
+  useEffect(() => { setSelectedMatchesGwId(""); }, [uid]);
 
   if (!stats) return null;
 
@@ -97,11 +100,27 @@ export default function PlayerCard({ uid, nickname, avatarId, rank, scope = "eta
     : (stats.etapaPoints ?? stats.generalPoints);
 
   // Cel mai nou meci primul — "primul lucru pe care vor userii să-l vadă".
-  const matches = (stats.matches || []).slice().sort((a, b) => {
+  const sortNewestFirst = (list) => (list || []).slice().sort((a, b) => {
     const at = a.kickoffAt?.toMillis ? a.kickoffAt.toMillis() : 0;
     const bt = b.kickoffAt?.toMillis ? b.kickoffAt.toMillis() : 0;
     return bt - at;
   });
+
+  // Etapele anterioare cu meciuri disponibile (date deja în memorie, din
+  // gameweekScores). Se exclude etapa ale cărei meciuri sunt deja afișate implicit.
+  const pickableEtapas = (stats.etapaHistory || []).filter(
+    (eh) => (eh.matches || []).length > 0 && eh.gameweekId !== stats.matchesSourceGameweekId,
+  );
+  const selectedEtapa = selectedMatchesGwId
+    ? pickableEtapas.find((eh) => eh.gameweekId === selectedMatchesGwId) || null
+    : null;
+  const defaultEtapaEntry = (stats.etapaHistory || []).find((eh) => eh.gameweekId === stats.matchesSourceGameweekId);
+  const defaultEtapaLabel = stats.matchesIsFallback
+    ? `${stats.matchesFallbackTitle || (defaultEtapaEntry?.gwNumber != null ? `Etapa ${defaultEtapaEntry.gwNumber}` : "Ultima etapă jucată")} (implicit)`
+    : defaultEtapaEntry?.gwNumber != null
+      ? `Etapa ${defaultEtapaEntry.gwNumber}`
+      : "Etapa curentă";
+  const matches = sortNewestFirst(selectedEtapa ? selectedEtapa.matches : stats.matches);
 
   const bgGradient = `radial-gradient(140% 100% at 30% 0%, ${series.primary}33, transparent 55%), linear-gradient(165deg, ${series.bg[0]} 0%, ${series.bg[1]} 60%, ${series.bg[2]} 100%)`;
   const frameGradient = getFrameGradient(series);
@@ -297,18 +316,36 @@ export default function PlayerCard({ uid, nickname, avatarId, rank, scope = "eta
         )}
 
         <div style={s.list}>
+          {pickableEtapas.length > 0 && (
+            <div style={s.matchesPickerRow}>
+              <span style={s.matchesPickerLabel}>Meciuri din</span>
+              <select
+                style={s.matchesPicker}
+                value={selectedEtapa ? selectedEtapa.gameweekId : ""}
+                onChange={(e) => setSelectedMatchesGwId(e.target.value)}
+              >
+                <option value="">{defaultEtapaLabel}</option>
+                {pickableEtapas.map((eh) => (
+                  <option key={eh.gameweekId} value={eh.gameweekId}>
+                    {eh.gwNumber != null ? `Etapa ${eh.gwNumber}` : "Etapă anterioară"}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+
           {matches.length === 0 && (
             <div style={s.emptyMatches}>Nu există încă niciun meci finalizat pentru acest jucător.</div>
           )}
 
-          {matches.length > 0 && stats.matchesIsFallback && (
+          {matches.length > 0 && stats.matchesIsFallback && !selectedEtapa && (
             <button type="button" style={s.matchesFallbackHeader} onClick={() => setMatchesOpen((v) => !v)}>
               <span>Meciuri din {stats.matchesFallbackTitle || "ultima etapă jucată"} · etapa curentă nu are date pentru acest jucător</span>
               <span style={{ transform: matchesOpen ? "rotate(180deg)" : "rotate(0deg)", transition: "transform 200ms ease" }}>▾</span>
             </button>
           )}
 
-          {matches.length > 0 && matchesOpen && matches.map((m) => (
+          {matches.length > 0 && (matchesOpen || !!selectedEtapa) && matches.map((m) => (
             <MatchBreakdownRow key={m.matchId} m={m} />
           ))}
         </div>
@@ -679,6 +716,12 @@ const s = {
   emptyMatches: {
     textAlign: "center", fontSize: 11.5, color: color.textFaint, padding: "16px 10px",
     background: color.surface, border: `1px solid ${color.borderSubtle}`, borderRadius: radius.sm,
+  },
+  matchesPickerRow: { display: "flex", alignItems: "center", gap: 10, marginBottom: 2 },
+  matchesPickerLabel: { fontSize: 10.5, fontWeight: 700, letterSpacing: 0.6, color: color.textFaint, fontFamily: font.body, textTransform: "uppercase" },
+  matchesPicker: {
+    flex: 1, background: "rgba(18,20,28,0.9)", color: color.textPrimary, fontFamily: font.body, fontSize: 13, fontWeight: 700,
+    border: "1px solid rgba(212,175,55,0.45)", borderRadius: radius.sm, padding: "9px 10px", cursor: "pointer",
   },
   matchesFallbackHeader: {
     display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, width: "100%",

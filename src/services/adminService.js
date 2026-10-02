@@ -1679,6 +1679,10 @@ export async function getPlayerCardStats(uid, seasonId, etapaGameweekId, knownMa
         jokerExtraBonus: sc.jokerExtraBonus || 0,
         rankingBonus: sc.rankingBonus || 0,
         totalPoints: sc.totalPoints || 0,
+        // Meciurile etapei (din documentul gameweekScores DEJA citit mai sus —
+        // zero citiri noi): permit cardului să afișeze rezultatele oricărei
+        // etape anterioare dintr-un selector, nu doar ale etapei din context.
+        matches: Object.values(sc.breakdown || {}),
       };
     });
 
@@ -1727,6 +1731,7 @@ export async function getPlayerCardStats(uid, seasonId, etapaGameweekId, knownMa
     gameweeksPlayed: allScores.length,
     matchesThisEtapa: etapaMatches.length,
     matches: etapaMatches,
+    matchesSourceGameweekId: matchesSource?.gameweekId ?? etapaGameweekId ?? null,
     matchesIsFallback: Boolean(matchesFallbackGw),
     matchesFallbackTitle: matchesFallbackGw?.title ?? null,
   };

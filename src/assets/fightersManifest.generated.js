@@ -60,9 +60,9 @@ export default {
       }
     },
     "ooo-micea": {
-      "nextIndex": 2,
+      "nextIndex": 3,
       "files": {
-        "1": "oooo_mircea.webp"
+        "2": "dragos-mortal-kombat.webp"
       }
     },
     "pannnnn": {

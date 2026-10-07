@@ -43,7 +43,14 @@ export function getFighterUrl(theme, avatarId) {
   if (!themeManifest) return null;
   const entry = themeManifest[parsed.pack];
   if (!entry || !entry.files) return null;
-  const filename = entry.files["1"];
+  // Indexul "1" e personajul oficial. Dacă a dispărut (poza a fost ștearsă și
+  // înlocuită cu un fișier cu alt nume → primește un index mai mare, iar "1"
+  // nu mai există), se ia imaginea cu cel mai mic index rămas — fără să mai
+  // fie nevoie de editarea manuală a manifestului la fiecare înlocuire.
+  const filename = entry.files["1"] || (() => {
+    const indexes = Object.keys(entry.files).map(Number).filter(Number.isFinite).sort((a, b) => a - b);
+    return indexes.length > 0 ? entry.files[String(indexes[0])] : null;
+  })();
   if (!filename) return null;
   return `/fighters/${theme}/${parsed.pack}/${encodeURIComponent(filename)}`;
 }

@@ -107,8 +107,14 @@ export default {
     }
   },
   "ooo-micea": {
-    "nextIndex": 9,
-    "files": {}
+    "nextIndex": 14,
+    "files": {
+      "9": "dragos-cartoon-ochelari.webp",
+      "10": "dragos-cartoon.webp",
+      "11": "dragos-casino.webp",
+      "12": "dragos-real-madrid.webp",
+      "13": "dragos-valverde.webp"
+    }
   },
   "pannnnn": {
     "nextIndex": 8,

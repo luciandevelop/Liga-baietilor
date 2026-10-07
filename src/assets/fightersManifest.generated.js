@@ -14,7 +14,7 @@ export default {
     "alex-nicoara": {
       "nextIndex": 3,
       "files": {
-        "2": "robi-mortal-kombat.webp"
+        "1": "robi-mortal-kombat.webp"
       }
     },
     "andreis": {

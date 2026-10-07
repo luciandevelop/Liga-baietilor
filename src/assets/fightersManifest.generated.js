@@ -121,6 +121,12 @@ export default {
         "1": "ady-alisson.webp"
       }
     },
+    "alex-nicoara": {
+      "nextIndex": 2,
+      "files": {
+        "1": "robi-hazard.webp"
+      }
+    },
     "andreis": {
       "nextIndex": 2,
       "files": {

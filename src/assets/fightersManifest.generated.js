@@ -12,9 +12,9 @@ export default {
       }
     },
     "alex-nicoara": {
-      "nextIndex": 2,
+      "nextIndex": 3,
       "files": {
-        "1": "chimera_300x420.webp"
+        "2": "robi-mortal-kombat.webp"
       }
     },
     "andreis": {

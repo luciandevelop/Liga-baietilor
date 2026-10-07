@@ -170,9 +170,9 @@ export default {
       }
     },
     "ooo-micea": {
-      "nextIndex": 2,
+      "nextIndex": 3,
       "files": {
-        "1": "miti-isco.webp"
+        "2": "dragos-valverde.webp"
       }
     },
     "pannnnn": {

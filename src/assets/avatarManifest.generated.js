@@ -18,7 +18,6 @@ export default {
   "alex-nicoara": {
     "nextIndex": 7,
     "files": {
-      "1": "04_leonidas_exact.png",
       "2": "06_green_arrow_exact.png",
       "3": "10_gambit_exact.png",
       "4": "file_0000000089ec824688aa67c29d85e476.png",

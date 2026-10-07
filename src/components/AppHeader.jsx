@@ -1,6 +1,6 @@
 import { color, font, radius } from "../matchdayTheme";
 import PlayerAvatar from "./PlayerAvatar";
-import playLeagueHero from "../assets/playLeagueHeroSeason1.webp";
+import playLeagueHero from "../assets/playLeagueHeroSeason2.webp";
 
 // ── Identitatea PLAY LEAGUE — cele 10 sezoane, nume definitive.
 // Pentru a trece la un sezon nou: schimbă DOAR CURRENT_SEASON_NUMBER,
@@ -20,7 +20,7 @@ const SEASONS = [
   { emoji: "⚔️", name: "Care pe Care" },
   { emoji: "🏆", name: "Ultimul Dans" },
 ];
-const CURRENT_SEASON_NUMBER = 1;
+const CURRENT_SEASON_NUMBER = 2;
 const CURRENT_SEASON = SEASONS[CURRENT_SEASON_NUMBER - 1];
 
 const SEASON_TITLE = "PLAY LEAGUE";

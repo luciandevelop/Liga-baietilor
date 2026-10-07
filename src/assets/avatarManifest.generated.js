@@ -16,9 +16,12 @@ export default {
     }
   },
   "alex-nicoara": {
-    "nextIndex": 8,
+    "nextIndex": 11,
     "files": {
-      "7": "robi-hazard.webp"
+      "7": "robi-hazard.webp",
+      "8": "robi-cartoon.webp",
+      "9": "robi-fcsb.webp",
+      "10": "robi-mortal-kombat.webp"
     }
   },
   "andreis": {

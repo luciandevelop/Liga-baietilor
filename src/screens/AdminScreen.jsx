@@ -183,6 +183,26 @@ function findEtapaStatsLeaders(rows, key) {
   return { max, players: rows.filter((r) => r[key] === max).map((r) => r.nickname) };
 }
 
+// ── Date de sezon introduse ca ZZ.LL.AAAA. Câmpurile type="date" nu pot fi
+// completate pe unele telefoane, așa că folosim text numeric, formatat pe
+// măsură ce scrii (08102026 → 08.10.2026), apoi convertit în YYYY-MM-DD —
+// exact formatul pe care createSeason îl primea și înainte. ──
+function formatRoDateTyping(raw) {
+  const d = String(raw || "").replace(/\D/g, "").slice(0, 8);
+  if (d.length <= 2) return d;
+  if (d.length <= 4) return `${d.slice(0, 2)}.${d.slice(2)}`;
+  return `${d.slice(0, 2)}.${d.slice(2, 4)}.${d.slice(4)}`;
+}
+function parseRoDateToIso(text) {
+  const m = /^(\d{2})\.(\d{2})\.(\d{4})$/.exec(String(text || "").trim());
+  if (!m) return "";
+  const day = Number(m[1]), month = Number(m[2]), year = Number(m[3]);
+  if (year < 2000 || year > 2100 || month < 1 || month > 12 || day < 1) return "";
+  const test = new Date(Date.UTC(year, month - 1, day));
+  if (test.getUTCFullYear() !== year || test.getUTCMonth() !== month - 1 || test.getUTCDate() !== day) return "";
+  return `${m[3]}-${m[2]}-${m[1]}`;
+}
+
 export default function AdminScreen({ onBack }) {
   const [tab, setTab] = useState("results");
   const [seasons, setSeasons] = useState([]);
@@ -1389,11 +1409,17 @@ export default function AdminScreen({ onBack }) {
 
   async function handleCreateSeason(e) {
     e.preventDefault();
-    if (!seasonName || !seasonStart || !seasonEnd) return;
+    const startIso = parseRoDateToIso(seasonStart);
+    const endIso = parseRoDateToIso(seasonEnd);
+    if (!seasonName.trim()) { setMessage("Scrie numele sezonului."); return; }
+    if (!startIso || !endIso) {
+      setMessage("Datele trebuie scrise ca ZZ.LL.AAAA, de exemplu 08.10.2026.");
+      return;
+    }
     setLoading(true);
     setMessage("");
     try {
-      const id = await createSeason({ name: seasonName, startDate: seasonStart, endDate: seasonEnd });
+      const id = await createSeason({ name: seasonName, startDate: startIso, endDate: endIso });
       setSeasonName("");
       setSeasonStart("");
       setSeasonEnd("");
@@ -2088,9 +2114,10 @@ export default function AdminScreen({ onBack }) {
               <p style={s.hint}>+ Sezon nou</p>
               <input style={s.input} placeholder="Nume sezon (ex: Sezon 2026/27)" value={seasonName} onChange={(e) => setSeasonName(e.target.value)} />
               <div style={s.row}>
-                <input style={s.input} type="date" value={seasonStart} onChange={(e) => setSeasonStart(e.target.value)} />
-                <input style={s.input} type="date" value={seasonEnd} onChange={(e) => setSeasonEnd(e.target.value)} />
+                <input style={s.input} type="text" inputMode="numeric" autoComplete="off" maxLength={10} placeholder="Început ZZ.LL.AAAA" value={seasonStart} onChange={(e) => setSeasonStart(formatRoDateTyping(e.target.value))} />
+                <input style={s.input} type="text" inputMode="numeric" autoComplete="off" maxLength={10} placeholder="Sfârșit ZZ.LL.AAAA" value={seasonEnd} onChange={(e) => setSeasonEnd(formatRoDateTyping(e.target.value))} />
               </div>
+              <p style={s.hint}>Scrie doar cifrele: 08102026 devine 08.10.2026.</p>
               <button style={s.btn} disabled={loading} type="submit">+ Sezon nou</button>
             </form>
           </SectionCard>

@@ -109,8 +109,6 @@ export default {
   "ooo-micea": {
     "nextIndex": 9,
     "files": {
-      "1": "file_00000000105c81f4bd2561f8c1f3f32c.png",
-      "2": "file_0000000023388211bfb492bd371fd79f.png",
       "3": "file_000000006a6481f5a34fc513f1ee9cce.png",
       "4": "file_00000000819c81f4aafaecf50a01c87a.png",
       "5": "file_000000008e6c820a831c38b638556a99.png",

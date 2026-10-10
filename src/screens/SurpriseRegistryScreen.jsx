@@ -24,9 +24,12 @@ function seasonCreatedMs(sn) {
 }
 
 // Istoricul rămâne consultabil pentru TOATE sezoanele: selector de sezon (când sunt
-// 2 sau mai multe) + etapele finalizate ale sezonului ales. Implicit se deschide cel mai
-// recent sezon care are cel puțin o etapă finalizată. Etapele fiecărui sezon se citesc o
-// singură dată și rămân în memorie cât timp ecranul e montat. Fără listener, fără polling.
+// 2 sau mai multe) + etapele finalizate ale sezonului ales. Implicit se deschide mereu
+// sezonul ACTIV (cel curent al aplicației), cu ultima lui etapă finalizată — fără să cauți
+// tu sezonul curent printre cele vechi. Dacă sezonul activ nu are încă nicio etapă finalizată,
+// apare mesajul aferent, iar sezoanele anterioare sunt la o apăsare distanță. Etapele fiecărui
+// sezon se citesc o singură dată (la alegere) și rămân în memorie cât timp ecranul e montat.
+// Fără listener, fără polling.
 export default function SurpriseRegistryScreen({ seasonId, onBack }) {
   const [seasons, setSeasons] = useState(null); // null = se încarcă
   const [selectedSeasonId, setSelectedSeasonId] = useState(null);
@@ -38,7 +41,7 @@ export default function SurpriseRegistryScreen({ seasonId, onBack }) {
   const [loadError, setLoadError] = useState("");
   const seasonReqRef = useRef(0);
 
-  // 1) La intrare: sezoanele, apoi (de la cel mai recent spre cel mai vechi) primul care are etape finalizate.
+  // 1) La intrare: sezoanele + etapele DOAR ale sezonului activ (primit din Clasament).
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -51,18 +54,14 @@ export default function SurpriseRegistryScreen({ seasonId, onBack }) {
         setSeasons(ordered);
         if (ordered.length === 0) return;
 
-        const cache = {};
-        let chosen = null;
-        for (const sn of ordered) {
-          const completed = completedSorted(await listGameweeks(sn.id));
-          if (cancelled) return;
-          cache[sn.id] = completed;
-          if (completed.length > 0) { chosen = sn.id; break; }
-        }
-        setCompletedBySeason(cache);
-        const startId = chosen || ordered[0].id;
+        // Sezonul activ e preselectat chiar dacă nu are încă etape finalizate. Dacă nu a fost
+        // primit sau nu e în listă, se ia cel mai recent creat.
+        const startId = ordered.some((sn) => sn.id === seasonId) ? seasonId : ordered[0].id;
+        const completed = completedSorted(await listGameweeks(startId));
+        if (cancelled) return;
+        setCompletedBySeason({ [startId]: completed });
         setSelectedSeasonId(startId);
-        setSelectedGwId(cache[startId]?.[0]?.id || null);
+        setSelectedGwId(completed[0]?.id || null);
       } catch (err) {
         console.error("Registru: eroare la încărcarea etapelor:", err);
         if (!cancelled) { setSeasons((prev) => prev || []); setLoadError("Nu s-au putut încărca etapele. Încearcă din nou."); }

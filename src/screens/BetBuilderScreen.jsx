@@ -32,6 +32,7 @@ export default function BetBuilderScreen({ user, gameweekId, onBack, embedded = 
   const [saving, setSaving] = useState(false);
   const [opponentPick, setOpponentPick] = useState(previewMode ? buildMockView(previewState).opponentPick || null : null);
   const [stampAnim, setStampAnim] = useState(false);
+  const [opponentName, setOpponentName] = useState(null); // nickname-ul adversarului din duel
 
   // ── Preview: la schimbarea stării simulate (A/B/C/D din Admin),
   // reconstruim TOT din mock, fără nicio interacțiune Firestore. ──
@@ -53,6 +54,12 @@ export default function BetBuilderScreen({ user, gameweekId, onBack, embedded = 
         const v = await getMyBetBuilderView(gameweekId, user.uid);
         if (cancelled) return;
         setView(v);
+        // Cu cine am duelul — o singură citire de profil (cu cache), fără să blocheze încărcarea biletului.
+        if (v?.opponentUid) {
+          getUserPublicProfiles([v.opponentUid])
+            .then((prof) => { if (!cancelled) setOpponentName(prof[v.opponentUid]?.nickname || null); })
+            .catch(() => {});
+        }
         if (v?.myPick) {
           setPicks(v.myPick.picks || {});
           setTiebreaker(v.myPick.tiebreakerAnswer ?? "");
@@ -122,6 +129,10 @@ export default function BetBuilderScreen({ user, gameweekId, onBack, embedded = 
     <div style={embedded ? undefined : s.page}>
       <div style={embedded ? undefined : s.wrap}>
         {!embedded && <PageHeader title="🎟️ Bet Builder" subtitle={`${match.homeTeam} vs ${match.awayTeam}`} onBack={onBack} />}
+
+        {opponentName && (
+          <div style={s.duelBanner}>⚔️ Duelul tău: <b>Tu</b> vs <b>{opponentName}</b></div>
+        )}
 
         <div style={s.ticket}>
           <div style={s.ticketHead}>
@@ -372,6 +383,10 @@ const s = {
   wrap: { maxWidth: 480, margin: "0 auto", padding: "0 16px 32px" },
   centerNote: { textAlign: "center", color: color.textFaint, fontSize: 13, padding: "60px 20px", fontFamily: font.body },
 
+  duelBanner: {
+    marginTop: 10, textAlign: "center", fontSize: 13, color: color.textSecondary, fontFamily: font.body,
+    background: color.surfaceInset, borderRadius: radius.md, padding: "9px 12px",
+  },
   ticket: {
     background: "#F4EDE0", borderRadius: radius.md, padding: 16, marginTop: 10,
     boxShadow: "0 8px 24px -8px rgba(0,0,0,0.5)", border: "1px dashed #8a7a5c",

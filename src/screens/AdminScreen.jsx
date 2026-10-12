@@ -227,6 +227,8 @@ export default function AdminScreen({ onBack }) {
   const [betBuilderPreviewState, setBetBuilderPreviewState] = useState("A");
   const [betBuilderBusy, setBetBuilderBusy] = useState(false);
   const [betBuilderMsg, setBetBuilderMsg] = useState("");
+  // „✏️ Editează întrebările” — meciurile (matchId → true) ale căror întrebări sunt deschise spre corectare.
+  const [bbEditing, setBbEditing] = useState({});
   // „Cine a trimis biletul” — panou doar pentru Admin, încărcat la apăsare (fără listener).
   const [betBuilderStatusOpen, setBetBuilderStatusOpen] = useState(null); // gwId cu panoul deschis
   const [betBuilderStatusRows, setBetBuilderStatusRows] = useState([]);
@@ -397,6 +399,21 @@ export default function AdminScreen({ onBack }) {
     }
   }
 
+  // Deschide editorul pentru un meci, cu textele DEJA salvate (nu cu ciorne vechi).
+  function startEditingQuestions(g) {
+    setQuestionDrafts((prev) => ({
+      ...prev,
+      [g.matchId]: {
+        questions: g.questions.map((q) => ({ text: q.text, options: [q.options[0], q.options[1]] })),
+        tiebreakerText: g.tiebreakerText || "",
+      },
+    }));
+    setBbEditing((prev) => ({ ...prev, [g.matchId]: true }));
+  }
+  function cancelEditingQuestions(g) {
+    setBbEditing((prev) => ({ ...prev, [g.matchId]: false }));
+  }
+
   async function handleSaveQuestions(gameweekId, matchId) {
     const draft = questionDrafts[matchId];
     if (!draft) return;
@@ -406,10 +423,14 @@ export default function AdminScreen({ onBack }) {
       return;
     }
     if (!draft.tiebreakerText) { window.alert("Completează întrebarea de baraj pentru acest meci."); return; }
+    if (bbEditing[matchId] && betBuilder?.status === "active" && !window.confirm(
+      "Bet Builder-ul e ACTIV — jucătorii pot avea deja bilete. Corectează doar greșeli de scriere; nu schimba sensul întrebărilor sau ordinea opțiunilor. Salvezi modificările?"
+    )) return;
     setBetBuilderBusy(true);
     try {
       await setMatchQuestions(gameweekId, matchId, cleanQuestions, draft.tiebreakerText);
       await loadBetBuilder(gameweekId);
+      setBbEditing((prev) => ({ ...prev, [matchId]: false }));
       setBetBuilderMsg("✅ Selecții salvate pentru meci.");
     } catch (err) {
       window.alert(err.message || String(err));
@@ -2809,8 +2830,11 @@ export default function AdminScreen({ onBack }) {
                                     <div style={s.bbMatchTitle}>{match ? `${match.homeTeam} – ${match.awayTeam}` : g.matchId}</div>
                                     <div style={s.hint}>{duelsForMatch.length} dueluri · {duelsForMatch.flatMap((d) => [d.playerA, d.playerB]).length} jucători repartizați</div>
 
-                                    {g.questions.length === 0 ? (
+                                    {(g.questions.length === 0 || bbEditing[g.matchId]) ? (
                                       <>
+                                        {g.questions.length > 0 && (
+                                          <p style={s.hint}>✏️ Corectezi întrebările. Se salvează doar textele; rezultatele deja marcate rămân neschimbate.</p>
+                                        )}
                                         {draft.questions.map((q, qi) => (
                                           <div key={qi} style={s.bbQuestionEdit}>
                                             <input
@@ -2844,9 +2868,13 @@ export default function AdminScreen({ onBack }) {
                                           onChange={(e) => setQuestionDrafts((prev) => ({ ...prev, [g.matchId]: { ...prev[g.matchId], tiebreakerText: e.target.value } }))}
                                         />
                                         <button type="button" style={s.smallBtn} disabled={betBuilderBusy} onClick={() => handleSaveQuestions(gw.id, g.matchId)}>💾 Salvează selecțiile</button>
+                                        {g.questions.length > 0 && (
+                                          <button type="button" style={s.ghostBtnSmall} disabled={betBuilderBusy} onClick={() => cancelEditingQuestions(g)}>Anulează</button>
+                                        )}
                                       </>
                                     ) : (
                                       <div style={s.bbResolveList}>
+                                        <button type="button" style={s.smallBtn} disabled={betBuilderBusy} onClick={() => startEditingQuestions(g)}>✏️ Editează întrebările</button>
                                         {g.questions.map((q) => (
                                           <div key={q.id} style={s.bbResolveRow}>
                                             <span style={s.bbResolveText}>{q.text} ({q.options[0]} / {q.options[1]})</span>

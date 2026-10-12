@@ -195,37 +195,84 @@ export default function RulesScreen({ onBack }) {
 
         <Section icon="🎲" title="Zarurile">
           <P>
-            5 întrebări numerice (ex: „câte cornere?"). Pentru fiecare, arunci zarul de câte ori
-            vrei, adunând — tu alegi când te oprești. Dacă treci de rezultatul real, iei 0 la acea
-            întrebare (BUST).
+            Primești 5 întrebări cu răspuns numeric (ex: „câte cornere vor fi în meciul X?”).
+            Rezultatul real nu îl cunoști când joci — tu alegi unde te oprești, cât mai aproape
+            de el, dar FĂRĂ să îl depășești.
           </P>
-          <P><B>Formula:</B> 30 − 5 × (cât de departe ești de rezultatul real), minim 0.</P>
-          <ExampleBox title="Exemplu — la o întrebare">
-            <ExRow pred="Rezultatul real era 6, tu ai oprit la 6" res="Exact → 30p" tone="good" />
-            <ExRow pred="Rezultatul real era 6, tu ai oprit la 4" res="Diferență 2 → 30−10 = 20p" tone="mid" />
-            <ExRow pred="Rezultatul real era 6, tu ai oprit la 9" res="Ai depășit (BUST) → 0p" tone="bad" />
+          <P>
+            La fiecare întrebare arunci un zar (1–6), iar aruncările se adună. Poți arunca de câte
+            ori vrei. Când ești mulțumit, apeși STOP — suma ta rămâne cea de la acel moment.
+          </P>
+          <P>
+            <B>Punctele la o întrebare:</B> dacă ai depășit rezultatul real (BUST), iei 0p, dar
+            DOAR la acea întrebare — celelalte rămân neatinse. Dacă nu l-ai depășit, iei 30p minus
+            5p pentru fiecare unitate cu care ai rămas sub rezultatul real (minim 0p).
+          </P>
+          <Table rows={[
+            ["Te-ai oprit exact la rezultatul real", "30p"],
+            ["Cu 1 sub rezultatul real", "25p"],
+            ["Cu 2 sub", "20p"],
+            ["Cu 3 sub", "15p"],
+            ["Cu 4 sub", "10p"],
+            ["Cu 5 sub", "5p"],
+            ["Cu 6 sau mai mult sub", "0p"],
+            ["Ai depășit rezultatul real (BUST)", "0p"],
+          ]} />
+          <ExampleBox title="Exemplu — rezultatul real era 9">
+            <ExRow pred="Te-ai oprit la 9" res="Exact → 30p" tone="good" />
+            <ExRow pred="Te-ai oprit la 8" res="1 sub → 25p" tone="good" />
+            <ExRow pred="Te-ai oprit la 6" res="3 sub → 15p" tone="mid" />
+            <ExRow pred="Te-ai oprit la 10" res="Ai depășit (BUST) → 0p" tone="bad" />
           </ExampleBox>
-          <Table rows={[["5/5 perfect", "150p bază (maxim)"]]} />
-          <P small>Plus același bonus de duel ca la Trivia: +50p / +25p egalitate / +0p pierdere / bază+25p Bye.</P>
+          <Table rows={[["5 întrebări × maxim 30p", "150p bază (maxim)"]]} />
+          <P>
+            <B>Duelul:</B> pe lângă asta, ești tras la sorți cu un adversar — se compară punctele de
+            bază ale voastre (suma celor 5 întrebări):
+          </P>
+          <Table rows={[["Câștigi duelul", "+50p"], ["Egalitate", "+25p fiecare"], ["Pierzi", "+0p"], ["Bye (fără pereche)", "bază +25p"]]} />
+          <P small>
+            Poți arunca până când Adminul rezolvă Zarurile. Dacă nu ai apăsat STOP, la Rezolvare se ia
+            suma pe care o aveai atunci (iar dacă erai deja peste rezultat, e BUST). Întrebările al căror
+            rezultat real nu a fost încă stabilit nu se punctează.
+          </P>
+        
         </Section>
 
         <Section icon="🗡️" title="Sabotaj">
           <P>
-            Fiecare jucător, în ordinea clasamentului etapei trecute (cel mai bine clasat alege
-            primul), alege PE RÂND un adversar căruia să-i „fure" puncte — o singură țintă per
-            jucător, deja aleasă de altcineva nu mai poate fi luată.
+            Fiecare jucător alege UN adversar căruia încearcă să-i „fure” puncte. Alegerile se fac
+            pe rând, în ordinea clasamentului etapei trecute: cel mai bine clasat alege primul, apoi
+            următorul, și tot așa. La prima etapă dintr-un sezon nu există clasament anterior, așa că
+            ordinea e stabilită de aplicație.
           </P>
           <P>
-            Furtul reușește DOAR dacă tu ai, în etapa asta, mai multe puncte din meciuri decât
-            ținta ta în momentul evaluării. Dacă reușești, iei minim(200p, punctele disponibile ale
-            țintei) — nu o poți duce sub 0p. Dacă ținta are puncte egale sau mai multe decât tine,
-            furtul eșuează și nu se întâmplă nimic.
+            <B>Cum alegi:</B> când vine rândul tău, alegi o singură țintă. Nu te poți alege pe tine,
+            iar un jucător deja ales de altcineva nu mai poate fi luat — fiecare poate fi ales de cel
+            mult un atacator. Alegerea ta rămâne secretă până când Adminul dezvăluie toate alegerile.
+          </P>
+          <P>
+            <B>Cum se decide furtul:</B> la final, pentru fiecare pereche atacator → țintă se compară
+            punctele din meciurile etapei, la momentul rezolvării:
+          </P>
+          <Table rows={[
+            ["Ai MAI MULTE puncte decât ținta ta", "Furi min(200p, punctele țintei)"],
+            ["Ai puncte egale sau mai puține", "Nu se întâmplă nimic"],
+          ]} />
+          <ExampleBox title="Exemplu — tu îl ai ca țintă pe Bogdan">
+            <ExRow pred="Tu: 1250p · Bogdan: 1100p" res="Furt reușit → tu +200p, Bogdan −200p" tone="good" />
+            <ExRow pred="Tu: 1250p · Bogdan: 1250p" res="Egalitate → nu se întâmplă nimic" tone="mid" />
+            <ExRow pred="Tu: 1100p · Bogdan: 1250p" res="Furt eșuat → nu se întâmplă nimic" tone="bad" />
+          </ExampleBox>
+          <P small>
+            Ce furi se scade de la țintă, deci suma punctelor rămâne aceeași. Ca atacator câștigi cel
+            mult 200p, iar dacă ținta are mai puțin de 200p, furi doar cât are — nu o poți duce sub 0p.
+            Dacă nimeni nu te-a ales ca țintă, nu pierzi nimic.
           </P>
           <P small>
-            Toate confruntările se evaluează din ACELAȘI moment — dacă X îl fură pe Y și apoi Z îl
-            fură pe X, furtul lui Z nu ține cont de ce a câștigat X de la Y. Alegerea ta rămâne
-            secretă până Adminul dezvăluie toată rețeaua.
+            Toate confruntările se calculează din ACELAȘI moment: dacă X îl fură pe Y și apoi Z îl fură
+            pe X, furtul lui Z nu ține cont de ce a câștigat X de la Y.
           </P>
+        
         </Section>
 
         <Section icon="🎟️" title="Bet Builder">

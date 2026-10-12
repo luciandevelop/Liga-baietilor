@@ -63,7 +63,7 @@ export default function BetBuilderScreen({ user, gameweekId, onBack, embedded = 
         }
       } catch (err) {
         console.error("Eroare la încărcarea Bet Builder:", err);
-        if (!cancelled) setError("Nu s-a putut încărca Bet Builder-ul.");
+        if (!cancelled) setError(`Nu s-a putut încărca Bet Builder-ul.${err?.code ? ` (${err.code})` : ""}`);
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -73,7 +73,7 @@ export default function BetBuilderScreen({ user, gameweekId, onBack, embedded = 
 
 
   if (loading) return <div style={s.centerNote}>Se încarcă…</div>;
-  if (error || !view) return <div style={s.centerNote}>{error || "Nu ești repartizat într-un duel Bet Builder."}</div>;
+  if (error || !view) return <div style={s.centerNote}>{error || "Bet Builder-ul nu e încă activ sau nu ești repartizat într-un duel. Revino când Adminul îl pregătește."}</div>;
 
   const { duel, matchGroup, opponentUid, myPick, match } = view;
   const locked = isBetBuilderLocked(match) || myPick?.confirmed;

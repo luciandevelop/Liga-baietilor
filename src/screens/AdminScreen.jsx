@@ -355,7 +355,10 @@ export default function AdminScreen({ onBack }) {
     if (!gameweekId) { setBetBuilder(null); return; }
     try {
       const bb = await getBetBuilder(gameweekId);
-      setBetBuilder(bb);
+      // Documentul betBuilders/{etapă} se creează DOAR la „Generează cele 9 dueluri”. Până atunci
+      // getBetBuilder întoarce null — panoul trebuie să arate butonul de generare, nu „Se încarcă…”
+      // la nesfârșit (blocaj în care butonul de generare nu apărea niciodată).
+      setBetBuilder(bb || { gameweekId, status: "notGenerated", duels: [], matchGroups: [] });
       if (bb) {
         const drafts = {};
         bb.matchGroups.forEach((g) => {
@@ -368,6 +371,11 @@ export default function AdminScreen({ onBack }) {
       }
     } catch (err) {
       console.error("Eroare la încărcarea Bet Builder:", err);
+      // Eroarea se arată explicit (cu codul ei), nu se ascunde în „Se încarcă…”.
+      setBetBuilder({
+        gameweekId, status: "loadError", duels: [], matchGroups: [],
+        loadError: [err?.code, err?.message].filter(Boolean).join(" — ") || "eroare necunoscută",
+      });
     }
   }
 
@@ -2772,6 +2780,11 @@ export default function AdminScreen({ onBack }) {
                         <div style={s.triviaBox}>
                           {(!betBuilder || betBuilder.gameweekId !== gw.id) ? (
                             <p style={s.hint}>Se încarcă…</p>
+                          ) : betBuilder.status === "loadError" ? (
+                            <>
+                              <p style={s.hint}>⚠️ Nu s-a putut citi Bet Builder-ul: {betBuilder.loadError}</p>
+                              <button type="button" style={s.smallBtn} onClick={() => loadBetBuilder(gw.id)}>↻ Reîncearcă</button>
+                            </>
                           ) : !betBuilder.duels || betBuilder.duels.length === 0 ? (
                             <>
                               <p style={s.hint}>

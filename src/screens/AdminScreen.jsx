@@ -58,6 +58,7 @@ import { activateGameweekStory, deactivateGameweekStory, activateSeasonStory, de
 import {
   generateBetBuilderDuels, getBetBuilder, setMatchQuestions, activateBetBuilder,
   resolveQuestion, resolveTiebreaker, resolveAllDuels,
+  getBetBuilderSubmissionStatus, BET_BUILDER_DEADLINE_HOURS,
 } from "../services/betBuilderService";
 import BetBuilderScreen from "./BetBuilderScreen";
 import {
@@ -226,6 +227,11 @@ export default function AdminScreen({ onBack }) {
   const [betBuilderPreviewState, setBetBuilderPreviewState] = useState("A");
   const [betBuilderBusy, setBetBuilderBusy] = useState(false);
   const [betBuilderMsg, setBetBuilderMsg] = useState("");
+  // „Cine a trimis biletul” — panou doar pentru Admin, încărcat la apăsare (fără listener).
+  const [betBuilderStatusOpen, setBetBuilderStatusOpen] = useState(null); // gwId cu panoul deschis
+  const [betBuilderStatusRows, setBetBuilderStatusRows] = useState([]);
+  const [betBuilderStatusLoading, setBetBuilderStatusLoading] = useState(false);
+  const [betBuilderStatusAt, setBetBuilderStatusAt] = useState(null);
   const [questionDrafts, setQuestionDrafts] = useState({}); // { matchId: { questions:[{text,options:[a,b]}]x5, tiebreakerText } }
 
   // ── 📈📉 Mai Mare / Mai Mic — izolat de Bet Builder, propriul state. ──
@@ -713,6 +719,27 @@ export default function AdminScreen({ onBack }) {
     } finally {
       setZaruriMarking("");
     }
+  }
+
+  async function loadBetBuilderStatus(gwId) {
+    setBetBuilderStatusLoading(true);
+    try {
+      const rows = await getBetBuilderSubmissionStatus(gwId, betBuilder && betBuilder.gameweekId === gwId ? betBuilder : null);
+      const names = await getUserPublicProfiles(rows.map((r) => r.uid));
+      setBetBuilderStatusRows(rows.map((r) => ({ ...r, nickname: names[r.uid]?.nickname || r.uid })));
+      setBetBuilderStatusAt(Date.now());
+    } catch (err) {
+      console.error("Eroare la statusul Bet Builder:", err);
+      setBetBuilderStatusRows([]);
+    } finally {
+      setBetBuilderStatusLoading(false);
+    }
+  }
+
+  async function openBetBuilderStatusPanel(gwId) {
+    if (betBuilderStatusOpen === gwId) { setBetBuilderStatusOpen(null); return; }
+    setBetBuilderStatusOpen(gwId);
+    await loadBetBuilderStatus(gwId);
   }
 
   async function openZaruriSubmissionPanel(gwId, questions) {
@@ -2841,6 +2868,55 @@ export default function AdminScreen({ onBack }) {
                                 <button type="button" style={s.btn} disabled={betBuilderBusy} onClick={() => handleActivateBetBuilder(gw.id)}>
                                   ✨ Activează Bet Builder pentru toți jucătorii
                                 </button>
+                              )}
+                              {betBuilder.status === "active" && (
+                                <div style={s.triviaSubmissionSection}>
+                                  <button type="button" style={s.smallBtn} onClick={() => openBetBuilderStatusPanel(gw.id)}>
+                                    {betBuilderStatusOpen === gw.id ? "👥 Ascunde status" : "👥 Cine a trimis biletul"}
+                                  </button>
+                                  {betBuilderStatusOpen === gw.id && (
+                                    <div style={s.triviaSubmissionList}>
+                                      {betBuilderStatusLoading ? <div style={s.hint}>Se încarcă…</div> : (() => {
+                                        const rank = { none: 0, started: 1, confirmed: 2 };
+                                        const rows = betBuilderStatusRows.slice().sort((a, b) => rank[a.status] - rank[b.status] || a.nickname.localeCompare(b.nickname));
+                                        const nConfirmed = rows.filter((r) => r.status === "confirmed").length;
+                                        const nStarted = rows.filter((r) => r.status === "started").length;
+                                        const nNone = rows.filter((r) => r.status === "none").length;
+                                        return (
+                                          <>
+                                            <div style={s.hint}>
+                                              Confirmate {nConfirmed}/{rows.length} · începute, neconfirmate {nStarted} · neîncepute {nNone}
+                                              {betBuilderStatusAt ? ` · actualizat la ${new Date(betBuilderStatusAt).toLocaleTimeString("ro-RO", { hour: "2-digit", minute: "2-digit" })}` : ""}
+                                            </div>
+                                            {rows.map((r) => {
+                                              const m = matches.find((x) => x.id === r.matchId);
+                                              const kickMs = m?.kickoffAt?.toMillis ? m.kickoffAt.toMillis() : null;
+                                              const lockMs = kickMs != null ? kickMs - BET_BUILDER_DEADLINE_HOURS * 3600 * 1000 : null;
+                                              const closed = lockMs != null && Date.now() >= lockMs;
+                                              const lockText = lockMs == null ? "" : closed ? "ÎNCHIS" : `se închide ${new Date(lockMs).toLocaleString("ro-RO", { weekday: "short", day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}`;
+                                              const statusText = r.status === "confirmed" ? "✓ confirmat"
+                                                : r.status === "started" ? `✏️ ${r.answered}/${r.total}${r.hasTiebreaker ? " + baraj" : ""}, neconfirmat`
+                                                : "✗ nu a început";
+                                              const statusColor = r.status === "confirmed" ? "#8BD957" : r.status === "started" ? "#F0A94E" : "#F0555A";
+                                              return (
+                                                <div key={r.uid} style={{ ...s.triviaSubmissionRow, alignItems: "flex-start" }}>
+                                                  <span>
+                                                    {r.nickname}
+                                                    <div style={{ ...s.hint, margin: 0 }}>
+                                                      {m ? `${m.homeTeam} – ${m.awayTeam}` : "meci necunoscut"}{lockText ? ` · ${lockText}` : ""}
+                                                    </div>
+                                                  </span>
+                                                  <span style={{ color: statusColor, textAlign: "right" }}>{statusText}</span>
+                                                </div>
+                                              );
+                                            })}
+                                            <button type="button" style={s.smallBtn} disabled={betBuilderStatusLoading} onClick={() => loadBetBuilderStatus(gw.id)}>↻ Actualizează</button>
+                                          </>
+                                        );
+                                      })()}
+                                    </div>
+                                  )}
+                                </div>
                               )}
                               {betBuilder.status === "active" && (
                                 <button type="button" style={s.btn} disabled={betBuilderBusy} onClick={() => handleRecomputeAllDuels(gw.id)}>

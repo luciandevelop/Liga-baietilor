@@ -1,8 +1,10 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   getMyBetBuilderView, saveMyPicks, confirmMyTicket, canRevealOpponent, getOpponentPick,
-  computeDuelResult, isBetBuilderLocked,
+  computeDuelResult, isBetBuilderLocked, loadAllTicketsForMatch, BET_BUILDER_DEADLINE_HOURS,
 } from "../services/betBuilderService";
+import { getUserPublicProfiles } from "../services/profilesService";
+import { getLastKnownMatches } from "../services/matchesStore";
 import { buildMockView } from "../betBuilderMockData";
 import PageHeader from "../components/PageHeader";
 import ClubLogo from "../components/ClubLogo";
@@ -169,7 +171,143 @@ export default function BetBuilderScreen({ user, gameweekId, onBack, embedded = 
         {revealed && (
           <RevealSummary myPick={myPick} opponentPick={opponentPick} matchGroup={matchGroup} />
         )}
+
+        {!previewMode && view.bb && (
+          <AllTicketsSection gameweekId={gameweekId} myUid={user.uid} view={view} />
+        )}
       </div>
+    </div>
+  );
+}
+
+// ── „BILETELE TUTUROR” — după termenul de 12 ore al fiecărui meci, toți vedem cine ce a ales
+// la acel meci. Se încarcă LA ALEGEREA meciului (nu la intrare) și rămâne în memorie cât timp
+// ecranul e montat. Înainte de termen NU se citește niciun bilet (garda e în serviciu). ──
+function AllTicketsSection({ gameweekId, myUid, view }) {
+  const { bb, match: ownMatch } = view;
+  const groups = bb?.matchGroups || [];
+  const [selectedId, setSelectedId] = useState(view.matchGroup.matchId);
+  const [byMatch, setByMatch] = useState({}); // { [matchId]: { status: "loading"|"ready"|"error", data } }
+  const [names, setNames] = useState({});
+  const mountedRef = useRef(true);
+  const inflightRef = useRef(new Set());
+  useEffect(() => { mountedRef.current = true; return () => { mountedRef.current = false; }; }, []);
+
+  async function loadMatch(matchId, force = false) {
+    if (inflightRef.current.has(matchId)) return;
+    inflightRef.current.add(matchId);
+    setByMatch((p) => ({ ...p, [matchId]: { status: "loading", data: force ? undefined : p[matchId]?.data } }));
+    try {
+      const known = matchId === ownMatch?.id ? ownMatch : (getLastKnownMatches(gameweekId) || []).find((m) => m.id === matchId) || null;
+      const data = await loadAllTicketsForMatch(gameweekId, bb, matchId, known);
+      let nm = {};
+      if (data.locked) {
+        const uids = Object.keys(data.ticketsByUid);
+        const prof = await getUserPublicProfiles(uids);
+        uids.forEach((u) => { nm[u] = prof[u]?.nickname || "Jucător"; });
+      }
+      if (!mountedRef.current) return;
+      setNames((p) => ({ ...p, ...nm }));
+      setByMatch((p) => ({ ...p, [matchId]: { status: "ready", data } }));
+    } catch (err) {
+      console.error("Eroare la încărcarea biletelor:", err);
+      if (mountedRef.current) setByMatch((p) => ({ ...p, [matchId]: { status: "error" } }));
+    } finally {
+      inflightRef.current.delete(matchId);
+    }
+  }
+
+  useEffect(() => {
+    if (!byMatch[selectedId]) loadMatch(selectedId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedId]);
+
+  const known = getLastKnownMatches(gameweekId) || [];
+  const labelFor = (g, i) => {
+    const m = byMatch[g.matchId]?.data?.match || (g.matchId === ownMatch?.id ? ownMatch : known.find((x) => x.id === g.matchId));
+    return m ? `${m.homeTeam} – ${m.awayTeam}` : `Meciul ${i + 1}`;
+  };
+
+  const group = groups.find((g) => g.matchId === selectedId);
+  const entry = byMatch[selectedId];
+  const data = entry?.data;
+  const nameOf = (u) => (u === myUid ? "Tu" : names[u] || "Jucător");
+
+  const chip = (uid, group, q) => {
+    const t = data.ticketsByUid[uid];
+    if (!t?.confirmed) return <span key={uid} style={s.allChipOff}>{nameOf(uid)}: nu a confirmat</span>;
+    const choice = t.picks[q.id];
+    const res = group.results?.[q.id];
+    const correct = res === "hit" ? 0 : res === "miss" ? 1 : null;
+    const mark = correct == null || choice == null ? "" : choice === correct ? " ✓" : " ✗";
+    const tone = correct == null || choice == null ? null : choice === correct ? s.allChipHit : s.allChipMiss;
+    return (
+      <span key={uid} style={{ ...s.allChip, ...(uid === myUid ? s.allChipMine : null), ...tone }}>
+        {nameOf(uid)}: {choice == null ? "—" : q.options[choice]}{mark}
+      </span>
+    );
+  };
+
+  return (
+    <div style={s.allBox}>
+      <div style={s.allTitle}>👀 Biletele tuturor</div>
+      <div style={s.allSub}>După ce se închide un meci (cu {BET_BUILDER_DEADLINE_HOURS} ore înainte de start), vedem cu toții biletele jucătorilor din acel meci.</div>
+      <div style={s.allTabs}>
+        {groups.map((g, i) => (
+          <button
+            key={g.matchId} type="button"
+            style={{ ...s.allTab, ...(g.matchId === selectedId ? s.allTabActive : null) }}
+            onClick={() => setSelectedId(g.matchId)}
+          >
+            {labelFor(g, i)}
+          </button>
+        ))}
+      </div>
+
+      {(!entry || entry.status === "loading") && !data && <div style={s.allNote}>Se încarcă…</div>}
+      {entry?.status === "error" && <div style={s.allNote}>Nu s-au putut încărca biletele. <button type="button" style={s.allLink} onClick={() => loadMatch(selectedId, true)}>Încearcă din nou</button></div>}
+
+      {data && !data.locked && (
+        <div style={s.allNote}>
+          🔒 Biletele acestui meci se deschid după{" "}
+          {data.match?.kickoffAt?.toMillis
+            ? new Date(data.match.kickoffAt.toMillis() - BET_BUILDER_DEADLINE_HOURS * 3600 * 1000).toLocaleString("ro-RO", { weekday: "short", day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })
+            : "termenul meciului"}
+          {" "}(cu {BET_BUILDER_DEADLINE_HOURS} ore înainte de meci).
+        </div>
+      )}
+
+      {data && data.locked && group && (
+        <>
+          {data.duels.map((duel) => {
+            const A = duel.playerA, B = duel.playerB;
+            const ptsA = data.ticketsByUid[A]?.finalPoints, ptsB = data.ticketsByUid[B]?.finalPoints;
+            return (
+              <div key={duel.id} style={s.allDuel}>
+                <div style={s.allDuelHead}>
+                  {nameOf(A)}{ptsA != null ? ` (${ptsA} PCT)` : ""} <span style={s.allVs}>vs</span> {nameOf(B)}{ptsB != null ? ` (${ptsB} PCT)` : ""}
+                </div>
+                {(group.questions || []).map((q, i) => (
+                  <div key={q.id} style={s.allQ}>
+                    <div style={s.allQText}>{i + 1}. {q.text}</div>
+                    <div style={s.allChips}>{[A, B].map((u) => chip(u, group, q))}</div>
+                  </div>
+                ))}
+                <div style={s.allQ}>
+                  <div style={s.allQText}>🎯 Baraj: {group.tiebreakerText}{group.tiebreakerRealAnswer != null ? ` (real: ${group.tiebreakerRealAnswer})` : ""}</div>
+                  <div style={s.allChips}>
+                    {[A, B].map((u) => {
+                      const t = data.ticketsByUid[u];
+                      return <span key={u} style={{ ...(t?.confirmed ? s.allChip : s.allChipOff), ...(u === myUid ? s.allChipMine : null) }}>{nameOf(u)}: {t?.confirmed ? (t.tiebreakerAnswer ?? "—") : "nu a confirmat"}</span>;
+                    })}
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+          <button type="button" style={s.allLink} disabled={entry?.status === "loading"} onClick={() => loadMatch(selectedId, true)}>↻ Actualizează</button>
+        </>
+      )}
     </div>
   );
 }
@@ -270,6 +408,26 @@ const s = {
   stampAnimating: { animation: "none" },
 
   waitingNote: { textAlign: "center", color: color.textFaint, fontSize: 12, marginTop: 14, fontFamily: font.body },
+
+  allBox: { marginTop: 22, paddingTop: 16, borderTop: `1px solid ${color.borderSubtle || "rgba(255,255,255,0.1)"}` },
+  allTitle: { fontSize: 15, fontWeight: 800, color: color.textPrimary, fontFamily: font.display },
+  allSub: { fontSize: 11.5, color: color.textFaint, margin: "4px 0 10px", lineHeight: 1.4, fontFamily: font.body },
+  allTabs: { display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 10 },
+  allTab: { padding: "7px 10px", borderRadius: 999, border: `1px solid ${color.borderSubtle || "rgba(255,255,255,0.15)"}`, background: "transparent", color: color.textSecondary, fontSize: 11.5, fontWeight: 700, fontFamily: font.body, cursor: "pointer" },
+  allTabActive: { background: color.gold, color: "#12141C", border: "none" },
+  allNote: { textAlign: "center", fontSize: 12, color: color.textFaint, padding: "16px 4px", fontFamily: font.body, lineHeight: 1.5 },
+  allDuel: { background: color.surfaceInset, borderRadius: radius.md, padding: "10px 12px", marginBottom: 10 },
+  allDuelHead: { fontSize: 13, fontWeight: 800, color: color.goldLight, marginBottom: 8, fontFamily: font.body },
+  allVs: { fontSize: 10.5, color: color.textFaint, fontWeight: 700 },
+  allQ: { marginBottom: 8 },
+  allQText: { fontSize: 11.5, color: color.textSecondary, marginBottom: 4, lineHeight: 1.35, fontFamily: font.body },
+  allChips: { display: "flex", gap: 6, flexWrap: "wrap" },
+  allChip: { fontSize: 11.5, fontWeight: 700, padding: "4px 8px", borderRadius: 8, background: "rgba(255,255,255,0.06)", color: color.textPrimary, fontFamily: font.body },
+  allChipMine: { outline: `1px solid ${color.gold}` },
+  allChipHit: { background: "rgba(139,217,87,0.18)", color: "#CFF5B5" },
+  allChipMiss: { background: "rgba(240,85,90,0.16)", color: "#FFC2C4" },
+  allChipOff: { fontSize: 11, padding: "4px 8px", borderRadius: 8, background: "rgba(255,255,255,0.03)", color: color.textFaint, fontStyle: "italic", fontFamily: font.body },
+  allLink: { background: "transparent", border: "none", color: color.goldLight, fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: font.body, padding: "4px 0" },
 
   revealBox: { marginTop: 16, background: color.surfaceInset, borderRadius: radius.md, padding: 16, textAlign: "center" },
   revealScore: { fontSize: 26, fontWeight: 800, color: color.textPrimary, fontFamily: font.display },

@@ -302,7 +302,7 @@ export async function getMyBetBuilderView(gameweekId, uid) {
   const myPick = mySnap.exists() ? mySnap.data() : null;
   const match = matchSnap.exists() ? { id: matchSnap.id, ...matchSnap.data() } : null;
 
-  return { duel, matchGroup, opponentUid, myPick, match };
+  return { duel, matchGroup, opponentUid, myPick, match, bb };
 }
 
 export async function saveMyPicks(gameweekId, uid, { matchId, duelId, opponentUid, picks, tiebreakerAnswer }) {
@@ -342,6 +342,70 @@ export async function confirmMyTicket(gameweekId, uid, questionsCount) {
 // nicio protecție server-side nouă (Varianta A, aprobată). ──
 export function canRevealOpponent(myPick) {
   return !!myPick?.confirmed;
+}
+
+// ── „BILETELE TUTUROR” — după termenul de 12 ore al unui meci, TOȚI jucătorii pot vedea
+// biletele celor 6 jucători din acel meci (3 dueluri). Același nivel de protecție ca restul
+// Bet Builder-ului (Varianta A): gardă client-side, Rules neatinse — aceleași documente
+// betBuilderPicks pe care ecranul le citește deja pentru biletul adversarului.
+// GARDA e AICI: înainte de termen funcția NU citește niciun bilet (doar, eventual, documentul
+// meciului). Se arată DOAR biletele CONFIRMATE — ciornele neconfirmate nu contează la punctaj
+// și rămân ascunse.
+async function getMatchDocById(matchId) {
+  const snap = await getDoc(doc(db, "matches", matchId));
+  return snap.exists() ? { id: snap.id, ...snap.data() } : null;
+}
+
+export async function loadAllTicketsForMatch(gameweekId, bb, matchId, knownMatch = null, now = Date.now()) {
+  const match = knownMatch || (await getMatchDocById(matchId));
+  if (!match || !isBetBuilderLocked(match, now)) return { match, locked: false, duels: [], ticketsByUid: {} };
+
+  const duels = (bb?.duels || []).filter((d) => d.matchId === matchId);
+  const uids = [];
+  duels.forEach((d) => [d.playerA, d.playerB].forEach((u) => { if (u && !uids.includes(u)) uids.push(u); }));
+  const snaps = await Promise.all(uids.map((uid) => getDoc(pickRef(gameweekId, uid))));
+  const ticketsByUid = {};
+  uids.forEach((uid, i) => {
+    const p = snaps[i].exists() ? snaps[i].data() : null;
+    ticketsByUid[uid] = p && p.confirmed
+      ? { confirmed: true, picks: p.picks || {}, tiebreakerAnswer: p.tiebreakerAnswer ?? null, finalPoints: p.pointsAwarded ? (p.finalPoints ?? null) : null }
+      : { confirmed: false, picks: {}, tiebreakerAnswer: null, finalPoints: null };
+  });
+  return { match, locked: true, duels, ticketsByUid };
+}
+
+// ── ADMIN — cine și-a trimis (confirmat) biletul. Doar pentru avertizarea jucătorilor.
+// Citește exact aceleași documente pe care le citește deja Adminul la „Recalculează”
+// (betBuilderPicks/{etapă}_{uid}, prin getDoc) — o citire pe jucător (≈18), la apăsare.
+// Returnează o linie pe jucător: { uid, matchId, status: "confirmed"|"started"|"none", answered, total, hasTiebreaker }.
+// Nu citește și nu întoarce NICIODATĂ alegerile (picks) — doar câte au fost completate.
+export async function getBetBuilderSubmissionStatus(gameweekId, bb = null) {
+  const data = bb || (await getBetBuilder(gameweekId));
+  if (!data || !Array.isArray(data.duels) || data.duels.length === 0) return [];
+  const players = [];
+  const seen = new Set();
+  data.duels.forEach((duel) => {
+    [duel.playerA, duel.playerB].forEach((uid) => {
+      if (!uid || seen.has(uid)) return;
+      seen.add(uid);
+      players.push({ uid, matchId: duel.matchId });
+    });
+  });
+  const snaps = await Promise.all(players.map((p) => getDoc(pickRef(gameweekId, p.uid))));
+  return players.map((p, i) => {
+    const pick = snaps[i].exists() ? snaps[i].data() : null;
+    const group = (data.matchGroups || []).find((g) => g.matchId === p.matchId);
+    const answered = Object.keys(pick?.picks || {}).length;
+    const hasTiebreaker = !!pick && pick.tiebreakerAnswer !== null && pick.tiebreakerAnswer !== undefined && pick.tiebreakerAnswer !== "";
+    return {
+      uid: p.uid,
+      matchId: p.matchId,
+      status: pick?.confirmed ? "confirmed" : pick ? "started" : "none",
+      answered,
+      total: group?.questions?.length || QUESTIONS_PER_MATCH,
+      hasTiebreaker,
+    };
+  });
 }
 
 // ── Citește biletul adversarului — apelată STRICT după ce

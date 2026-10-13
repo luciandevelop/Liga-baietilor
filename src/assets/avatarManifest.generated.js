@@ -6,13 +6,14 @@
 // liber (nextIndex), indiferent unde ar cădea alfabetic.
 export default {
   "adireal": {
-    "nextIndex": 7,
+    "nextIndex": 8,
     "files": {
       "1": "1.png",
       "2": "2.png",
       "3": "3.png",
       "4": "4.png",
-      "5": "5.png"
+      "5": "5.png",
+      "7": "AdiReal_avatar-1.webp"
     }
   },
   "alex-nicoara": {

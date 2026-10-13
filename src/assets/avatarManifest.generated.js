@@ -86,7 +86,7 @@ export default {
     }
   },
   "ghioca": {
-    "nextIndex": 8,
+    "nextIndex": 9,
     "files": {
       "1": "file_000000009f048246ac6a1662917a3f74.png",
       "2": "avatar_1.webp",
@@ -94,7 +94,8 @@ export default {
       "4": "avatar_3.webp",
       "5": "avatar_4.webp",
       "6": "avatar_5.webp",
-      "7": "avatar_6.webp"
+      "7": "avatar_6.webp",
+      "8": "Ghioca_avatar.webp"
     }
   },
   "luck87": {

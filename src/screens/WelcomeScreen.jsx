@@ -53,6 +53,10 @@ const CTA_LABEL = {
 const publishedJokerKeys = new Set();       // Joker propriu deja publicat în Feed
 const staticFeedDoneForGw = new Set();      // meciuri viitoare + fapte de club, o dată/sesiune (doar Admin)
 
+// Cache la nivel de modul pentru căutarea Story-ului de sezon anterior (vezi efectul din componentă).
+const OLDER_STORY_CACHE_MS = 5 * 60 * 1000;
+let olderStoryCache = { currentId: null, at: 0, value: null };
+
 export default function WelcomeScreen({ user, profile, isAdmin, onOpenAdmin, onOpenPredictions, onOpenLeaderboard, onOpenLive, onOpenFeaturedMatch, onOpenSpecials, onOpenFeed, onOpenSurprises, onOpenProfile, onOpenStoriesArchive }) {
   const now = useNow(1000);
   const reduced = usePrefersReducedMotion();
@@ -74,6 +78,8 @@ export default function WelcomeScreen({ user, profile, isAdmin, onOpenAdmin, onO
   // (storyActive/storyVersion, deja pe documentul deja preluat mai sus,
   // zero citire nouă). ──
   const [seasonState, setSeasonState] = useState(null);
+  // Story-ul de sezon ACTIV al unui sezon anterior (ex. „Încălzirea” după ce a început Sezonul 2).
+  const [olderStorySeason, setOlderStorySeason] = useState(null);
   // ── PLAY LEAGUE Stories — stare minimă, doar UI (deschis/închis),
   // nimic persistat local. "Văzut" se scrie STRICT pe users/{uid},
   // la finalul Story-ului, nicăieri altundeva. ──
@@ -524,15 +530,40 @@ export default function WelcomeScreen({ user, profile, isAdmin, onOpenAdmin, onO
     return () => { cancelled = true; };
   }, [seasonState?.activeStoryGameweekId, gameweek]);
 
+  // Story de SEZON: dacă sezonul CURENT nu are Story activ, căutăm cel mai nou sezon ANTERIOR care are
+  // unul (Home citea doar sezonul curent, deci Story-ul unui sezon încheiat nu apărea niciodată).
+  // O interogare pe colecția „seasons” (2–3 documente), reținută 5 minute per telefon — fără polling.
+  useEffect(() => {
+    if (!seasonState?.id || seasonState.storyActive) { setOlderStorySeason(null); return undefined; }
+    const cached = olderStoryCache;
+    if (cached.currentId === seasonState.id && Date.now() - cached.at < OLDER_STORY_CACHE_MS) {
+      setOlderStorySeason(cached.value);
+      return undefined;
+    }
+    let cancelled = false;
+    listSeasons()
+      .then((all) => {
+        const ms = (x) => (x?.createdAt?.toMillis ? x.createdAt.toMillis() : 0);
+        const older = all
+          .filter((x) => x.id !== seasonState.id && x.storyActive && x.storySlideCount)
+          .sort((a, b) => ms(b) - ms(a))[0] || null;
+        olderStoryCache = { currentId: seasonState.id, at: Date.now(), value: older };
+        if (!cancelled) setOlderStorySeason(older);
+      })
+      .catch((err) => console.error("Eroare la căutarea Story-ului de sezon anterior:", err));
+    return () => { cancelled = true; };
+  }, [seasonState?.id, seasonState?.storyActive]);
+  const seasonStorySeason = seasonState?.storyActive ? seasonState : olderStorySeason;
+
   // ── PLAY LEAGUE Stories — determinare "nevăzut", STRICT din date deja
   // încărcate (storyGameweek, seasonState, profile) — zero citire nouă doar
   // ca să decidem dacă iconița pulsează. ──
   const gwStoryUnseen = !!(storyGameweek?.storyActive && profile
     && profile.lastSeenGwStoryKey !== storyKey(storyGameweek.id, storyGameweek.storyVersion || 1)
     && locallySeenKeys.gw !== storyKey(storyGameweek.id, storyGameweek.storyVersion || 1));
-  const seasonStoryUnseen = !!(seasonState?.storyActive && profile
-    && profile.lastSeenSeasonStoryKey !== storyKey(seasonState.id, seasonState.storyVersion || 1)
-    && locallySeenKeys.season !== storyKey(seasonState.id, seasonState.storyVersion || 1));
+  const seasonStoryUnseen = !!(seasonStorySeason?.storyActive && profile
+    && profile.lastSeenSeasonStoryKey !== storyKey(seasonStorySeason.id, seasonStorySeason.storyVersion || 1)
+    && locallySeenKeys.season !== storyKey(seasonStorySeason.id, seasonStorySeason.storyVersion || 1));
   const anyStoryUnseen = gwStoryUnseen || seasonStoryUnseen;
 
   async function openGwStory() {
@@ -552,14 +583,14 @@ export default function WelcomeScreen({ user, profile, isAdmin, onOpenAdmin, onO
   }
 
   async function openSeasonStory() {
-    if (!seasonState?.storyActive || !seasonState.storySlideCount) return;
+    if (!seasonStorySeason?.storyActive || !seasonStorySeason.storySlideCount) return;
     setStoryLoading(true);
     try {
       const seasons = await listSeasons();
-      const seasonNumber = seasonNumberFromList(seasonState.id, seasons);
-      const slideUrls = Array.from({ length: seasonState.storySlideCount }, (_, i) =>
+      const seasonNumber = seasonNumberFromList(seasonStorySeason.id, seasons);
+      const slideUrls = Array.from({ length: seasonStorySeason.storySlideCount }, (_, i) =>
         slideUrl({ seasonNumber, etapaNumber: null, slideIndex: i + 1 }));
-      setStoryView({ slideUrls, kind: "season", id: seasonState.id, version: seasonState.storyVersion || 1, isSeasonStory: true });
+      setStoryView({ slideUrls, kind: "season", id: seasonStorySeason.id, version: seasonStorySeason.storyVersion || 1, isSeasonStory: true });
     } catch (err) {
       console.error("Eroare la deschiderea Story-ului de sezon:", err);
     } finally {

@@ -193,7 +193,7 @@ export default {
     }
   },
   "vikigbt": {
-    "nextIndex": 8,
+    "nextIndex": 9,
     "files": {
       "1": "file_000000000f2081f4b60aab68f5ede52f.png",
       "2": "file_000000002fb08246b78a655c012b6002.png",
@@ -201,7 +201,8 @@ export default {
       "4": "file_0000000098e081f59b175b818b52624f.png",
       "5": "file_000000009ad081f49c400078698346ad.png",
       "6": "file_00000000ae7081f4a4d49b7423f8f188.png",
-      "7": "file_00000000b05c81f5a0ce992b80f5be2b.png"
+      "7": "file_00000000b05c81f5a0ce992b80f5be2b.png",
+      "8": "VikiGBT_avatar.webp"
     }
   },
   "vladinhuu": {

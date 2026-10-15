@@ -2,6 +2,7 @@ import { collection, doc, getDoc, getDocs, setDoc, query, where, runTransaction,
 import { db } from "../firebase";
 import { listActiveUserIds, listGameweeks, getLiveGameweekPoints, isGameweekReadyToResolve, getLastCompletedGameweek, listGameweekScores } from "./adminService";
 import { teamScore } from "./scoringEngine";
+import { applyOutcome, advanceAfterReveal, shuffleStepDoors, START_LIVES, TOTAL_STEPS, MAX_POINTS } from "../treasureHuntMockData";
 
 // ══════════════════════════════════════════════════════════════════
 // CATALOG — un singur loc, reutilizat de Admin (configurare) și de UI
@@ -961,6 +962,7 @@ export async function resolveBonus(gameweekId) {
   const bonusType = secretSnap.exists() ? secretSnap.data().type : null;
 
   let resultsPerUser;
+  let treasureDetailByUid = {}; // doar pentru treasure-hunt  { uid: {status,step,lives,total} }
   let penaltyDetailByUid = {}; // doar pentru penalty-pvp — { uid: {myGoals,mySaves,opponentGoals,opponentSaves} }
   if (bonusType === "mystery-box") {
     const boxValues = secretSnap.exists() ? (secretSnap.data().config?.boxValues || []) : [];
@@ -1022,6 +1024,18 @@ export async function resolveBonus(gameweekId) {
       }
     });
     if (byePlayer) resultsPerUser.push({ uid: byePlayer, points: 50 });
+  } else if (bonusType === "treasure-hunt") {
+    // Comoara Blestemată: fiecare jucător are cel mult un document de joc. Punctajul se
+    // calculează DIN STAREA SALVATĂ (nu dintr-un câmp scris de client): terminat → punctele
+    // finale; neterminat → exact PCT-ul acumulat până la Rezolvare (aceeași filozofie ca la
+    // Zaruri/Rulet); game over (inclusiv fără vieți rămase) → 0; fără joc → 0.
+    const runSnaps = await Promise.all(activeUids.map((uid) => getDoc(treasureRunRef(gameweekId, uid))));
+    resultsPerUser = activeUids.map((uid, i) => {
+      const run = runSnaps[i].exists() ? runSnaps[i].data() : null;
+      const points = computeTreasureFinalPoints(run);
+      treasureDetailByUid[uid] = { status: treasureRunStatus(run), step: run?.step ?? 0, lives: run?.lives ?? 0, total: points };
+      return { uid, points };
+    });
   } else {
     // Ruletă — neschimbat.
     resultsPerUser = await Promise.all(activeUids.map(async (uid) => {
@@ -1044,7 +1058,8 @@ export async function resolveBonus(gameweekId) {
     // ca la Main (motivul e identic: evită dublarea la Resolve+Finalize).
     resultsPerUser.forEach((r) => {
       const extra = penaltyDetailByUid[r.uid] ? { penalty: penaltyDetailByUid[r.uid] } : {};
-      tx.set(doc(db, "weeklySurprises", gameweekId, "results", r.uid), { uid: r.uid, bonusPoints: r.points, ...extra }, { merge: true });
+      const treasureExtra = treasureDetailByUid[r.uid] ? { treasure: treasureDetailByUid[r.uid] } : {};
+      tx.set(doc(db, "weeklySurprises", gameweekId, "results", r.uid), { uid: r.uid, bonusPoints: r.points, ...extra, ...treasureExtra }, { merge: true });
     });
     tx.set(publicRef, { bonusResolved: true }, { merge: true });
   });
@@ -1449,4 +1464,148 @@ export async function listSeasonSurprises(seasonId) {
     return { gameweek: gw, public: pub, status: getSurpriseStatus(pub) };
   }));
   return rows.sort((a, b) => (a.gameweek.number || 0) - (b.gameweek.number || 0));
+}
+
+// ══════════════════════════════════════════════════════════════════
+// 🏴‍☠️ COMOARA BLESTEMATĂ — persistență (Etapa 1: doar serviciul; jocul
+// NU e încă selectabil — intrarea din catalog vine în ultima etapă).
+// Un document pe jucător și etapă: weeklySurprises/{etapă}/treasureRuns/{uid}.
+// Motorul (drumuri, rezultate, cash-out) e cel din treasureHuntMockData.js,
+// neschimbat; aici se SALVEAZĂ starea lui și se validează fiecare mutare.
+// Drumurile unui pas se amestecă O SINGURĂ DATĂ, la intrarea în pas, și se
+// salvează ÎNAINTE de alegere — o reîncărcare reia exact același pas.
+// ══════════════════════════════════════════════════════════════════
+const TREASURE_TERMINAL_PHASES = ["gameover", "cashedout", "treasure"];
+
+function treasureRunRef(gameweekId, uid) {
+  return doc(db, "weeklySurprises", gameweekId, "treasureRuns", uid);
+}
+
+export function isTreasureTerminalPhase(phase) {
+  return TREASURE_TERMINAL_PHASES.includes(phase);
+}
+
+// Punctele finale ale unui joc salvat. Neterminat → totalul acumulat; game over sau fără
+// vieți (reveal-ul ultimei vieți pierdute nu mai apucase să treacă în „game over”) → 0.
+export function computeTreasureFinalPoints(run) {
+  if (!run) return 0;
+  const total = Number(run.total);
+  const lives = Number(run.lives);
+  if (!Number.isFinite(total) || !Number.isFinite(lives)) return 0;
+  if (run.phase === "gameover" || lives <= 0) return 0;
+  return Math.max(0, Math.min(MAX_POINTS, Math.round(total)));
+}
+
+export function treasureRunStatus(run) {
+  if (!run) return "not-played";
+  if (run.phase === "gameover" || Number(run.lives) <= 0) return "gameover";
+  if (run.phase === "treasure") return "treasure";
+  if (run.phase === "cashedout") return "cashedout";
+  return "unfinished";
+}
+
+function doorsFingerprint(doors) {
+  return doors.map((d) => JSON.stringify({ type: d?.outcome?.type, value: d?.outcome?.value })).sort().join("|");
+}
+
+// Drumurile unui pas trebuie să fie exact multimea de rezultate a pasului (în orice ordine).
+function doorsValidForStep(step, doors) {
+  if (!Number.isInteger(step) || step < 1 || step > TOTAL_STEPS || !Array.isArray(doors)) return false;
+  const expected = shuffleStepDoors(step);
+  return doors.length === expected.length && doorsFingerprint(doors) === doorsFingerprint(expected);
+}
+
+// Verifică dacă `next` e un succesor LEGAL al lui `prev` (prev = null → început de joc).
+// Reutilizează funcțiile pure ale motorului; drumurile noi se validează ca multime, nu ca ordine.
+export function validateTreasureTransition(prev, next) {
+  const bad = (reason) => ({ ok: false, reason });
+  if (!next || typeof next !== "object") return bad("stare lipsă");
+  if (![next.step, next.total, next.lives].every(Number.isInteger)) return bad("valori numerice invalide");
+  if (next.total < 0 || next.total > MAX_POINTS || next.lives < 0 || next.lives > START_LIVES) return bad("valori în afara limitelor");
+
+  if (!prev) {
+    if (next.step !== 1 || next.total !== 0 || next.lives !== START_LIVES || next.phase !== "choosing" || next.chosenIndex !== null) return bad("început de joc invalid");
+    return doorsValidForStep(1, next.doors) ? { ok: true } : bad("drumuri invalide la început");
+  }
+  if (isTreasureTerminalPhase(prev.phase)) return bad("jocul e deja încheiat");
+
+  if (prev.phase === "choosing") {
+    const idx = next.chosenIndex;
+    if (next.phase !== "revealed" || !Number.isInteger(idx) || idx < 0 || idx >= prev.doors.length) return bad("alegere invalidă");
+    if (next.step !== prev.step || JSON.stringify(next.doors) !== JSON.stringify(prev.doors)) return bad("drumurile pasului s-au schimbat");
+    const expected = applyOutcome(prev, idx);
+    if (next.total !== expected.total || next.lives !== expected.lives) return bad("punctaj invalid după alegere");
+    return { ok: true };
+  }
+
+  if (prev.phase === "revealed") {
+    const expected = advanceAfterReveal(prev);
+    if (next.phase !== expected.phase || next.step !== expected.step || next.total !== expected.total || next.lives !== expected.lives) return bad("tranziție invalidă după reveal");
+    if (expected.phase === "treasure" && next.preTreasureTotal !== expected.preTreasureTotal) return bad("total înainte de comoară invalid");
+    if (expected.phase === "choosing" && (next.chosenIndex !== null || !doorsValidForStep(next.step, next.doors))) return bad("drumuri invalide pentru pasul următor");
+    return { ok: true };
+  }
+
+  if (prev.phase === "cashout") {
+    if (next.phase === "cashedout") {
+      return next.step === prev.step && next.total === prev.total && next.lives === prev.lives ? { ok: true } : bad("cash-out invalid");
+    }
+    if (next.phase === "choosing") {
+      if (next.step !== prev.step + 1 || next.step > TOTAL_STEPS || next.total !== prev.total || next.lives !== prev.lives || next.chosenIndex !== null) return bad("continuare invalidă");
+      return doorsValidForStep(next.step, next.doors) ? { ok: true } : bad("drumuri invalide pentru pasul următor");
+    }
+    return bad("alegere invalidă după cash-out");
+  }
+  return bad("fază necunoscută");
+}
+
+// Jocul propriu (1 citire) sau null dacă nu a început.
+export async function getMyTreasureRun(gameweekId, uid) {
+  const snap = await getDoc(treasureRunRef(gameweekId, uid));
+  return snap.exists() ? snap.data() : null;
+}
+
+// Salvează o mutare. Totul într-o TRANZACȚIE: citește starea curentă, verifică tranziția și scrie.
+// Dacă doi clienți (două file) încearcă aceeași mutare, al doilea e respins. Respinge și scrierile
+// după ce Adminul a rezolvat Comoara sau dacă BONUSUL nu e dezvăluit.
+export async function saveTreasureRun(gameweekId, uid, nextState) {
+  const ref = treasureRunRef(gameweekId, uid);
+  const publicRef = doc(db, "weeklySurprises", gameweekId);
+  let written = null;
+  await runTransaction(db, async (tx) => {
+    const pub = await tx.get(publicRef);
+    if (!pub.exists() || pub.data().bonusRevealed !== true) throw new Error("Comoara Blestemată nu e activă.");
+    if (pub.data().bonusResolved === true) throw new Error("Comoara a fost deja rezolvată — jocul s-a încheiat.");
+    const cur = await tx.get(ref);
+    const prev = cur.exists() ? cur.data() : null;
+    const check = validateTreasureTransition(prev, nextState);
+    if (!check.ok) throw new Error(`Mutare invalidă: ${check.reason}`);
+    const doc_ = {
+      uid,
+      step: nextState.step,
+      total: nextState.total,
+      lives: nextState.lives,
+      phase: nextState.phase,
+      doors: nextState.doors.map((d) => ({ label: d.label, outcome: { type: d.outcome.type, value: d.outcome.value } })),
+      chosenIndex: nextState.chosenIndex ?? null,
+      ...(nextState.preTreasureTotal != null ? { preTreasureTotal: nextState.preTreasureTotal } : {}),
+      finished: isTreasureTerminalPhase(nextState.phase),
+      version: (prev?.version || 0) + 1,
+      createdAt: prev?.createdAt || serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    };
+    tx.set(ref, doc_);
+    written = doc_;
+  });
+  return written;
+}
+
+// ADMIN — cine a jucat Comoara și în ce stadiu (o citire pe jucător activ, la apăsare).
+export async function getTreasureRunStatus(gameweekId) {
+  const activeUids = [...(await listActiveUserIds())];
+  const snaps = await Promise.all(activeUids.map((uid) => getDoc(treasureRunRef(gameweekId, uid))));
+  return activeUids.map((uid, i) => {
+    const run = snaps[i].exists() ? snaps[i].data() : null;
+    return { uid, status: treasureRunStatus(run), step: run?.step ?? 0, lives: run?.lives ?? 0, points: computeTreasureFinalPoints(run) };
+  });
 }

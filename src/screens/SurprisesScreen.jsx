@@ -22,6 +22,7 @@ import SabotajExperience from "../components/SabotajExperience";
 import RouletteExperience from "../components/RouletteExperience";
 import MysteryBoxExperience from "../components/MysteryBoxExperience";
 import PenaltyExperience from "../components/PenaltyExperience";
+import TreasureHuntScreen from "./TreasureHuntScreen";
 import { color, font, radius } from "../matchdayTheme";
 
 function catalogLabel(list, id) {
@@ -426,6 +427,17 @@ export default function SurprisesScreen({ user, onBack }) {
                       resolved={!!pub?.bonusResolved}
                       myResult={myResult}
                       results={resultsByUid}
+                    />
+                  )}
+
+                  {/* Comoara Blestemată — montat doar când tipul e "treasure-hunt" (încă NU e în BONUS_CATALOG). */}
+                  {secretBonus?.type === "treasure-hunt" && (
+                    <TreasureHuntScreen
+                      user={user}
+                      gameweekId={gameweek.id}
+                      embedded
+                      resolved={!!pub?.bonusResolved}
+                      myResult={myResult}
                     />
                   )}
                 </>

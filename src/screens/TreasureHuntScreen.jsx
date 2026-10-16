@@ -12,6 +12,7 @@ import {
   GAME_OVER_EARLY_LINES, gameOverLateLine, TREASURE_FOUND_LINES, PERFECT_100_LINES, cashoutLine,
   TRAVEL_LINES_SAFE, TRAVEL_LINES_RISK, TRAVEL_LINES_CURSED, FINAL_CROSSING_LINES,
 } from "../treasureHuntTexts";
+import { getMyTreasureRun, saveTreasureRun, computeTreasureFinalPoints, treasureRunStatus } from "../services/surprisesService";
 import PageHeader from "../components/PageHeader";
 import { color, font, radius } from "../matchdayTheme";
 
@@ -58,7 +59,22 @@ function resultRevealMsFor(step) {
 // Motorul matematic (treasureHuntMockData.js) NU e atins — doar
 // secvențierea/prezentarea din acest fișier.
 // ══════════════════════════════════════════════════════════════════
-export default function TreasureHuntScreen({ onBack, previewMode, previewState, embedded }) {
+// Modul REAL (jucători): primește user + gameweekId (+ resolved/myResult de la SurprisesScreen).
+// Fiecare tranziție a motorului se SALVEAZĂ înainte să fie arătată (rezultatul unei alegeri nu se
+// vede până nu e salvat — o reîncărcare nu poate „încerca din nou” un alt drum); la reintrare jocul
+// se reia exact de unde a rămas; nu există „Reîncepe”. Previzualizarea din Admin rămâne 100% locală.
+export default function TreasureHuntScreen({ onBack, previewMode, previewState, embedded, user, gameweekId, resolved, myResult }) {
+  const realMode = !previewMode && !!gameweekId && !!user?.uid;
+  const [loadState, setLoadState] = useState(realMode ? "loading" : "ready"); // loading | ready | error
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState("");
+  const [hasRun, setHasRun] = useState(false);
+  const [syncNote, setSyncNote] = useState("");
+  const [reloadTick, setReloadTick] = useState(0);
+  const mountedRef = useRef(true);
+  const pendingRef = useRef(null);
+  useEffect(() => { mountedRef.current = true; return () => { mountedRef.current = false; }; }, []);
+
   const [game, setGame] = useState(() => (previewMode ? buildTreasureHuntPreview(previewState) : freshGameState()));
   const [pulse, setPulse] = useState(null);
   const [visualPhase, setVisualPhase] = useState(previewMode ? "choice" : "intro");
@@ -85,6 +101,93 @@ export default function TreasureHuntScreen({ onBack, previewMode, previewState, 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [previewMode, previewState]);
 
+  // Jocul salvat → starea motorului (fără câmpurile de evidență).
+  function runToGame(run) {
+    return {
+      step: run.step, total: run.total, lives: run.lives, phase: run.phase,
+      doors: run.doors, chosenIndex: run.chosenIndex ?? null,
+      ...(run.preTreasureTotal != null ? { preTreasureTotal: run.preTreasureTotal } : {}),
+    };
+  }
+  function sameGame(a, b) {
+    return a.step === b.step && a.total === b.total && a.lives === b.lives && a.phase === b.phase
+      && (a.chosenIndex ?? null) === (b.chosenIndex ?? null) && JSON.stringify(a.doors) === JSON.stringify(b.doors);
+  }
+
+  // Reia jocul din starea salvată: ajunge în faza vizuală corectă, fără să mai amestece nimic.
+  function resumeFromGame(g) {
+    timers.current.forEach(clearTimeout);
+    timers.current = [];
+    setGame(g);
+    setShipStationIndex(null);
+    setPulse(null);
+    setHasRun(true);
+    if (g.phase === "choosing") { setVisualPhase("choice"); return; }
+    if (g.phase === "revealed") {
+      if (g.doors[g.chosenIndex]?.outcome.type === "life") { setVisualPhase("lifeReaction"); return; }
+      setVisualPhase("resultReveal");
+      later(() => proceedAfterResult(g), resultRevealMsFor(g.step));
+      return;
+    }
+    setVisualPhase(resolveDirectPhase(g)); // cashout | cashedout | treasure | gameover
+  }
+
+  // Salvează o tranziție ÎNAINTE de a o arăta. „ok” = salvat (inclusiv când răspunsul s-a pierdut,
+  // dar serverul are deja mutarea); „error” = rămâne pe loc, cu mesaj și buton de reîncercare;
+  // { resync } = serverul a AVANSAT față de ce vedem noi (altă filă) → ne aliniem la el.
+  // `current` = starea locală dinaintea mutării (null la începutul jocului).
+  async function persist(next, retry, current) {
+    setSaving(true);
+    setSaveError("");
+    try {
+      await saveTreasureRun(gameweekId, user.uid, next);
+      return "ok";
+    } catch (err) {
+      try {
+        const run = await getMyTreasureRun(gameweekId, user.uid);
+        if (run) {
+          const server = runToGame(run);
+          if (sameGame(server, next)) return "ok";
+          if (!current || !sameGame(server, current)) return { resync: server };
+          // serverul e tot unde eram noi → salvarea chiar a eșuat: arătăm eroarea mai jos
+        }
+      } catch (_) { /* fără rețea — arătăm eroarea de mai jos */ }
+      if (mountedRef.current) setSaveError(err?.message || "Nu s-a putut salva. Încearcă din nou.");
+      pendingRef.current = retry;
+      return "error";
+    } finally {
+      if (mountedRef.current) setSaving(false);
+    }
+  }
+  async function guard(next, retry, current) {
+    const res = await persist(next, retry, current);
+    if (res === "ok") return true;
+    if (res !== "error" && mountedRef.current) {
+      setSyncNote("Jocul a fost sincronizat cu ultima stare salvată.");
+      later(() => setSyncNote(""), 4000);
+      resumeFromGame(res.resync);
+    }
+    return false;
+  }
+
+  useEffect(() => {
+    if (!realMode) return undefined;
+    let cancelled = false;
+    setLoadState("loading");
+    getMyTreasureRun(gameweekId, user.uid)
+      .then((run) => {
+        if (cancelled) return;
+        if (run) resumeFromGame(runToGame(run));
+        setLoadState("ready");
+      })
+      .catch((err) => {
+        console.error("Comoara: eroare la încărcarea jocului:", err);
+        if (!cancelled) setLoadState("error");
+      });
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [realMode, gameweekId, user?.uid, reloadTick]);
+
   function resolveDirectPhase(g) {
     if (g.phase === "revealed") {
       const isLife = g.doors[g.chosenIndex]?.outcome.type === "life";
@@ -94,12 +197,18 @@ export default function TreasureHuntScreen({ onBack, previewMode, previewState, 
     return g.phase; // cashout | treasure | gameover
   }
 
+  const restartHandler = (previewMode || realMode) ? null : handleRestart; // modul real: o singură încercare
   const chosenOutcome = game.chosenIndex != null ? game.doors[game.chosenIndex]?.outcome : null;
   const isSecondLifeLoss = chosenOutcome?.type === "life" && game.lives <= 0;
   const zone = zoneForStep(game.step);
 
   // ══ INTRO → prima secvență de sosire ══
-  function handleRaiseAnchor() {
+  async function handleRaiseAnchor() {
+    if (realMode) {
+      if (saving) return;
+      if (!(await guard(game, handleRaiseAnchor, null))) return;
+      setHasRun(true);
+    }
     startArrivalSequence(game);
   }
 
@@ -119,9 +228,10 @@ export default function TreasureHuntScreen({ onBack, previewMode, previewState, 
   }
 
   // ══ ALEGERE → rezultat (auto) ══
-  function handlePick(doorIndex) {
-    if (visualPhase !== "choice") return;
+  async function handlePick(doorIndex) {
+    if (visualPhase !== "choice" || saving) return;
     const next = applyOutcome(game, doorIndex);
+    if (realMode && !(await guard(next, () => handlePick(doorIndex), game))) return;
     const outcome = next.doors[doorIndex].outcome;
     setPulse(outcome.type === "life" ? "life" : outcome.value > 0 ? "up" : "down");
     setGame(next);
@@ -134,16 +244,19 @@ export default function TreasureHuntScreen({ onBack, previewMode, previewState, 
   }
 
   // ══ Consecință: cash-out / navigare normală / navigare finală ══
-  function proceedAfterResult(state) {
+  async function proceedAfterResult(state) {
     const next = advanceAfterReveal(state);
+    if (realMode && !(await guard(next, () => proceedAfterResult(state), state))) return;
     if (next.phase === "cashout") { setGame(next); setVisualPhase("cashout"); return; }
-    if (next.phase === "treasure") { beginFinalTravel(next); return; }
-    beginTravel(next, next.step, TRAVEL_MS[next.step] ?? 2200);
+    if (next.phase === "treasure") { beginFinalTravel(next, state.step); return; }
+    beginTravel(next, next.step, TRAVEL_MS[next.step] ?? 2200, state.step);
   }
 
-  function handleReactionDone() {
+  async function handleReactionDone() {
+    if (saving) return;
     if (isSecondLifeLoss) {
       const final = advanceAfterReveal(game);
+      if (realMode && !(await guard(final, handleReactionDone, game))) return;
       setGame(final);
       setVisualPhase("gameover");
     } else {
@@ -151,10 +264,10 @@ export default function TreasureHuntScreen({ onBack, previewMode, previewState, 
     }
   }
 
-  function beginTravel(nextState, toStationIndex, durationMs) {
+  function beginTravel(nextState, toStationIndex, durationMs, fromStep = game.step) {
     setVisualPhase("travel");
     setTravelDurationMs(durationMs);
-    setShipStationIndex(game.step);
+    setShipStationIndex(fromStep);
     requestAnimationFrame(() => requestAnimationFrame(() => setShipStationIndex(toStationIndex)));
     later(() => {
       setShipStationIndex(null);
@@ -162,10 +275,10 @@ export default function TreasureHuntScreen({ onBack, previewMode, previewState, 
     }, durationMs + 150);
   }
 
-  function beginFinalTravel(nextState) {
+  function beginFinalTravel(nextState, fromStep = game.step) {
     setVisualPhase("finalTravel");
     setTravelDurationMs(TRAVEL_MS.treasure);
-    setShipStationIndex(game.step);
+    setShipStationIndex(fromStep);
     requestAnimationFrame(() => requestAnimationFrame(() => setShipStationIndex(TREASURE_STATION_INDEX)));
     later(() => {
       setGame(nextState);
@@ -174,13 +287,23 @@ export default function TreasureHuntScreen({ onBack, previewMode, previewState, 
     }, TRAVEL_MS.treasure + 300);
   }
 
-  function handleCashOut() {
+  async function handleCashOut() {
+    if (realMode) {
+      if (saving) return;
+      const next = cashOut(game);
+      if (!(await guard(next, handleCashOut, game))) return;
+      setGame(next);
+      setVisualPhase("cashedout");
+      return;
+    }
     setGame((g) => cashOut(g));
     setVisualPhase("cashedout");
   }
-  function handleContinueRisk() {
+  async function handleContinueRisk() {
+    if (realMode && saving) return;
     const next = continueAfterCashout(game);
-    beginTravel(next, next.step, TRAVEL_MS[next.step] ?? 2200);
+    if (realMode && !(await guard(next, handleContinueRisk, game))) return;
+    beginTravel(next, next.step, TRAVEL_MS[next.step] ?? 2200, game.step);
   }
 
   function handleRestart() {
@@ -192,24 +315,66 @@ export default function TreasureHuntScreen({ onBack, previewMode, previewState, 
     setVisualPhase(previewMode ? (previewState === "A" ? "intro" : resolveDirectPhase(g)) : "intro");
   }
 
+  // ── Modul real: banner de salvare / eroare, notă la final, ecrane de încărcare și „rezolvat”. ──
+  const saveBanner = realMode && (saving || saveError || syncNote) ? (
+    <div style={{ ...s.saveBanner, ...(saveError ? s.saveBannerErr : null) }}>
+      {saveError ? (
+        <>
+          <span>⚠️ {saveError}</span>
+          <button type="button" style={s.retryBtn} onClick={() => { const fn = pendingRef.current; if (fn) { setSaveError(""); fn(); } }}>↻ Reîncearcă</button>
+        </>
+      ) : saving ? "Se salvează…" : syncNote}
+    </div>
+  ) : null;
+  const finalNote = realMode && ["treasure", "gameover", "cashedout"].includes(visualPhase)
+    ? <div style={s.realNote}>Punctele intră în clasament după ce Adminul rezolvă Comoara.</div>
+    : null;
+
+  if (realMode && loadState === "loading") {
+    return wrapPage(embedded, onBack, <div style={s.realNote}>Se încarcă Comoara…</div>);
+  }
+  if (realMode && loadState === "error") {
+    return wrapPage(embedded, onBack, (
+      <div style={s.realNote}>
+        Nu s-a putut încărca Comoara Blestemată.
+        <button type="button" style={s.retryBtn} onClick={() => setReloadTick((t) => t + 1)}>↻ Încearcă din nou</button>
+      </div>
+    ));
+  }
+  if (realMode && resolved) {
+    const status = hasRun ? treasureRunStatus(game) : "not-played";
+    const points = myResult?.bonusPoints ?? (hasRun ? computeTreasureFinalPoints(game) : 0);
+    const detail = status === "treasure" ? "Ai găsit comoara!"
+      : status === "cashedout" ? "Te-ai oprit la timp și ai păstrat punctele."
+      : status === "gameover" ? "Ai pierdut ambele vieți — game over."
+      : status === "unfinished" ? "Nu ai terminat jocul — ai primit punctele acumulate până la rezolvare."
+      : "Nu ai jucat Comoara Blestemată.";
+    return wrapPage(embedded, onBack, (
+      <div style={s.resolvedWrap}>
+        <SimpleCard icon="🏴‍☠️" title="COMOARA A FOST REZOLVATĂ" total={points} detail={detail} onRestart={null} />
+      </div>
+    ));
+  }
+
   // ── Cinematice pline — SINGURELE faze fără hartă/corabie. ──
   if (visualPhase === "lifeReaction") {
-    return wrapPage(embedded, onBack, <><Hud game={game} pulse="life" /><LifeReactionPanel isSecondLoss={isSecondLifeLoss} onDone={handleReactionDone} /></>);
+    return wrapPage(embedded, onBack, <>{saveBanner}<Hud game={game} pulse="life" /><LifeReactionPanel isSecondLoss={isSecondLifeLoss} onDone={handleReactionDone} /></>);
   }
   if (visualPhase === "treasure") {
-    return wrapPage(embedded, onBack, <><Hud game={game} pulse={null} /><TreasureCinematic game={game} onRestart={previewMode ? null : handleRestart} /></>);
+    return wrapPage(embedded, onBack, <>{saveBanner}<Hud game={game} pulse={null} /><TreasureCinematic game={game} onRestart={restartHandler} />{finalNote}</>);
   }
   if (visualPhase === "gameover") {
-    return wrapPage(embedded, onBack, <><Hud game={game} pulse={null} /><GameOverCinematic step={game.step} onRestart={previewMode ? null : handleRestart} /></>);
+    return wrapPage(embedded, onBack, <>{saveBanner}<Hud game={game} pulse={null} /><GameOverCinematic step={game.step} onRestart={restartHandler} />{finalNote}</>);
   }
   if (visualPhase === "intro") {
-    return wrapPage(embedded, onBack, <IntroPanel onStart={handleRaiseAnchor} />);
+    return wrapPage(embedded, onBack, <>{saveBanner}<IntroPanel onStart={handleRaiseAnchor} /></>);
   }
 
   // ── Restul călătoriei — HARTA e mereu montată, doar conținutul
   // panoului de deasupra se schimbă cu faza. ──
   return wrapPage(embedded, onBack,
     <>
+      {saveBanner}
       <Hud game={game} pulse={pulse} />
       <MapPanel
         game={game} zone={zone} shipStationIndex={shipStationIndex} travelDurationMs={travelDurationMs}
@@ -224,8 +389,9 @@ export default function TreasureHuntScreen({ onBack, previewMode, previewState, 
         {visualPhase === "choice" && <ChoiceOverlay doors={game.doors} onPick={handlePick} step={game.step} lives={game.lives} />}
         {visualPhase === "resultReveal" && <ResultRevealCard doors={game.doors} chosenIndex={game.chosenIndex} />}
         {visualPhase === "cashout" && <CashoutOverlay total={game.total} lives={game.lives} onCashOut={handleCashOut} onContinue={handleContinueRisk} />}
-        {visualPhase === "cashedout" && <SimpleCard icon="💰" title="TE-AI OPRIT LA TIMP" total={game.total} detail={`Ai păstrat ${game.total} PCT.`} onRestart={previewMode ? null : handleRestart} />}
+        {visualPhase === "cashedout" && <SimpleCard icon="💰" title="TE-AI OPRIT LA TIMP" total={game.total} detail={`Ai păstrat ${game.total} PCT.`} onRestart={restartHandler} />}
       </MapPanel>
+      {finalNote}
     </>
   );
 }
@@ -645,6 +811,11 @@ const s = {
   reactionImg: { width: "auto", maxWidth: "min(90vw, 300px)", height: "auto", maxHeight: "56dvh", objectFit: "contain" },
   reactionLine: { color: "#F08080", fontSize: 14, fontWeight: 800, fontFamily: font.body, marginTop: 10, maxWidth: 300 },
   primaryBtnGhost: { marginTop: 14, padding: "10px 20px", borderRadius: radius.md, border: `1px solid ${color.goldBorder}`, background: "transparent", color: color.goldLight, fontWeight: 700, fontSize: 12, fontFamily: font.body, cursor: "pointer" },
+  saveBanner: { margin: "8px 0", padding: "7px 10px", borderRadius: radius.md, fontSize: 11.5, textAlign: "center", fontFamily: font.body, color: color.textSecondary, background: "rgba(255,255,255,0.05)" },
+  saveBannerErr: { color: "#FFC2C4", background: "rgba(240,85,90,0.14)", border: "1px solid rgba(240,85,90,0.35)" },
+  retryBtn: { marginLeft: 8, padding: "4px 10px", borderRadius: radius.sm, border: `1px solid ${color.goldBorder}`, background: "transparent", color: color.goldLight, fontSize: 11.5, fontWeight: 700, fontFamily: font.body, cursor: "pointer" },
+  realNote: { textAlign: "center", fontSize: 11.5, color: color.textFaint, fontFamily: font.body, padding: "14px 6px", lineHeight: 1.45 },
+  resolvedWrap: { display: "flex", justifyContent: "center", padding: "24px 0" },
 
   cinematicPanel: { borderRadius: radius.lg, border: `1px solid ${color.goldBorder}`, background: "linear-gradient(180deg, #2A2116, #1C1710)", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: 20, textAlign: "center", minHeight: 420 },
   cinematicDark: { background: "linear-gradient(180deg, #14101F, #05060C)" },

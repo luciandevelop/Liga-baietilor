@@ -32,6 +32,13 @@ const QUESTIONS = 5;
 const EXPECTED_DUELS = 9;
 const EXPECTED_PLAYERS = 18;
 
+// JSON canonic: chei sortate recursiv → două citiri ale ACELUIAȘI conținut dau mereu același șir.
+function canon(v) {
+  if (Array.isArray(v)) return `[${v.map(canon).join(",")}]`;
+  if (v && typeof v === "object") return `{${Object.keys(v).sort().map((k) => `${JSON.stringify(k)}:${canon(v[k])}`).join(",")}}`;
+  return JSON.stringify(v === undefined ? null : v);
+}
+
 const num = (x) => (x === null || x === undefined || String(x).trim() === "" ? NaN : Number(x));
 const isNum = (x) => Number.isFinite(num(x));
 const isInt = (x) => typeof x === "number" && Number.isInteger(x);
@@ -194,20 +201,21 @@ export function buildRepairPlan(raw) {
 
   // Amprenta DATELOR-SURSĂ (duelurile, rezultatele întrebărilor, baraj, biletele): dacă oricare se schimbă
   // între Preview și Apply, Apply refuză — chiar dacă totalurile ar ieși la fel.
-  const inputsSig = JSON.stringify({
+  const inputsParts = {
     duels: duelList.map((d) => [d.id, d.matchId, d.playerA, d.playerB]),
     groups: (bb?.matchGroups || []).map((g) => [g.matchId, (g.questions || []).map((q) => q.id), g.results || {}, g.tiebreakerRealAnswer ?? null]),
     picks: allUids.map((u) => {
       const k = picks[u];
       return [u, k ? [k.picks || {}, k.tiebreakerAnswer ?? null, k.confirmed === true, k.pointsAwarded === true, k.finalPoints ?? null] : null];
     }),
-  });
+  };
+  const inputsSig = canon(inputsParts);
 
   const okPlayers = players.filter((p) => p.ok);
   const needAny = players.some((p) => p.needs.score || p.needs.user || p.needs.result);
   const clean = blockers.length === 0 && players.length === EXPECTED_PLAYERS && okPlayers.length === EXPECTED_PLAYERS;
   return {
-    gameweekId, blockers, duels, players, inputsSig,
+    gameweekId, blockers, duels, players, inputsSig, inputsParts,
     totals: {
       duels: duelList.length, duelsOk: duels.filter((d) => d.ok).length,
       players: players.length, playersOk: okPlayers.length,
@@ -229,12 +237,37 @@ export async function previewBetBuilderRepair(gameweekId) {
 }
 
 // Semnătura valorilor pe care Apply se bazează: dacă ceva diferă față de Preview, nu se aplică.
-function planSignature(plan) {
-  return plan.inputsSig + JSON.stringify(plan.players.map((p) => [
-    p.uid, p.total, p.delta,
+const SIG_FIELDS = ["total", "delta", "main", "totalPoints", "seasonPoints", "results.mainPoints", "bonusSurprisePoints", "rank", "rankingBonus", "gameweeksPlayed"];
+function playerSigRow(p) {
+  return [
+    p.total, p.delta,
     p.current?.mainSurprisePoints, p.current?.totalPoints, p.current?.seasonPoints, p.current?.mainPointsResult,
     p.current?.bonusSurprisePoints, p.current?.rank, p.current?.rankingBonus, p.current?.gameweeksPlayed,
-  ]));
+  ];
+}
+function planSignature(plan) {
+  return plan.inputsSig + canon(plan.players.map((p) => [p.uid, ...playerSigRow(p)]));
+}
+
+// Descrie EXACT ce diferă între Preview și starea citită acum (max. 6 rânduri), ca să nu ghicim.
+// Întâi CAUZELE din datele-sursă (bilete / rezultate / dueluri), apoi valorile jucătorilor.
+function describeChanges(prev, cur) {
+  const name = (uid) => prev.nicknames?.[uid] || uid;
+  const source = [];
+  const values = [];
+  const pa = prev.inputsParts || {}, pb = cur.inputsParts || {};
+  if (canon(pa.duels) !== canon(pb.duels)) source.push("duelurile (perechile de jucători) s-au schimbat");
+  (pb.groups || []).forEach((g, i) => { if (canon((pa.groups || [])[i]) !== canon(g)) source.push(`meciul ${g[0]}: rezultatele întrebărilor / barajul real s-au schimbat`); });
+  (pb.picks || []).forEach((k, i) => { if (canon((pa.picks || [])[i]) !== canon(k)) source.push(`biletul lui ${name(k[0])} s-a schimbat (alegeri / baraj / confirmare / finalPoints)`); });
+  const prevPl = Object.fromEntries(prev.players.map((p) => [p.uid, p]));
+  const curPl = Object.fromEntries(cur.players.map((p) => [p.uid, p]));
+  Object.keys({ ...prevPl, ...curPl }).forEach((uid) => {
+    const a = prevPl[uid], b = curPl[uid];
+    if (!a || !b) { values.push(`${name(uid)}: a ${a ? "dispărut din" : "apărut în"} dueluri`); return; }
+    const ra = playerSigRow(a), rb = playerSigRow(b);
+    ra.forEach((v, i) => { if (SIG_FIELDS[i] !== "delta" && canon(v) !== canon(rb[i])) values.push(`${name(uid)}: ${SIG_FIELDS[i]} ${v ?? "—"} → ${rb[i] ?? "—"}`); });
+  });
+  return [...source, ...values].slice(0, 6);
 }
 
 // ── APPLY — o singură tranzacție atomică, cu re-validare față de Preview. ──
@@ -253,7 +286,8 @@ export async function applyBetBuilderRepair(gameweekId, previewPlan) {
         : `Re-validare eșuată — ${plan.blockers.map((b) => b.message).slice(0, 3).join(" | ")}`);
     }
     if (planSignature(plan) !== planSignature(previewPlan)) {
-      throw new Error("Datele s-au schimbat față de Preview — rulează din nou Preview și verifică-l înainte de Apply.");
+      const diffs = describeChanges(previewPlan, plan);
+      throw new Error(`Datele s-au schimbat față de Preview${diffs.length ? ` (${diffs.join("; ")})` : " (diferență fără câmp identificat)"} — nu s-a scris nimic. Rulează din nou Preview și verifică-l înainte de Apply.`);
     }
     // TOATE citirile s-au terminat; de aici doar scrieri.
     plan.players.forEach((p) => {

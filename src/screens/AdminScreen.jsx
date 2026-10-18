@@ -61,6 +61,7 @@ import {
   getBetBuilderSubmissionStatus, BET_BUILDER_DEADLINE_HOURS,
 } from "../services/betBuilderService";
 import BetBuilderScreen from "./BetBuilderScreen";
+import { previewBetBuilderRepair, applyBetBuilderRepair } from "../services/betBuilderRepair";
 import {
   generateHigherLower, getHigherLower, setHigherLowerQuestions, activateHigherLower,
   resolveHigherLowerQuestion, revealHigherLowerTiebreakers, resolveAllHigherLowerDuels, computeRealGoalsTotal,
@@ -202,6 +203,140 @@ function parseRoDateToIso(text) {
   const test = new Date(Date.UTC(year, month - 1, day));
   if (test.getUTCFullYear() !== year || test.getUTCMonth() !== month - 1 || test.getUTCDate() !== day) return "";
   return `${m[3]}-${m[2]}-${m[1]}`;
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// 🛠️ Reparare Bet Builder — etapă DEJA finalizată (puncte Bet Builder lipsă din Surpriza Mare).
+// Faza 1: „Previzualizează” = DOAR citiri, nicio scriere. Faza 2: „Aplică” = o singură tranzacție
+// atomică, activă doar dacă toate cele 9 dueluri / 18 jucători sunt calculabile fără ambiguități.
+// ══════════════════════════════════════════════════════════════════════════
+export function BetBuilderRepairPanel({ gameweeks }) {
+  const completed = (gameweeks || []).filter((g) => g.status === "completed").slice().sort((a, b) => (b.number || 0) - (a.number || 0));
+  const [gwId, setGwId] = useState("");
+  const [preview, setPreview] = useState(null);
+  const [busy, setBusy] = useState("");
+  const [error, setError] = useState("");
+  const [backupOk, setBackupOk] = useState(false);
+  const [applyResult, setApplyResult] = useState(null);
+
+  useEffect(() => { if (!gwId && completed.length) setGwId(completed[0].id); }, [completed.length]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  function changeGw(id) { setGwId(id); setPreview(null); setApplyResult(null); setError(""); setBackupOk(false); }
+  const gwLabel = (id) => { const g = completed.find((x) => x.id === id); return g ? `Etapa ${g.number}` : id; };
+
+  async function runPreview() {
+    setBusy("preview"); setError(""); setApplyResult(null);
+    try { setPreview(await previewBetBuilderRepair(gwId)); }
+    catch (err) { console.error("Reparare Bet Builder — Preview:", err); setError(err.message || String(err)); }
+    finally { setBusy(""); }
+  }
+
+  async function runApply() {
+    if (!preview?.canApply || !backupOk) return;
+    const ok = window.confirm(
+      `Aplici repararea Bet Builder pe ${gwLabel(gwId)} (finalizată)?\n\n`
+      + `Se adaugă retroactiv +${preview.totals.sumDelta}p (total, pentru ${preview.totals.playersOk} jucători) ca puncte ale Surprizei Mari.\n`
+      + `Operația e ATOMICĂ: se aplică pentru toți sau pentru niciunul.\n`
+      + `Rank-ul, Top 3, Penalty PvP și celelalte bonusuri NU se modifică.\n\n`
+      + `Ai descărcat backup-ul JSON? Continui?`
+    );
+    if (!ok) return;
+    setBusy("apply"); setError("");
+    try {
+      const res = await applyBetBuilderRepair(gwId, preview);
+      setApplyResult(res.verification);
+      setBackupOk(false);
+      setPreview(await previewBetBuilderRepair(gwId)); // Preview nou: ar trebui să arate „deja aplicat”
+    } catch (err) {
+      console.error("Reparare Bet Builder — Apply:", err);
+      setError(err.message || String(err));
+    } finally { setBusy(""); }
+  }
+
+  const nick = (uid) => preview?.nicknames?.[uid] || uid;
+  const fmt = (n) => (n === null || n === undefined ? "—" : n);
+  const sign = (n) => (n >= 0 ? `+${n}` : `${n}`);
+  const outcomeLabel = { win: "câștigă duelul", lose: "pierde duelul", draw: "egal (decide barajul)" };
+  const red = { color: "#F0555A" };
+
+  return (
+    <>
+      <p style={s.hint}>Adaugă retroactiv punctele Bet Builder lipsă dintr-o etapă deja finalizată, ca puncte ale Surprizei Mari. Nu schimbă rank-ul, Top 3, Penalty PvP sau alte bonusuri și nu re-finalizează etapa. Previzualizarea nu scrie nimic.</p>
+      {completed.length === 0 ? (
+        <p style={s.hint}>Nu există nicio etapă finalizată în sezonul selectat.</p>
+      ) : (
+        <>
+          <select style={s.select} value={gwId} disabled={!!busy} onChange={(e) => changeGw(e.target.value)}>
+            {completed.map((g) => <option key={g.id} value={g.id}>Etapa {g.number}</option>)}
+          </select>
+          <button type="button" style={s.btn} disabled={!!busy || !gwId} onClick={runPreview}>
+            {busy === "preview" ? "Se citește…" : "🔍 Previzualizează (doar citire)"}
+          </button>
+        </>
+      )}
+      {error && <p style={{ ...s.hint, ...red }}>⚠️ {error}</p>}
+
+      {preview && (
+        <div style={s.triviaSubmissionSection}>
+          <p style={s.hint}>
+            <b>{gwLabel(preview.gameweekId)}</b> · dueluri calculabile {preview.totals.duelsOk}/{preview.totals.duels} · jucători {preview.totals.playersOk}/{preview.totals.players} · total de adăugat <b>{sign(preview.totals.sumDelta)}p</b> · citit la {new Date(preview.readAt).toLocaleTimeString("ro-RO", { hour: "2-digit", minute: "2-digit" })}
+          </p>
+          {preview.alreadyApplied && <p style={{ ...s.hint, color: "#8BD957" }}>✅ Deja aplicat — toate diferențele sunt 0. Nu mai e nimic de făcut.</p>}
+          {preview.blockers.length > 0 && (
+            <div>
+              <p style={{ ...s.hint, ...red }}>⛔ Apply indisponibil — {preview.blockers.length} {preview.blockers.length === 1 ? "problemă" : "probleme"}:</p>
+              {preview.blockers.map((b, i) => <p key={i} style={{ ...s.hint, ...red }}>• {b.message}</p>)}
+            </div>
+          )}
+          {preview.canApply && <p style={{ ...s.hint, color: "#8BD957" }}>✔ Toate cele 9 dueluri și toți cei 18 jucători sunt calculabili. Verifică tabelul de mai jos înainte de Apply.</p>}
+
+          {preview.duels.map((d) => (
+            <div key={d.id} style={{ marginTop: 10, paddingTop: 8, borderTop: "1px dashed rgba(255,255,255,0.12)" }}>
+              <p style={{ ...s.hint, ...(d.ok ? null : red) }}><b>{d.ok ? "✓" : "⛔"} Duelul {d.index}: {nick(d.playerA)} vs {nick(d.playerB)}</b></p>
+              {preview.players.filter((p) => p.duelId === d.id).map((p) => (
+                <div key={p.uid} style={{ marginBottom: 6 }}>
+                  <p style={s.hint}><b>{nick(p.uid)}</b> vs {nick(p.opponentUid)} · {p.confirmed ? "✓ confirmat" : "✗ neconfirmat"}</p>
+                  {p.total !== null ? (
+                    <p style={s.hint}>{p.hits}/5 selecții = {p.basePoints}p · Perfect +{p.perfectBonus} · Duel +{p.duelBonus} ({outcomeLabel[p.duelOutcome] || p.duelOutcome}) → <b>TOTAL Bet Builder {p.total}p</b></p>
+                  ) : (
+                    <p style={{ ...s.hint, ...red }}>Nu se poate calcula: {p.reasons.join("; ") || "vezi blocajele de sus"}</p>
+                  )}
+                  {p.current && (
+                    <p style={s.hint}>Acum: main {fmt(p.current.mainSurprisePoints)} · total etapă {fmt(p.current.totalPoints)} · seasonPoints {fmt(p.current.seasonPoints)} · results.mainPoints {fmt(p.current.mainPointsResult)}{p.delta !== null ? ` → diferență ${sign(p.delta)}` : ""}</p>
+                  )}
+                </div>
+              ))}
+            </div>
+          ))}
+
+          {preview.canApply && (
+            <div style={{ marginTop: 12, paddingTop: 10, borderTop: "1px solid rgba(255,255,255,0.18)" }}>
+              <label style={{ ...s.hint, display: "block", marginBottom: 8 }}>
+                <input type="checkbox" checked={backupOk} disabled={!!busy} onChange={(e) => setBackupOk(e.target.checked)} />{" "}
+                Am descărcat backup-ul JSON (Admin → Config → Backup) înainte de Apply.
+              </label>
+              <button type="button" style={s.btn} disabled={!backupOk || !!busy} onClick={runApply}>
+                {busy === "apply" ? "Se aplică (atomic)…" : `✅ Aplică repararea (+${preview.totals.sumDelta}p, ${preview.totals.playersOk} jucători)`}
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+
+      {applyResult && (
+        <div style={s.triviaSubmissionSection}>
+          {applyResult.ok ? (
+            <p style={{ ...s.hint, color: "#8BD957" }}>✅ Aplicat. Verificare automată (doar citire): {applyResult.players.length}/{applyResult.players.length} jucători OK — main = Bet Builder, results.mainPoints = aceeași valoare, total și seasonPoints crescute exact cu diferența; bonusSurprisePoints, rank, rankingBonus, gameweeksPlayed și celelalte câmpuri IDENTICE.</p>
+          ) : (
+            <>
+              <p style={{ ...s.hint, ...red }}>⛔ Verificarea a găsit {applyResult.failures.length} nepotriviri după Apply:</p>
+              {applyResult.failures.map((f, i) => <p key={i} style={{ ...s.hint, ...red }}>• {nick(f.uid)}: {f.name} — așteptat {fmt(f.expected)}, găsit {fmt(f.actual)}</p>)}
+            </>
+          )}
+        </div>
+      )}
+    </>
+  );
 }
 
 export default function AdminScreen({ onBack }) {
@@ -3332,6 +3467,10 @@ export default function AdminScreen({ onBack }) {
                     </div>
                   );
                 })}
+              </SectionCard>
+
+              <SectionCard title="🛠️ Reparare Bet Builder — etapă finalizată">
+                <BetBuilderRepairPanel gameweeks={gameweeks} />
               </SectionCard>
 
               <SectionCard title="🃏 Joker săptămânal — cine l-a folosit">

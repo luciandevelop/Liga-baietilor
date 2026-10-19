@@ -23,6 +23,7 @@ import fcCopenhagen from "./clubs/fc-copenhagen.svg";
 import lugano from "./clubs/lugano.svg";
 import lechPoznan from "./clubs/lech-poznan.svg";
 import alaves from "./clubs/alaves.svg";
+import interEscaldes from "./clubs/inter-escaldes.svg";
 
 export const EXTRA_CLUB_LOGOS = {
   "sabah-baku": sabahBaku,
@@ -48,6 +49,7 @@ export const EXTRA_CLUB_LOGOS = {
   "lugano": lugano,
   "lech-poznan": lechPoznan,
   "alaves": alaves,
+  "inter-escaldes": interEscaldes,
 };
 
 export const EXTRA_CLUB_NAMES = {
@@ -74,6 +76,7 @@ export const EXTRA_CLUB_NAMES = {
   "lugano": "Lugano",
   "lech-poznan": "Lech Poznań",
   "alaves": "Alavés",
+  "inter-escaldes": "Inter Escaldes",
 };
 
 export const EXTRA_CLUB_ALIASES = {
@@ -111,4 +114,7 @@ export const EXTRA_CLUB_ALIASES = {
   "viktoria-plze": "viktoria-plzen",
   "lillestr-m": "lillestrom",
   "lech-pozna": "lech-poznan",
+  "inter-club-d-escaldes": "inter-escaldes",
+  "inter-club-descaldes": "inter-escaldes",
+  "inter-club-escaldes": "inter-escaldes",
 };

@@ -123,57 +123,152 @@ function computeSpecialPoints(phaseDef, pick, correctAnswer) {
   }
 }
 
-// Rezolvă o fază: admin introduce răspunsul real, funcția calculează
-// punctele TUTUROR userilor care au ales, scrie specialScores, și
-// adaugă punctele DIRECT în users/{uid}.seasonPoints — exact același
-// total pe care-l citește azi Clasamentul General, Player Card, header-ul
-// din Home. Niciun ecran nu trebuie să știe că "există Speciale" separat.
+// ── Rezolvare și corectare — ATOMICE ────────────────────────────────────────────────────────────
+// O fază se validează (și se corectează) într-O SINGURĂ tranzacție Firestore: scorurile tuturor
+// jucătorilor, totalurile users.specialPoints și statusul fazei se scriu ÎMPREUNĂ — fie toate, fie
+// niciuna. Nu mai poate rămâne o fază „pe jumătate” scorată, iar două operații concurente se
+// serializează (a doua se reia pe starea nouă și fie nu mai are nimic de făcut, fie e refuzată).
 //
-// IDEMPOTENT — exact tiparul de la finalizeGameweek: dacă faza e deja
-// "resolved", a doua apăsare pe "Rezolvă" nu mai adaugă punctele a doua
-// oară.
-export async function resolveSpecialPhase(phaseId, correctAnswer) {
-  const { phase: phaseDef } = getPhaseDefinition(phaseId) ? { phase: getPhaseDefinition(phaseId).phase } : { phase: null };
+// Punctele se scriu ca VALOARE-ȚINTĂ în specialScores/{fază}_{uid}, iar users.specialPoints se ajustează
+// DOAR cu diferența față de scorul vechi (0 dacă jucătorul n-avea document) — la fel ca la reparația
+// Bet Builder. Repetarea aceleiași operații nu dublează nimic; corectarea 500 → 0 scade exact 500, iar
+// 0 → 500 adaugă exact 500. Jucătorii fără pronostic nu sunt atinși deloc.
+//
+// Punctele merg în câmpul SEPARAT users.specialPoints (NU în seasonPoints): seasonPoints rămâne strict
+// punctele de etape (resetabil curat), Specialele supraviețuiesc Reset-ului, iar Clasamentul General le
+// adună doar la afișare (listGeneralLeaderboard). Etapa și Sezonul nu citesc niciodată specialPoints.
+// Compatibil cu „Recalculează puncte Speciale” (migrateSpecialPointsFromScores): sursa de adevăr rămâne
+// specialScores, iar users.specialPoints = suma lor.
+// Limita Firestore: 500 de scrieri / tranzacție (aici: 2 per jucător + 1) — sub limită pentru grupul real.
+const MAX_SPECIAL_TX_WRITES = 450;
+
+function canonAnswer(phaseDef, answer) {
+  if (answer == null) return "";
+  if (phaseDef.type === PICK_TYPES.GROUP) return JSON.stringify([...answer].map(String).sort()); // ordinea nu contează
+  return JSON.stringify(Array.isArray(answer) ? answer.map(String) : String(answer));            // ranked: ordinea contează
+}
+export function sameSpecialAnswer(phaseDef, a, b) {
+  return canonAnswer(phaseDef, a) === canonAnswer(phaseDef, b);
+}
+
+// PLAN PUR (fără Firestore): pentru fiecare jucător cu pronostic → puncte noi, puncte vechi, diferență.
+// Scorurile fără pronostic („orfane”) NU se ating — se raportează doar.
+export function planSpecialScoring(phaseDef, correctAnswer, picksByUid, scoresByUid) {
+  const rows = Object.keys(picksByUid).map((uid) => {
+    const newPoints = computeSpecialPoints(phaseDef, picksByUid[uid], correctAnswer);
+    const score = scoresByUid[uid];
+    const hadScore = !!score;
+    const oldPoints = hadScore ? (Number(score.points) || 0) : 0;
+    return { uid, newPoints, oldPoints, hadScore, delta: newPoints - oldPoints, writeScore: !hadScore || Number(score.points) !== newPoints };
+  });
+  const orphanScores = Object.keys(scoresByUid).filter((uid) => !picksByUid[uid]);
+  return { rows, orphanScores };
+}
+
+async function applySpecialResult(phaseId, correctAnswer, { mode, expectedPreviousAnswer }) {
+  const found = getPhaseDefinition(phaseId);
+  const phaseDef = found ? found.phase : null;
   if (!phaseDef) throw new Error(`Fază necunoscută în configurare: ${phaseId}`);
 
   const phaseRef = doc(db, "specialPhases", phaseId);
-  const phaseSnap = await getDoc(phaseRef);
-  if (!phaseSnap.exists()) throw new Error("Faza nu există.");
-  if (phaseSnap.data().status === "resolved") {
-    return { alreadyResolved: true };
-  }
+  const pre = await getDoc(phaseRef);
+  if (!pre.exists()) throw new Error("Faza nu există.");
+  if (mode === "resolve" && pre.data().status === "resolved") return { alreadyResolved: true };
+  if (mode === "correct" && pre.data().status !== "resolved") throw new Error("Corectarea e posibilă doar pentru o fază deja rezolvată.");
+  // Fază încă deschisă: o închidem întâi — regulile refuză orice alegere nouă când status != "open",
+  // deci lista jucătorilor cu pronostic e finală înainte de scorare.
+  if (pre.data().status === "open") await closeSpecialPhase(phaseId);
 
   const picksSnap = await getDocs(query(collection(db, "specialPicks"), where("phaseId", "==", phaseId)));
-  const picks = picksSnap.docs.map((d) => d.data());
+  const uids = [...new Set(picksSnap.docs.map((d) => d.data().userId).filter(Boolean))];
+  if (uids.length * 2 + 1 > MAX_SPECIAL_TX_WRITES) throw new Error("Prea mulți jucători pentru o singură tranzacție atomică.");
 
-  // Fiecare user primit e o tranzacție separată — un eșec izolat pe un
-  // singur user nu blochează scorarea celorlalți.
-  for (const pick of picks) {
-    const points = computeSpecialPoints(phaseDef, pick, correctAnswer);
-    const scoreRef = doc(db, "specialScores", `${phaseId}_${pick.userId}`);
-    const userRef = doc(db, "users", pick.userId);
-    await runTransaction(db, async (tx) => {
-      const existingScore = await tx.get(scoreRef);
-      if (existingScore.exists()) return; // deja scris — nu duplicăm
-      const userSnap = await tx.get(userRef);
-      // Câmp SEPARAT (specialPoints), NU seasonPoints — reparat explicit:
-      // seasonPoints trebuie să rămână STRICT punctele de etape, resetabile
-      // curat la Reset. Specialele supraviețuiesc Reset-ului (cerut încă
-      // de la început), deci punctele lor nu pot locui în același câmp pe
-      // care Reset îl duce la 0 — contribuția lor s-ar "pierde" la reset,
-      // apoi ar putea reapărea prin orice recalculare ulterioară a
-      // aceluiași câmp combinat. Clasamentul General acum ADUNĂ
-      // seasonPoints + specialPoints la afișare (vezi listGeneralLeaderboard),
-      // nu le mai amestecă la scriere.
-      const prevSpecialPoints = userSnap.exists() ? userSnap.data().specialPoints || 0 : 0;
-      tx.set(scoreRef, { phaseId, userId: pick.userId, points, computedAt: serverTimestamp() });
-      tx.update(userRef, { specialPoints: prevSpecialPoints + points });
+  let outcome = null;
+  await runTransaction(db, async (tx) => {
+    // TOATE citirile mai întâi (cerință Firestore), abia apoi scrierile.
+    const phaseSnap = await tx.get(phaseRef);
+    if (!phaseSnap.exists()) throw new Error("Faza nu există.");
+    const phase = phaseSnap.data();
+    if (phase.status === "open") throw new Error("Faza s-a redeschis între timp — reîncearcă.");
+    if (mode === "resolve" && phase.status === "resolved") { outcome = { alreadyResolved: true }; return; }
+    if (mode === "correct") {
+      if (phase.status !== "resolved") throw new Error("Corectarea e posibilă doar pentru o fază deja rezolvată.");
+      if (!sameSpecialAnswer(phaseDef, phase.correctAnswer, expectedPreviousAnswer)) {
+        throw new Error("Rezultatul oficial s-a schimbat între timp (altă corectare) — reîncarcă pagina și reia.");
+      }
+    }
+    const pickSnaps = await Promise.all(uids.map((u) => tx.get(doc(db, "specialPicks", `${phaseId}_${u}`))));
+    const scoreSnaps = await Promise.all(uids.map((u) => tx.get(doc(db, "specialScores", `${phaseId}_${u}`))));
+    const userSnaps = await Promise.all(uids.map((u) => tx.get(doc(db, "users", u))));
+    const picks = {}, scores = {}, users = {};
+    uids.forEach((u, i) => {
+      if (pickSnaps[i].exists()) picks[u] = pickSnaps[i].data();
+      if (scoreSnaps[i].exists()) scores[u] = scoreSnaps[i].data();
+      if (userSnaps[i].exists()) users[u] = userSnaps[i].data();
     });
-  }
+    const plan = planSpecialScoring(phaseDef, correctAnswer, picks, scores);
+    const rows = plan.rows.filter((r) => users[r.uid]);          // un cont șters nu blochează restul
+    const skipped = plan.rows.filter((r) => !users[r.uid]).map((r) => r.uid);
 
-  await setDoc(phaseRef, { status: "resolved", correctAnswer, resolvedAt: serverTimestamp() }, { merge: true });
-  return { alreadyResolved: false, scoredUsers: picks.length };
+    if (mode === "correct" && sameSpecialAnswer(phaseDef, phase.correctAnswer, correctAnswer) && rows.every((r) => !r.writeScore && r.delta === 0)) {
+      outcome = { unchanged: true };                              // aceeași confirmare → nicio scriere
+      return;
+    }
+    let changedUsers = 0, totalDelta = 0;
+    rows.forEach((r) => {
+      if (r.writeScore) tx.set(doc(db, "specialScores", `${phaseId}_${r.uid}`), { phaseId, userId: r.uid, points: r.newPoints, computedAt: serverTimestamp() });
+      if (r.delta !== 0) {
+        tx.update(doc(db, "users", r.uid), { specialPoints: (Number(users[r.uid].specialPoints) || 0) + r.delta });
+        changedUsers++; totalDelta += r.delta;
+      }
+    });
+    tx.set(phaseRef, mode === "resolve" ? { status: "resolved", correctAnswer, resolvedAt: serverTimestamp() } : { correctAnswer }, { merge: true });
+    outcome = mode === "resolve"
+      ? { alreadyResolved: false, scoredUsers: rows.length, skipped }
+      : { corrected: true, changedUsers, totalDelta, skipped };
+  });
+  return outcome;
 }
+
+// Validare (rezolvare) — comportament neschimbat pentru Admin: același nume, aceeași formă a răspunsului,
+// acordare IMEDIATĂ în users.specialPoints (Clasamentul General), dar acum atomic și reluabil.
+export async function resolveSpecialPhase(phaseId, correctAnswer) {
+  return applySpecialResult(phaseId, correctAnswer, { mode: "resolve" });
+}
+
+// Corectarea rezultatului oficial al unei faze DEJA validate. `expectedPreviousAnswer` = rezultatul pe care
+// Admin îl vedea când a cerut corectarea; dacă între timp s-a schimbat, operația e refuzată.
+export async function correctSpecialPhase(phaseId, newAnswer, expectedPreviousAnswer) {
+  return applySpecialResult(phaseId, newAnswer, { mode: "correct", expectedPreviousAnswer });
+}
+
+// PREVIEW al unei corectări — doar citiri, zero scrieri. Folosit pentru confirmarea explicită din Admin.
+export async function previewSpecialCorrection(phaseId, newAnswer) {
+  const found = getPhaseDefinition(phaseId);
+  const phaseDef = found ? found.phase : null;
+  if (!phaseDef) throw new Error(`Fază necunoscută în configurare: ${phaseId}`);
+  const phaseSnap = await getDoc(doc(db, "specialPhases", phaseId));
+  if (!phaseSnap.exists() || phaseSnap.data().status !== "resolved") throw new Error("Corectarea e posibilă doar pentru o fază deja rezolvată.");
+  const [picksSnap, scoresSnap] = await Promise.all([
+    getDocs(query(collection(db, "specialPicks"), where("phaseId", "==", phaseId))),
+    getDocs(query(collection(db, "specialScores"), where("phaseId", "==", phaseId))),
+  ]);
+  const picks = {}, scores = {};
+  picksSnap.docs.forEach((d) => { const v = d.data(); if (v.userId) picks[v.userId] = v; });
+  scoresSnap.docs.forEach((d) => { const v = d.data(); if (v.userId) scores[v.userId] = v; });
+  const plan = planSpecialScoring(phaseDef, newAnswer, picks, scores);
+  const changed = plan.rows.filter((r) => r.writeScore || r.delta !== 0);
+  const currentAnswer = phaseSnap.data().correctAnswer;
+  return {
+    currentAnswer,
+    unchanged: sameSpecialAnswer(phaseDef, currentAnswer, newAnswer) && changed.length === 0,
+    rows: changed,
+    changedUsers: changed.filter((r) => r.delta !== 0).length,
+    totalDelta: changed.reduce((sum, r) => sum + r.delta, 0),
+    orphanScores: plan.orphanScores,
+  };
+}
+
 
 // ── Scriere — Player ───────────────────────────────────────────────
 
@@ -200,4 +295,42 @@ export async function listAllSpecialPicksForPhases(phaseIds) {
 // direct de ecrane, fără nicio interogare.
 export function listAllSpecialCompetitions() {
   return SPECIAL_COMPETITIONS;
+}
+
+// ── Detaliile Specialelor pentru FIȘA jucătorului (Clasament General) ─────────────────────────────
+// Doar citiri, declanșate DOAR când se deschide fișa: lista fazelor ediției (reținută 5 minute în
+// memorie — se schimbă rar) + scorurile ACELUI jucător (o singură interogare, ≤ câteva zeci de
+// documente). Fără listener, fără polling. Scorurile NU se rețin (o corectare trebuie să se vadă).
+// Stări: "won" (+X PCT) · "zero" (0 PCT) · "nopick" (validat, dar jucătorul n-a pronosticat) ·
+// "waiting" (pronosticuri blocate / încă nevalidat) · "open" (pronosticuri deschise).
+// Fazele neîncă deschise de Admin nu apar. Un scor existent = fază validată (chiar dacă lista
+// reținută are încă o stare mai veche).
+const PHASES_CACHE_MS = 5 * 60 * 1000;
+let phasesCache = { at: 0, value: null };
+
+export async function getPlayerSpecialsBreakdown(uid) {
+  const phasesPromise = phasesCache.value && Date.now() - phasesCache.at < PHASES_CACHE_MS
+    ? Promise.resolve(phasesCache.value)
+    : listSpecialPhases(SPECIALS_EDITION_ID).then((v) => { phasesCache = { at: Date.now(), value: v }; return v; });
+  const [phases, scoresSnap] = await Promise.all([
+    phasesPromise,
+    getDocs(query(collection(db, "specialScores"), where("userId", "==", uid))),
+  ]);
+  const phaseById = Object.fromEntries(phases.map((p) => [p.phaseId || p.id, p]));
+  const scoreByPhase = Object.fromEntries(scoresSnap.docs.map((d) => [d.data().phaseId, d.data()]));
+  const rows = [];
+  SPECIAL_COMPETITIONS.forEach((comp) => comp.phases.forEach((ph) => {
+    const phase = phaseById[ph.id];
+    const score = scoreByPhase[ph.id];
+    if (!phase && !score) return;
+    let state, points = null;
+    if (phase?.status === "resolved" || score) {
+      if (score) { points = Number(score.points) || 0; state = points > 0 ? "won" : "zero"; }
+      else state = "nopick";
+    } else {
+      state = phase.status === "open" ? "open" : "waiting";
+    }
+    rows.push({ phaseId: ph.id, competition: comp.name, label: ph.label, state, points });
+  }));
+  return { rows, sumPoints: rows.reduce((sum, r) => sum + (r.points || 0), 0) };
 }

@@ -5,6 +5,7 @@ import { listAllSpecialCompetitions, listSpecialPhases, openSpecialPhase, closeS
 import { PICK_TYPES, getPhaseDefinition } from "../specialDefinitions";
 import { resolveTeamOptions } from "../teamRegistry";
 import SpecialResolvePicker from "../components/SpecialResolvePicker";
+import SpecialCorrectionPanel from "../components/SpecialCorrectionPanel";
 import SpecialsCompletionOverview from "../components/SpecialsCompletionOverview";
 import useNow from "../hooks/useNow";
 import { getMatchStatus } from "../utils/matchStatus";
@@ -2698,7 +2699,11 @@ export default function AdminScreen({ onBack }) {
                 )}
 
                 {specialPhaseDef && specialPhaseState?.status === "resolved" && (
-                  <p style={s.hint}>Fază deja rezolvată — punctele au fost adăugate în Clasamentul General.</p>
+                  <SpecialCorrectionPanel
+                    phaseDef={specialPhaseDef}
+                    phaseState={specialPhaseState}
+                    onChanged={() => listSpecialPhases(SPECIALS_EDITION_ID).then(setSpecialPhasesForSeason).catch((err) => console.error("Eroare la reîncărcarea fazelor speciale:", err))}
+                  />
                 )}
               </SectionCard>
             )}

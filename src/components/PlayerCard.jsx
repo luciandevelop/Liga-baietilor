@@ -280,10 +280,10 @@ export default function PlayerCard({ uid, nickname, avatarId, rank, scope = "eta
                   <StatRow label="Procent pronosticuri corecte" value={`${stats.correctPct}%`} accent={series.secondary} />
                   <StatRow label="Bonusuri câștigate" value={stats.bonusWinsCount} accent={series.secondary} />
                   <StatRow label="Meciuri fără puncte" value={stats.noPointsCount} accent={series.secondary} />
-                  <StatRow label="Puncte speciale" value={`+${stats.specialPoints}p`} accent={series.secondary} strong />
+                  {scope === "general"
+                    ? <PlayerSpecialsBreakdown uid={uid} stats={stats} accent={series.secondary} flipped={flipped} onFlipBack={() => setFlipped(false)} />
+                    : <StatRow label="Puncte speciale" value={`+${stats.specialPoints}p`} accent={series.secondary} strong />}
                 </div>
-
-                {scope === "general" && <PlayerSpecialsBreakdown uid={uid} stats={stats} accent={series.secondary} />}
 
                 <div style={s.funDivider}>
                   <span style={s.funLabel}>FUN</span>

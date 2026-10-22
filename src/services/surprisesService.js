@@ -29,6 +29,7 @@ export const BONUS_CATALOG = [
   { id: "roulette", label: "Ruletă", active: true },
   { id: "mystery-box", label: "Mystery Box", active: true },
   { id: "penalty-pvp", label: "Penalty PvP", active: true },
+  { id: "treasure-hunt", label: "Comoara Blestemată", active: true },
 ];
 
 // 16 segmente, distribuția aprobată. Ordinea de-aici NU e ordinea vizuală
@@ -962,6 +963,7 @@ export async function resolveBonus(gameweekId) {
   const bonusType = secretSnap.exists() ? secretSnap.data().type : null;
 
   let resultsPerUser;
+  let treasureInTx = false; // treasure-hunt: jocurile se citesc în tranzacție
   let treasureDetailByUid = {}; // doar pentru treasure-hunt  { uid: {status,step,lives,total} }
   let penaltyDetailByUid = {}; // doar pentru penalty-pvp — { uid: {myGoals,mySaves,opponentGoals,opponentSaves} }
   if (bonusType === "mystery-box") {
@@ -1029,13 +1031,10 @@ export async function resolveBonus(gameweekId) {
     // calculează DIN STAREA SALVATĂ (nu dintr-un câmp scris de client): terminat → punctele
     // finale; neterminat → exact PCT-ul acumulat până la Rezolvare (aceeași filozofie ca la
     // Zaruri/Rulet); game over (inclusiv fără vieți rămase) → 0; fără joc → 0.
-    const runSnaps = await Promise.all(activeUids.map((uid) => getDoc(treasureRunRef(gameweekId, uid))));
-    resultsPerUser = activeUids.map((uid, i) => {
-      const run = runSnaps[i].exists() ? runSnaps[i].data() : null;
-      const points = computeTreasureFinalPoints(run);
-      treasureDetailByUid[uid] = { status: treasureRunStatus(run), step: run?.step ?? 0, lives: run?.lives ?? 0, total: points };
-      return { uid, points };
-    });
+    // Jocurile se citesc ÎN tranzacția de mai jos (nu înainte), ca punctajul acordat și rezultatele publice să
+    // fie exact starea de la momentul rezolvării, chiar dacă un jucător tocmai a mutat.
+    treasureInTx = true;
+    resultsPerUser = [];
   } else {
     // Ruletă — neschimbat.
     resultsPerUser = await Promise.all(activeUids.map(async (uid) => {
@@ -1053,6 +1052,26 @@ export async function resolveBonus(gameweekId) {
     if (!pubSnap.exists() || !pubSnap.data().bonusRevealed) throw new Error("BONUS nu a fost dezvăluit încă.");
     if (pubSnap.data().bonusResolved) return;
 
+    // Comoara Blestemată: citește jocurile (+ rezultatele publice existente și porecla) ÎNAINTE de orice scriere.
+    const treasureResultsToWrite = [];
+    if (treasureInTx) {
+      const snaps = await Promise.all(activeUids.map(async (uid) => ({
+        uid,
+        run: await tx.get(treasureRunRef(gameweekId, uid)),
+        res: await tx.get(treasureResultRef(gameweekId, uid)),
+        user: await tx.get(doc(db, "users", uid)),
+      })));
+      snaps.forEach(({ uid, run: runSnap, res, user }) => {
+        const run = runSnap.exists() ? runSnap.data() : null;
+        const points = computeTreasureFinalPoints(run);
+        treasureDetailByUid[uid] = { status: treasureRunStatus(run), step: run?.step ?? 0, lives: run?.lives ?? 0, total: points };
+        resultsPerUser.push({ uid, points });
+        // Rezultatul public al celor care n-au publicat singuri (neterminat / n-a început / publicare ratată) devine
+        // definitiv acum. Cei deja publicați rămân neatinși (documentul public nu se rescrie niciodată).
+        if (!res.exists()) treasureResultsToWrite.push([uid, buildTreasureResultDoc(uid, run, user.exists() ? user.data().nickname : "", "admin")]);
+      });
+    }
+
     // Premiul se persistă, dar NU se mai adaugă la users.seasonPoints
     // aici — se consolidează o singură dată, la finalizeGameweek, exact
     // ca la Main (motivul e identic: evită dublarea la Resolve+Finalize).
@@ -1061,6 +1080,7 @@ export async function resolveBonus(gameweekId) {
       const treasureExtra = treasureDetailByUid[r.uid] ? { treasure: treasureDetailByUid[r.uid] } : {};
       tx.set(doc(db, "weeklySurprises", gameweekId, "results", r.uid), { uid: r.uid, bonusPoints: r.points, ...extra, ...treasureExtra }, { merge: true });
     });
+    treasureResultsToWrite.forEach(([uid, data]) => tx.set(treasureResultRef(gameweekId, uid), data));
     tx.set(publicRef, { bonusResolved: true }, { merge: true });
   });
 }
@@ -1565,6 +1585,67 @@ export async function getMyTreasureRun(gameweekId, uid) {
   return snap.exists() ? snap.data() : null;
 }
 
+// ── REZULTATE PUBLICE ─────────────────────────────────────────────────────────────────────────────
+// weeklySurprises/{gw}/treasureResults/{uid} — un document PUBLIC (citibil de toți jucătorii logați) cu DOAR:
+// uid, nickname, points, state, finishedAt, source. NU conține drumuri, rezultate preamestecate, pași sau
+// viețile rămase — acestea rămân în treasureRuns (privat). Documentul se creează O SINGURĂ DATĂ și nu se mai
+// modifică: la finalul aventurii (publishTreasureResult, de către jucător) sau, pentru cei care n-au terminat,
+// la rezolvarea Surprizei (resolveBonus, de către Admin). Afișarea lui NU acordă puncte — punctele ajung în
+// clasamentul etapei doar prin resolveBonus → results.bonusPoints → finalizeGameweek, ca la celelalte Surprize.
+function treasureResultRef(gameweekId, uid) {
+  return doc(db, "weeklySurprises", gameweekId, "treasureResults", uid);
+}
+
+// treasure = comoara (inclusiv plafon 100) · cashout · lives-lost · ended = neterminat la rezolvare, punctele
+// acumulate se păstrează · not-started = n-a jucat.
+export function treasureResultStateOf(run) {
+  if (!run) return "not-started";
+  if (run.phase === "treasure") return "treasure";
+  if (run.phase === "cashedout") return "cashout";
+  if (run.phase === "gameover" || Number(run.lives) <= 0) return "lives-lost";
+  return "ended";
+}
+
+export function buildTreasureResultDoc(uid, run, nickname, source) {
+  return {
+    uid,
+    nickname: typeof nickname === "string" ? nickname : "",
+    points: computeTreasureFinalPoints(run),
+    state: treasureResultStateOf(run),
+    finishedAt: serverTimestamp(),
+    source,
+  };
+}
+
+// Publică rezultatul propriu DUPĂ ce aventura s-a terminat (comoară / cash-out / viețile pierdute). O tranzacție:
+// verifică din documentul privat că jocul e terminat și că rezultatul nu există deja. Nu blochează jocul: se apelează
+// DUPĂ salvarea finală și poate fi reluată oricând (la reîncărcare, sau de Admin la rezolvare).
+export async function publishTreasureResult(gameweekId, uid) {
+  const publicRef = doc(db, "weeklySurprises", gameweekId);
+  return runTransaction(db, async (tx) => {
+    const pub = await tx.get(publicRef);
+    if (!pub.exists() || pub.data().bonusRevealed !== true) return { published: false, reason: "inactive" };
+    if (pub.data().bonusResolved === true) return { published: false, reason: "resolved" };
+    const [runSnap, resSnap, userSnap] = await Promise.all([
+      tx.get(treasureRunRef(gameweekId, uid)), tx.get(treasureResultRef(gameweekId, uid)), tx.get(doc(db, "users", uid)),
+    ]);
+    if (resSnap.exists()) return { published: false, reason: "exists" };
+    const run = runSnap.exists() ? runSnap.data() : null;
+    if (!run || run.finished !== true || !isTreasureTerminalPhase(run.phase)) return { published: false, reason: "not-finished" };
+    tx.set(treasureResultRef(gameweekId, uid), buildTreasureResultDoc(uid, run, userSnap.exists() ? userSnap.data().nickname : "", "player"));
+    return { published: true };
+  });
+}
+
+// Clasamentul public: UN SINGUR query, ≤ numărul de jucători (18) citiri, doar la deschiderea clasamentului.
+export async function getTreasureResults(gameweekId) {
+  const snap = await getDocs(collection(db, "weeklySurprises", gameweekId, "treasureResults"));
+  return snap.docs.map((d) => {
+    const v = d.data();
+    return { uid: d.id, nickname: v.nickname || "", points: Number(v.points) || 0, state: v.state || "ended" };
+  });
+}
+
 // Salvează o mutare. Totul într-o TRANZACȚIE: citește starea curentă, verifică tranziția și scrie.
 // Dacă doi clienți (două file) încearcă aceeași mutare, al doilea e respins. Respinge și scrierile
 // după ce Adminul a rezolvat Comoara sau dacă BONUSUL nu e dezvăluit.
@@ -1606,6 +1687,7 @@ export async function getTreasureRunStatus(gameweekId) {
   const snaps = await Promise.all(activeUids.map((uid) => getDoc(treasureRunRef(gameweekId, uid))));
   return activeUids.map((uid, i) => {
     const run = snaps[i].exists() ? snaps[i].data() : null;
-    return { uid, status: treasureRunStatus(run), step: run?.step ?? 0, lives: run?.lives ?? 0, points: computeTreasureFinalPoints(run) };
+    const points = computeTreasureFinalPoints(run);
+    return { uid, status: treasureRunStatus(run), step: run?.step ?? 0, lives: run?.lives ?? 0, points, at100: !!run && points >= MAX_POINTS };
   });
 }

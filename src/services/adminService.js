@@ -608,7 +608,7 @@ export async function resetAllTestData() {
   const WS_SUBCOLLECTIONS = [
     "secret", "results", "mysteryBoxPicks", "penaltyChoices", "penaltySubmitted",
     "diceRolls", "diceStops", "sabotajChoices", "sabotajPicked", "sabotajTaken",
-    "rouletteSpins", "triviaAnswers", "treasureRuns",
+    "rouletteSpins", "triviaAnswers", "treasureRuns", "treasureResults",
   ];
   try {
     const wsSnap = await getDocs(collection(db, "weeklySurprises"));

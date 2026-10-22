@@ -76,6 +76,7 @@ const HIGHER_LOWER_SUB = [
   "sabotajChoices", "sabotajPicked", "sabotajTaken",
   "higherLowerPicks", "higherLowerTiebreakers",
   "rouletteSpins", "mysteryBoxPicks", "penaltyChoices", "penaltySubmitted",
+  "treasureRuns", "treasureResults",
 ];
 
 export async function generatePlayLeagueBackup(onProgress) {

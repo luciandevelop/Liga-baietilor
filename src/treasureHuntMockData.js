@@ -92,7 +92,9 @@ export function freshGameState() {
 export function advanceAfterReveal(state) {
   if (state.lives <= 0) return { ...state, phase: "gameover", total: 0 };
   const { step } = state;
-  if (step >= TOTAL_STEPS) {
+  // FINAL AUTOMAT: pasul 7 SAU plafonul de 100 PCT atins mai devreme. La plafon nu mai există alt drum, cash-out
+  // sau „Continuă”; bonusul +25 se adaugă tot prin clampPoints, deci la 100 PCT nu mai schimbă nimic (nu se dublează).
+  if (step >= TOTAL_STEPS || state.total >= MAX_POINTS) {
     return { ...state, phase: "treasure", preTreasureTotal: state.total, total: clampPoints(state.total + TREASURE_BONUS) };
   }
   if (step >= 3) {

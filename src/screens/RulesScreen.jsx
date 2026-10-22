@@ -372,6 +372,11 @@ export default function RulesScreen({ onBack }) {
             🏴‍☠️ să continui mai departe, asumându-ți riscul următoarei ape.
           </P>
           <Table rows={[["Supraviețuiești și treci de apa 7", "+25p bonus comoară"], ["Maxim absolut", "100p"]]} />
+          <MiniHeading>Regulile aventurii</MiniHeading>
+          <P small>O singură încercare, fără restart. Progresul se salvează automat: dacă dai refresh sau închizi aplicația, aventura continuă exact de unde ai rămas, cu aceleași drumuri.</P>
+          <P small>Dacă ajungi la 100p înainte de apa 7, aventura se încheie automat: comoara e a ta, fără alt drum și fără cash-out, iar bonusul de +25p nu se mai adaugă peste plafonul de 100p.</P>
+          <P small>Dacă Adminul rezolvă Comoara înainte să termini, păstrezi punctele acumulate până atunci (dacă ai rămas fără vieți: 0p).</P>
+          <P small>Rezultatele FINALE (după comoară, cash-out sau vieți pierdute) apar în „Clasamentul Piraților”, vizibil tuturor jucătorilor. Progresul în desfășurare și drumurile ascunse rămân private.</P>
         </Section>
 
         <div style={s.footerNote}>

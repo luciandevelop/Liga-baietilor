@@ -6,6 +6,7 @@ import { PICK_TYPES, getPhaseDefinition } from "../specialDefinitions";
 import { resolveTeamOptions } from "../teamRegistry";
 import SpecialResolvePicker from "../components/SpecialResolvePicker";
 import SpecialCorrectionPanel from "../components/SpecialCorrectionPanel";
+import TreasureRunsAdminPanel from "../components/TreasureRunsAdminPanel";
 import SpecialsCompletionOverview from "../components/SpecialsCompletionOverview";
 import useNow from "../hooks/useNow";
 import { getMatchStatus } from "../utils/matchStatus";
@@ -3452,6 +3453,10 @@ export default function AdminScreen({ onBack }) {
                             </div>
                           )}
                         </div>
+                      )}
+
+                      {bonusType === "treasure-hunt" && bonusRevealed && (
+                        <TreasureRunsAdminPanel gameweekId={gw.id} />
                       )}
 
                       {bonusType === "mystery-box" && bonusRevealed && (

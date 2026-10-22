@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   freshGameState, buildTreasureHuntPreview, applyOutcome, advanceAfterReveal, cashOut, continueAfterCashout,
-  TOTAL_STEPS, TREASURE_BONUS, START_LIVES,
+  TOTAL_STEPS, TREASURE_BONUS, START_LIVES, MAX_POINTS,
 } from "../treasureHuntMockData";
 import {
   INTRO_TITLE, INTRO_LINES, SAFE_ARRIVAL, RISK_ARRIVAL, CURSED_ARRIVAL,
@@ -12,7 +12,8 @@ import {
   GAME_OVER_EARLY_LINES, gameOverLateLine, TREASURE_FOUND_LINES, PERFECT_100_LINES, cashoutLine,
   TRAVEL_LINES_SAFE, TRAVEL_LINES_RISK, TRAVEL_LINES_CURSED, FINAL_CROSSING_LINES,
 } from "../treasureHuntTexts";
-import { getMyTreasureRun, saveTreasureRun, computeTreasureFinalPoints, treasureRunStatus } from "../services/surprisesService";
+import { getMyTreasureRun, saveTreasureRun, publishTreasureResult, computeTreasureFinalPoints, treasureRunStatus } from "../services/surprisesService";
+import PiratesLeaderboard from "../components/PiratesLeaderboard";
 import PageHeader from "../components/PageHeader";
 import { color, font, radius } from "../matchdayTheme";
 
@@ -41,6 +42,7 @@ function stationTopByIndex(idx) { return STATIONS[Math.max(0, Math.min(idx, STAT
 const TRAVEL_MS = { 1: 1800, 2: 1800, 3: 2000, 4: 2200, 5: 2200, 6: 2500, 7: 2500, treasure: 3000 };
 const ARRIVAL_PAUSE_MS = 700;
 const CHAPTER_INTRO_MS = 1600;
+const LIFE_REACTION_MS = 3000; // panoul „viață pierdută” rămâne ~3 s (butonul „Continuă” îl poate închide mai devreme)
 function resultRevealMsFor(step) {
   if (step <= 3) return 2000;
   if (step <= 5) return 2500;
@@ -63,7 +65,21 @@ function resultRevealMsFor(step) {
 // Fiecare tranziție a motorului se SALVEAZĂ înainte să fie arătată (rezultatul unei alegeri nu se
 // vede până nu e salvat — o reîncărcare nu poate „încerca din nou” un alt drum); la reintrare jocul
 // se reia exact de unde a rămas; nu există „Reîncepe”. Previzualizarea din Admin rămâne 100% locală.
-export default function TreasureHuntScreen({ onBack, previewMode, previewState, embedded, user, gameweekId, resolved, myResult }) {
+// Ecranul exportat: jocul + (doar în modul REAL) CLASAMENTUL PIRAȚILOR dedesubt, în aceeași pagină — nu atinge harta
+// și nu e popup. După ce își termină aventura, jucătorul vede clasamentul deschis, cu rezultatul lui inclus.
+export default function TreasureHuntScreen(props) {
+  const realMode = !props.previewMode && !!props.gameweekId && !!props.user?.uid;
+  const [finishedTick, setFinishedTick] = useState(0);
+  if (!realMode) return <TreasureHuntGame {...props} />;
+  return (
+    <>
+      <TreasureHuntGame {...props} onFinished={() => setFinishedTick((t) => t + 1)} />
+      <PiratesLeaderboard gameweekId={props.gameweekId} myUid={props.user.uid} finishedTick={finishedTick} resolved={!!props.resolved} />
+    </>
+  );
+}
+
+function TreasureHuntGame({ onBack, previewMode, previewState, embedded, user, gameweekId, resolved, myResult, onFinished }) {
   const realMode = !previewMode && !!gameweekId && !!user?.uid;
   const [loadState, setLoadState] = useState(realMode ? "loading" : "ready"); // loading | ready | error
   const [saving, setSaving] = useState(false);
@@ -114,6 +130,13 @@ export default function TreasureHuntScreen({ onBack, previewMode, previewState, 
       && (a.chosenIndex ?? null) === (b.chosenIndex ?? null) && JSON.stringify(a.doors) === JSON.stringify(b.doors);
   }
 
+  // Publică rezultatul propriu (doar când aventura e terminată). Nu blochează și nu strică nimic dacă eșuează:
+  // se reia la următoarea deschidere, iar Admin îl completează la rezolvare.
+  function publishMine() {
+    if (!realMode) return;
+    publishTreasureResult(gameweekId, user.uid).catch((err) => console.warn("Comoara: rezultatul public nu s-a putut publica acum:", err?.code || err?.message));
+  }
+
   // Reia jocul din starea salvată: ajunge în faza vizuală corectă, fără să mai amestece nimic.
   function resumeFromGame(g) {
     timers.current.forEach(clearTimeout);
@@ -129,6 +152,7 @@ export default function TreasureHuntScreen({ onBack, previewMode, previewState, 
       later(() => proceedAfterResult(g), resultRevealMsFor(g.step));
       return;
     }
+    if (["treasure", "cashedout", "gameover"].includes(g.phase)) publishMine(); // reluare după final: publicare dacă lipsea
     setVisualPhase(resolveDirectPhase(g)); // cashout | cashedout | treasure | gameover
   }
 
@@ -197,6 +221,12 @@ export default function TreasureHuntScreen({ onBack, previewMode, previewState, 
     return g.phase; // cashout | treasure | gameover
   }
 
+  // Anunță wrapper-ul când aventura s-a încheiat vizual (după animația finală) → clasamentul se deschide singur.
+  useEffect(() => {
+    if (realMode && onFinished && ["treasure", "cashedout", "gameover"].includes(visualPhase)) onFinished();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visualPhase, realMode]);
+
   const restartHandler = (previewMode || realMode) ? null : handleRestart; // modul real: o singură încercare
   const chosenOutcome = game.chosenIndex != null ? game.doors[game.chosenIndex]?.outcome : null;
   const isSecondLifeLoss = chosenOutcome?.type === "life" && game.lives <= 0;
@@ -248,7 +278,7 @@ export default function TreasureHuntScreen({ onBack, previewMode, previewState, 
     const next = advanceAfterReveal(state);
     if (realMode && !(await guard(next, () => proceedAfterResult(state), state))) return;
     if (next.phase === "cashout") { setGame(next); setVisualPhase("cashout"); return; }
-    if (next.phase === "treasure") { beginFinalTravel(next, state.step); return; }
+    if (next.phase === "treasure") { publishMine(); beginFinalTravel(next, state.step); return; }
     beginTravel(next, next.step, TRAVEL_MS[next.step] ?? 2200, state.step);
   }
 
@@ -257,6 +287,7 @@ export default function TreasureHuntScreen({ onBack, previewMode, previewState, 
     if (isSecondLifeLoss) {
       const final = advanceAfterReveal(game);
       if (realMode && !(await guard(final, handleReactionDone, game))) return;
+      publishMine();
       setGame(final);
       setVisualPhase("gameover");
     } else {
@@ -292,6 +323,7 @@ export default function TreasureHuntScreen({ onBack, previewMode, previewState, 
       if (saving) return;
       const next = cashOut(game);
       if (!(await guard(next, handleCashOut, game))) return;
+      publishMine();
       setGame(next);
       setVisualPhase("cashedout");
       return;
@@ -650,7 +682,7 @@ function SimpleCard({ icon, title, total, detail, onRestart }) {
 // ══════════════════════════════════════════════════════════════════
 function LifeReactionPanel({ isSecondLoss, onDone }) {
   useEffect(() => {
-    const t = setTimeout(onDone, 1600);
+    const t = setTimeout(onDone, LIFE_REACTION_MS);
     return () => clearTimeout(t);
   }, [onDone]);
   const line = pickOnce(isSecondLoss ? LIFE_LOST_SECOND : LIFE_LOST_FIRST);
@@ -690,6 +722,9 @@ function TreasureCinematic({ game, onRestart }) {
   }, []);
   const preTotal = game.preTreasureTotal ?? Math.max(0, game.total - TREASURE_BONUS);
   const isPerfect = game.total >= 100;
+  // Bonusul ADĂUGAT efectiv: +25, dar plafonat la 100 PCT (la 100 atins mai devreme nu se mai adaugă nimic).
+  const bonusAdded = Math.max(0, game.total - preTotal);
+  const capped = preTotal + TREASURE_BONUS > MAX_POINTS;
   const line = isPerfect ? pickOnce(PERFECT_100_LINES) : pickOnce(TREASURE_FOUND_LINES);
   return (
     <div className="th-pop" style={s.cinematicPanel}>
@@ -697,7 +732,7 @@ function TreasureCinematic({ game, onRestart }) {
       <div style={s.cinematicHeader}>{isPerfect ? "💯 MAXIM ABSOLUT!" : "🏆 COMOARA E A TA!"}</div>
       <div style={s.scoreBreakdown}>
         <div style={s.scoreBreakdownLine}><span>Puncte înainte de comoară</span><span style={s.scoreBreakdownVal}>{preTotal} PCT</span></div>
-        <div style={s.scoreBreakdownLine}><span>Bonus comoară</span><span style={{ ...s.scoreBreakdownVal, color: color.green }}>+{TREASURE_BONUS} PCT</span></div>
+        <div style={s.scoreBreakdownLine}><span>Bonus comoară{capped ? " (plafon 100)" : ""}</span><span style={{ ...s.scoreBreakdownVal, color: color.green }}>+{bonusAdded} PCT</span></div>
         <div style={{ ...s.scoreBreakdownLine, ...s.scoreBreakdownTotal }}><span>TOTAL FINAL</span><span style={s.scoreBreakdownVal}>{game.total} PCT</span></div>
       </div>
       <div style={s.miniCardLine}>{line}</div>

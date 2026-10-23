@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { color, font, radius, shadow } from "../matchdayTheme";
-import { PrinceFrogGuide, TreasureGuide } from "../components/RulesGuides";
+import { PrinceFrogGuide, TreasureGuide, DiceGuide, SabotageGuide, GameFaq, SurprisesOverview, DICE_FAQ, SABOTAGE_FAQ, PRINCE_FAQ } from "../components/RulesGuides";
 
 // Pagină STATICĂ, fără Firestore — doar text + exemple. Conținutul e
 // scris simplu, intenționat, ca să fie clar pentru toată gașca, nu doar
@@ -154,16 +154,27 @@ export default function RulesScreen({ onBack }) {
         <SectionLabel text="Surprizele Săptămânii" />
         <Section icon="🎭" title="Cum funcționează, pe scurt">
           <P>
-            În fiecare etapă, Adminul poate activa o <B>Surpriză Principală</B> (max 200p) și una
-            <B> Bonus</B> (max 100p) — mini-jocuri separate de pronosticuri, cu propriile puncte.
+            În fiecare etapă, Adminul poate activa o <B>Surpriză Mare</B> (max 200p) și una
+            <B> Surpriză Mică</B> (max 100p) — mini-jocuri separate de pronosticuri, cu propriile puncte.
           </P>
           <P>
             Flux: Admin o <B>dezvăluie</B> (aici afli regulile ei și participanții) → dacă tipul
             cere ceva de la tine, interacționezi → Admin o <B>rezolvă</B> după ce se știu
             rezultatele → punctele intră automat în clasament la Finalizarea etapei.
           </P>
+                  <MiniHeading>Toate Surprizele, pe scurt</MiniHeading>
+          <SurprisesOverview />
+          <GameFaq items={[
+            ["Cine alege ce Surpriză apare?", "Adminul alege tipul pentru fiecare etapă și o dezvăluie când e gata. Până atunci nu se vede nimic."],
+            ["Când intră punctele în clasament?", "La Finalizarea etapei, împreună cu restul punctelor etapei."],
+            ["Pot pierde puncte la o Surpriză?", "Nu. Cel mai puțin e 0p. Singura excepție e Sabotajul, unde un coleg te poate fura."],
+            ["Ce înseamnă „Bye”?", "Dacă numărul de jucători e impar, unul rămâne fără adversar și primește o valoare fixă, precizată la fiecare joc."],
+            ["Ce se întâmplă dacă nu fac nimic?", "Iei 0 la partea ta din joc. La unele jocuri, adversarul tău poate lua automat bonusul de duel."],
+            ["Pot trimite sau schimba după ce s-a închis?", "Nu. Fiecare joc are un moment în care se închide; după el nu mai poți trimite sau modifica."],
+          ]} />
         </Section>
 
+        <SectionLabel text="Surprize Mari (max 200p)" />
         <Section icon="🥊" title="Duel 1v1 (Random / Extreme / Rivali)">
           <P>Ești tras la sorți în pereche cu un alt jucător. Câștigă cine ia mai multe puncte din pronosticurile etapei.</P>
           <Table rows={[["Câștigi duelul", "+200p"], ["Egalitate", "+100p fiecare"], ["Pierzi", "+0p"], ["Rămâi fără pereche (nr. impar)", "+100p fix (Bye)"]]} />
@@ -172,18 +183,35 @@ export default function RulesScreen({ onBack }) {
             vs penultimul etc., după clasamentul etapei trecute. <B>Rivali</B> = perechi vecine
             (1 vs 2, 3 vs 4...). Regula de puncte e identică la toate trei.
           </P>
+          <GameFaq items={[
+            ["Cu ce puncte se compară duelul?", "Cu punctele din pronosticurile etapei (cele 20 de meciuri). Bonusurile de clasament nu intră."],
+            ["Pot pierde puncte?", "Nu. Dacă pierzi iei 0p la Surpriză; punctele din pronosticuri rămân ale tale."],
+            ["Cine hotărăște perechile?", "Aplicația, la dezvăluire: Random = sorți, Extreme și Rivali = după clasamentul etapei trecute. Le vezi imediat ce Adminul dezvăluie Surpriza."],
+            ["Dacă rămân fără pereche?", "Primești +100p fix (Bye)."],
+          ]} />
         </Section>
 
         <Section icon="👥" title="Duel de Echipe">
           <P>Grupul se împarte în echipe de câte 2 (sau 3, dacă nu ies exact perechi), trase la sorți. Câștigă echipa cu suma mai mare de puncte.</P>
           <Table rows={[["Echipa câștigătoare", "+200p / membru"], ["Egalitate", "+100p / membru"], ["Echipa care pierde", "+0p"]]} />
           <P small>La echipele mai mari, un singur membru nu intră în calculul sumei (dar tot ia premiul dacă echipa câștigă) — un detaliu tehnic, nu schimbă strategia ta.</P>
+          <GameFaq items={[
+            ["Cum se calculează?", "Se adună punctele din etapă ale membrilor echipei. Echipa cu suma mai mare câștigă, iar fiecare membru primește +200p."],
+            ["La egalitate?", "+100p fiecare membru."],
+            ["Dacă nu ies exact echipe de 2?", "Unele echipe vor avea 3 jucători."],
+            ["Dacă un jucător rămâne fără adversar?", "Primește +100p fix (Bye)."],
+          ]} />
         </Section>
 
         <Section icon="🆚" title="Jumate-Jumate (Random / Top vs Bottom)">
           <P>Tot grupul se împarte în 2 tabere egale (±1 persoană). Câștigă tabăra cu suma mai mare de puncte din etapă.</P>
           <Table rows={[["Tabăra câștigătoare", "+200p / membru"], ["Egalitate", "+100p / membru"], ["Tabăra care pierde", "+0p"]]} />
           <P small><B>Random</B> = tabere trase la sorți. <B>Top vs Bottom</B> = jumătatea de sus a clasamentului vs jumătatea de jos, din etapa trecută.</P>
+          <GameFaq items={[
+            ["Cum se formează taberele?", "Random = sorți. Top vs Bottom = jumătatea de sus a clasamentului etapei trecute contra jumătății de jos."],
+            ["Ce se compară?", "Suma punctelor din etapă ale fiecărei tabere. Tabăra cu suma mai mare câștigă, iar fiecare membru primește +200p."],
+            ["Dacă numărul de jucători e impar?", "Taberele diferă cu cel mult o persoană."],
+          ]} />
         </Section>
 
         <Section icon="❓" title="Trivia Etapei">
@@ -192,23 +220,18 @@ export default function RulesScreen({ onBack }) {
           <P>Pe lângă asta, ești tras la sorți cu un adversar — se compară scorul de bază al vostru:</P>
           <Table rows={[["Câștigi duelul de Trivia", "+50p"], ["Egalitate", "+25p fiecare"], ["Pierzi", "+0p"], ["Bye (fără pereche)", "bază +25p"]]} />
           <P small>Răspunsurile tale sunt private până la Rezolvare — nimeni nu vede ce ai bifat înainte.</P>
+          <GameFaq items={[
+            ["Pot schimba un răspuns?", "Da, până când Adminul blochează Trivia. După blocare nu se mai poate trimite sau modifica nimic."],
+            ["Văd răspunsurile adversarului?", "Nu înainte de blocare. După blocare, Adminul le poate publica, ca să vedeți alegerile; la Rezolvare apar oricum."],
+            ["Dacă nu răspund la o întrebare?", "Acea întrebare valorează 0p. Celelalte se punctează normal."],
+            ["Care e maximul?", "10 × 15p = 150p din întrebări, plus 50p dacă îți bați adversarul = 200p."],
+          ]} />
         </Section>
 
         <Section icon="🎲" title="Zarurile">
-          <P>
-            Primești 5 întrebări cu răspuns numeric (ex: „câte cornere vor fi în meciul X?”).
-            Rezultatul real nu îl cunoști când joci — tu alegi unde te oprești, cât mai aproape
-            de el, dar FĂRĂ să îl depășești.
-          </P>
-          <P>
-            La fiecare întrebare arunci un zar (1–6), iar aruncările se adună. Poți arunca de câte
-            ori vrei. Când ești mulțumit, apeși STOP — suma ta rămâne cea de la acel moment.
-          </P>
-          <P>
-            <B>Punctele la o întrebare:</B> dacă ai depășit rezultatul real (BUST), iei 0p, dar
-            DOAR la acea întrebare — celelalte rămân neatinse. Dacă nu l-ai depășit, iei 30p minus
-            5p pentru fiecare unitate cu care ai rămas sub rezultatul real (minim 0p).
-          </P>
+          <DiceGuide />
+          <MiniHeading>Detalii exacte</MiniHeading>
+          <P>La o întrebare: <B>30p minus 5p</B> pentru fiecare unitate cu care rămâi sub rezultatul real (minim 0p). Dacă l-ai depășit (BUST) iei 0p, dar doar la acea întrebare.</P>
           <Table rows={[
             ["Te-ai oprit exact la rezultatul real", "30p"],
             ["Cu 1 sub rezultatul real", "25p"],
@@ -237,32 +260,20 @@ export default function RulesScreen({ onBack }) {
             rezultat real nu a fost încă stabilit nu se punctează.
           </P>
         
+          <GameFaq items={DICE_FAQ} />
         </Section>
 
         <Section icon="🗡️" title="Sabotaj">
-          <P>
-            Fiecare jucător alege UN adversar căruia încearcă să-i „fure” puncte. Alegerile se fac
-            pe rând, în ordinea clasamentului etapei trecute: cel mai bine clasat alege primul, apoi
-            următorul, și tot așa. La prima etapă dintr-un sezon nu există clasament anterior, așa că
-            ordinea e stabilită de aplicație.
-          </P>
-          <P>
-            <B>Cum alegi:</B> când vine rândul tău, alegi o singură țintă. Nu te poți alege pe tine,
-            iar un jucător deja ales de altcineva nu mai poate fi luat — fiecare poate fi ales de cel
-            mult un atacator. Alegerea ta rămâne secretă până când Adminul dezvăluie toate alegerile.
-          </P>
-          <P>
-            <B>Cum se decide furtul:</B> la final, pentru fiecare pereche atacator → țintă se compară
-            punctele din meciurile etapei, la momentul rezolvării:
-          </P>
+          <SabotageGuide />
+          <MiniHeading>Detalii exacte</MiniHeading>
           <Table rows={[
             ["Ai MAI MULTE puncte decât ținta ta", "Furi min(200p, punctele țintei)"],
             ["Ai puncte egale sau mai puține", "Nu se întâmplă nimic"],
           ]} />
-          <ExampleBox title="Exemplu — tu îl ai ca țintă pe Bogdan">
-            <ExRow pred="Tu: 1250p · Bogdan: 1100p" res="Furt reușit → tu +200p, Bogdan −200p" tone="good" />
-            <ExRow pred="Tu: 1250p · Bogdan: 1250p" res="Egalitate → nu se întâmplă nimic" tone="mid" />
-            <ExRow pred="Tu: 1100p · Bogdan: 1250p" res="Furt eșuat → nu se întâmplă nimic" tone="bad" />
+          <ExampleBox title="Exemplu — ținta ta e un coleg">
+            <ExRow pred="Tu: 1250p · Ținta: 1100p" res="Furt reușit → tu +200p, ținta −200p" tone="good" />
+            <ExRow pred="Tu: 1250p · Ținta: 1250p" res="Egalitate → nu se întâmplă nimic" tone="mid" />
+            <ExRow pred="Tu: 1100p · Ținta: 1250p" res="Furt eșuat → nu se întâmplă nimic" tone="bad" />
           </ExampleBox>
           <P small>
             Ce furi se scade de la țintă, deci suma punctelor rămâne aceeași. Ca atacator câștigi cel
@@ -274,11 +285,12 @@ export default function RulesScreen({ onBack }) {
             pe X, furtul lui Z nu ține cont de ce a câștigat X de la Y.
           </P>
         
+          <GameFaq items={SABOTAGE_FAQ} />
         </Section>
 
         <Section icon="🎟️" title="Bet Builder">
           <P>
-            18 jucători → 9 dueluri, câte 3 per fiecare dintre cele 3 ⭐ Meciuri ale Săptămânii.
+            Jucătorii sunt împărțiți în dueluri 1v1, repartizate pe cele 3 ⭐ Meciuri ale Săptămânii.
             Pentru meciul tău, faci exact 5 selecții — fiecare corectă = +20p.
           </P>
           <Table rows={[["5/5 corecte", "100p din selecții + 50p bonus perfect = 150p"], ["Câștigi duelul", "+50p"], ["Maxim absolut", "200p"]]} />
@@ -287,11 +299,17 @@ export default function RulesScreen({ onBack }) {
             decide barajul (cea mai apropiată estimare de un rezultat real); la egalitate perfectă
             la baraj — 25p fiecare.
           </P>
+          <GameFaq items={[
+            ["Până când trebuie să-mi fac biletul?", "Cu cel puțin 12 ore înainte de meciul repartizat ție."],
+            ["Pot schimba biletul?", "Da, până îl confirmi. După confirmare e definitiv."],
+            ["Văd biletul adversarului?", "Doar după ce ți l-ai confirmat pe al tău."],
+            ["Ce e barajul?", "Dacă duelul e egal după cele 5 selecții, decide cine estimează mai aproape o valoare reală, stabilită de Admin. La egalitate perfectă: +25p fiecare."],
+          ]} />
         </Section>
 
         <Section icon="📈" title="Mai Mare / Mai Mic">
           <P>
-            18 jucători → 9 dueluri, toți pe ACELAȘI panou: 6 runde, câte 2 din fiecare dintre
+            Jucătorii sunt împărțiți în dueluri 1v1, toți pe ACELAȘI panou: 6 runde, câte 2 din fiecare dintre
             cele 3 ⭐ Meciuri ale Săptămânii (un prag de tip X,5 — ex. „9,5 cornere").
           </P>
           <P>
@@ -305,6 +323,12 @@ export default function RulesScreen({ onBack }) {
             decide barajul secret (cine estimează mai aproape totalul real de goluri din cele 3
             meciuri); la egalitate perfectă — 25p fiecare.
           </P>
+          <GameFaq items={[
+            ["Mai mare sau mai mic față de ce?", "Față de pragul afișat la fiecare rundă (de exemplu 9,5 cornere). Rezultatul real se știe abia după meci."],
+            ["Pot schimba o alegere?", "Nu. Alegerea e definitivă din momentul în care o trimiți."],
+            ["Ce înseamnă „prioritate”?", "Pe rundele în care ai prioritate alegi tu Mai Mare sau Mai Mic, iar adversarul primește automat varianta opusă."],
+            ["Până când joc?", "Cu cel puțin 12 ore înainte de primul dintre cele 3 meciuri."],
+          ]} />
         </Section>
 
         <Section icon="👑" title="Prinț sau Broscoi?">
@@ -327,15 +351,22 @@ export default function RulesScreen({ onBack }) {
             După închidere, toate alegerile devin publice, iar scorul duelului se actualizează LIVE după fiecare rezultat validat
             de Admin, chiar și la corectări. Punctele devin definitive când Adminul finalizează etapa.
           </P>
+          <GameFaq items={PRINCE_FAQ} />
         </Section>
 
-        <Section icon="🎰" title="Ruletă (Surpriza Bonus)">
+        <SectionLabel text="Surprize Mici (max 100p)" />
+        <Section icon="🎰" title="Ruletă (Surpriză Mică)">
           <P>O singură învârtire, cu 16 segmente posibile. Poți învârti a doua oară, dar pierzi definitiv primul rezultat dacă o faci.</P>
-          <Table rows={[["Segmente posibile", "0, 25 sau 50 (cele mai dese) · 75 (mai rar) · 100 (cel mai rar)"]]} />
-          <P small>Maxim 100p — e Surpriza Bonus, separată de cea Principală.</P>
+          <Table rows={[["0p", "4 din 16 segmente"], ["25p", "5 din 16"], ["50p", "4 din 16"], ["75p", "2 din 16"], ["100p", "1 din 16"]]} />
+          <P small>Maxim 100p — e o Surpriză Mică, separată de cea Mare.</P>
+          <GameFaq items={[
+            ["Pot învârti de două ori?", "Da, dar a doua învârtire anulează definitiv prima. Contează doar ultimul rezultat."],
+            ["Pot pierde puncte?", "Nu. Cel mai puțin primești 0p."],
+            ["Rezultatul e la întâmplare?", "Da, fiecare segment are șansele din tabelul de mai sus."],
+          ]} />
         </Section>
 
-        <Section icon="🎁" title="Mystery Box (Surpriza Bonus)">
+        <Section icon="🎁" title="Mystery Box (Surpriză Mică)">
           <P>40 de cutii, cu valori ascunse până alegi. Alegi o cutie; poți rejuca o dată, dar dacă rejoci, pierzi complet prima alegere — contează doar ultima.</P>
           <Table
             rows={[
@@ -360,20 +391,29 @@ export default function RulesScreen({ onBack }) {
             îl folosești) se calculează abia la Finalizarea etapei, o dată cu toate punctele
             Surprizei Săptămânii.
           </P>
+          <GameFaq items={[
+            ["Pot alege din nou?", "Da, o dată, dar pierzi complet prima alegere. Contează doar ultima."],
+            ["Pot pierde puncte?", "Nu. Cel mai puțin primești 0p (6 din 40 de cutii sunt goale)."],
+            ["Ce e Joker Extra?", "O cutie fără puncte, care îți dă dreptul la un al doilea Joker în etapa asta. Se aplică abia la Finalizarea etapei."],
+          ]} />
         </Section>
 
-        <Section icon="🥅" title="Penalty (Surpriza Bonus)">
+        <Section icon="🥅" title="Penalty (Surpriză Mică)">
           <P>Ești tras la sorți cu un adversar. Amândoi alegeți, în secret, 5 zone de șut (stânga/centru/dreapta) și 5 zone de apărare, înainte să vedeți alegerile celuilalt.</P>
           <Table rows={[["Fiecare gol marcat", "+10p"], ["Fiecare apărare reușită", "+10p"], ["Maxim posibil", "100p (5 goluri + 5 apărări)"]]} />
           <ExampleBox title="Exemplu — un șut">
             <ExRow pred="Tu tragi stânga, adversarul apără dreapta" res="Gol → +10p pentru tine" tone="good" />
             <ExRow pred="Tu tragi stânga, adversarul apără stânga" res="Apărat, 0p la lovitura asta" tone="bad" />
           </ExampleBox>
-          <P small>Dacă adversarul nu trimite alegerile la timp, iei automat 50p (5 goluri, nimic de apărat), iar el 0p.</P>
+          <P small>Dacă adversarul nu trimite alegerile la timp, iei automat 50p (5 goluri, nimic de apărat), iar el 0p. Dacă niciunul nu trimite: 0p amândoi. Dacă n-ai adversar (număr impar de jucători): 50p fix.</P>
+          <GameFaq items={[
+            ["Când văd alegerile adversarului?", "Doar după ce amândoi le-ați trimis."],
+            ["Pot schimba după ce am trimis?", "Nu. Alegerile sunt definitive."],
+            ["Cum se calculează?", "La fiecare dintre cele 5 șuturi: dacă tragi într-o zonă pe care adversarul n-o apără, e gol (+10p). Dacă el trage exact în zona pe care o aperi tu, ai parat (+10p)."],
+          ]} />
         </Section>
 
-        <SectionLabel text="Surprize Mici" />
-        <Section icon="🏴‍☠️" title="Comoara Blestemată (Surpriză Mică — max 100p)">
+        <Section icon="🏴‍☠️" title="Comoara Blestemată (Surpriză Mică)">
           <TreasureGuide />
           <MiniHeading>Detaliile, pe ape</MiniHeading>
           <MiniHeading>Apele 1–3 — fără risc</MiniHeading>
@@ -396,6 +436,14 @@ export default function RulesScreen({ onBack }) {
           <P small>Dacă ajungi la 100p înainte de apa 7, aventura se încheie automat: comoara e a ta, fără alt drum și fără cash-out, iar bonusul de +25p nu se mai adaugă peste plafonul de 100p.</P>
           <P small>Dacă Adminul rezolvă Comoara înainte să termini, păstrezi punctele acumulate până atunci (dacă ai rămas fără vieți: 0p).</P>
           <P small>Rezultatele FINALE (după comoară, cash-out sau vieți pierdute) apar în „Clasamentul Piraților”, vizibil tuturor jucătorilor. Progresul în desfășurare și drumurile ascunse rămân private.</P>
+          <GameFaq items={[
+            ["Pot începe din nou?", "Nu. Ai o singură încercare."],
+            ["Dacă închid aplicația?", "Aventura se salvează automat și continui exact de unde ai rămas."],
+            ["Văd drumurile altor jucători?", "Nu. Se vede doar rezultatul final al celor care au terminat, în „Clasamentul Piraților”."],
+            ["Când mă pot opri?", "După apa 3, 4, 5 sau 6, păstrând punctele de până atunci. Înainte de apa 3 nu te poți opri."],
+            ["Dacă pierd ambele vieți?", "Aventura se termină și scorul tău devine 0p."],
+            ["Dacă Adminul rezolvă Comoara înainte să termin?", "Păstrezi punctele acumulate până atunci (dacă ai rămas fără vieți: 0p)."],
+          ]} />
         </Section>
 
         <div style={s.footerNote}>

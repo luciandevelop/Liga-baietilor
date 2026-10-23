@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { color, font, radius, shadow } from "../matchdayTheme";
+import { PrinceFrogGuide, TreasureGuide } from "../components/RulesGuides";
 
 // Pagină STATICĂ, fără Firestore — doar text + exemple. Conținutul e
 // scris simplu, intenționat, ca să fie clar pentru toată gașca, nu doar
@@ -307,36 +308,24 @@ export default function RulesScreen({ onBack }) {
         </Section>
 
         <Section icon="👑" title="Prinț sau Broscoi?">
-          <P>
-            Alegi 4 colegi: 2 PRINȚI (crezi că vor performa în etapă) și 2 BROSCOI (crezi că vor rata). Nu te poți alege pe tine
-            și nu poți alege același coleg de două ori; îl poți alege pe adversarul tău din duel. Alegerile sunt secrete până la
-            închiderea înscrierilor.
-          </P>
-          <Table
-            rows={[
-              ["Prinț: locul 1", "+75p"],
-              ["Prinț: locurile 2–3", "+45p"],
-              ["Prinț: restul jumătății de sus", "+20p"],
-              ["Broscoi: ultimul grup de punctaj", "+75p"],
-              ["Broscoi: următoarele două grupuri de la coadă", "+45p"],
-              ["Broscoi: restul jumătății de jos", "+20p"],
-            ]}
-          />
+          <PrinceFrogGuide />
+          <MiniHeading>Detalii, pentru cine vrea să știe tot</MiniHeading>
           <P small>
-            Contează doar punctele din cele 20 de meciuri (cu Joker, Meciul Săptămânii și Lupul Singuratic), fără bonusurile de
-            clasament sau alte surprize. La egalitate, locul se împarte (1, 1, 3) și toți primesc aceeași valoare; un grup de
-            egalitate care trece granița dintre jumătăți nu primește recompensa de 20p.
-          </P>
-          <P>
-            Punctele brute = suma celor 4 alegeri. În clasament intră maximum 150p, dar duelul se decide pe punctele BRUTE:
-            câștigi +50p, egalitate perfectă +25p fiecare. Atingerea plafonului de 150p de către amândoi nu înseamnă egalitate.
-            Maxim absolut 200p.
+            Contează doar punctele din cele 20 de meciuri ale etapei (cu Joker, Meciul Săptămânii și Lupul Singuratic), fără
+            bonusurile de clasament și fără alte surprize. Doar jucătorii activi intră în clasamentul acestui joc; un jucător
+            activ care n-a pronosticat nimic rămâne în clasament, cu 0 puncte.
           </P>
           <P small>
-            Fără adversar în etapă: +25p dacă ai participat. Dacă adversarul nu a participat și tu da: +50p. Dacă niciunul nu a
-            participat: 0p. Poți schimba alegerile până la închiderea înscrierilor (manual de Admin sau automat la începutul
-            primului meci). Apoi toate portofoliile devin publice, iar clasamentul duelului se actualizează LIVE după fiecare
-            rezultat validat. Punctele devin definitive când Adminul finalizează etapa.
+            Locul se împarte la egalitate (1, 1, 3) și toți cei egali primesc aceeași valoare. Un grup de egalitate care trece
+            granița dintre jumătatea de sus și cea de jos nu primește recompensa de 20p.
+          </P>
+          <P small>
+            Dacă adversarul tău n-a ales nimic și tu ai ales: +50p automat. Dacă niciunul nu a ales: 0p. Dacă ești fără adversar
+            (număr impar de jucători) și ai ales: +25p.
+          </P>
+          <P small>
+            După închidere, toate alegerile devin publice, iar scorul duelului se actualizează LIVE după fiecare rezultat validat
+            de Admin, chiar și la corectări. Punctele devin definitive când Adminul finalizează etapa.
           </P>
         </Section>
 
@@ -385,12 +374,8 @@ export default function RulesScreen({ onBack }) {
 
         <SectionLabel text="Surprize Mici" />
         <Section icon="🏴‍☠️" title="Comoara Blestemată (Surpriză Mică — max 100p)">
-          <P>
-            O mică aventură solo, pe hartă: pornești cu 0p și ❤️❤️, mergi prin 7 ape până la
-            comoară. La fiecare apă alegi un drum dintre mai multe — prada și pericolele sunt
-            ascunse pe drumuri ÎNAINTE de alegerea ta. După ce alegi, toate drumurile se
-            dezvăluie, ca să vezi exact ce ai ratat.
-          </P>
+          <TreasureGuide />
+          <MiniHeading>Detaliile, pe ape</MiniHeading>
           <MiniHeading>Apele 1–3 — fără risc</MiniHeading>
           <P small>Exact 3 drumuri, ascund +5p / +10p / +15p. Niciun risc de puncte sau viață.</P>
           <MiniHeading>Apele 4–5</MiniHeading>

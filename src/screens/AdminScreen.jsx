@@ -71,6 +71,9 @@ import {
 } from "../services/higherLowerService";
 import { HIGHER_LOWER_PREVIEW_STATES } from "../higherLowerMockData";
 import HigherLowerScreen from "./HigherLowerScreen";
+// 📈📉 Bursa Prietenilor — DOAR Preview mock (Etapa 1B), zero Firestore.
+import { BURSA_PREVIEW_STATES } from "../bursaMockData";
+import BursaScreen from "./BursaScreen";
 import { TREASURE_HUNT_PREVIEW_STATES } from "../treasureHuntMockData";
 import TreasureHuntScreen from "./TreasureHuntScreen";
 import PenaltyPreviewScreen from "./PenaltyPreviewScreen";
@@ -376,6 +379,8 @@ export default function AdminScreen({ onBack }) {
   // ── 📈📉 Mai Mare / Mai Mic — izolat de Bet Builder, propriul state. ──
   const [higherLower, setHigherLower] = useState(null);
   const [higherLowerPreviewOpen, setHigherLowerPreviewOpen] = useState(false);
+  const [bursaPreviewOpen, setBursaPreviewOpen] = useState(false);
+  const [bursaPreviewState, setBursaPreviewState] = useState("A");
   const [higherLowerPreviewState, setHigherLowerPreviewState] = useState("A");
   // ── 🏴‍☠️ Comoara Blestemată — PREVIEW MOCK ONLY, runda asta. Nicio
   // stare de generare/Admin reală încă — doar toggle-ul de preview. ──
@@ -3547,6 +3552,15 @@ export default function AdminScreen({ onBack }) {
                 </button>
               </SectionCard>
 
+              <SectionCard title="📈📉 Preview Bursa Prietenilor — MOCK · ZERO FIRESTORE">
+                <p style={s.hint}>
+                  Demo izolat, 100% local — nu citește/scrie Firestore, nu activează Bursa pentru jucători.
+                </p>
+                <button type="button" style={s.smallBtn} onClick={() => setBursaPreviewOpen(true)}>
+                  👁 Preview Bursa Prietenilor
+                </button>
+              </SectionCard>
+
               <SectionCard title="🏴‍☠️ Preview Comoara Blestemată — MOCK · ZERO FIRESTORE">
                 <p style={s.hint}>
                   Runda asta: doar experiența, 100% locală — motorul (pre-shuffle, alegere, reveal, cash-out, final)
@@ -4222,6 +4236,29 @@ export default function AdminScreen({ onBack }) {
           </div>
           <div style={s.bbPreviewBody}>
             <HigherLowerScreen previewMode previewState={higherLowerPreviewState} embedded />
+          </div>
+        </div>
+      )}
+
+      {bursaPreviewOpen && (
+        <div style={s.bbPreviewOverlay}>
+          <div style={s.bbPreviewBar}>
+            <span style={s.bbPreviewLabel}>👁 PREVIEW Bursa Prietenilor — mock, nimic salvat</span>
+            <button type="button" style={s.bbPreviewCloseBtn} onClick={() => setBursaPreviewOpen(false)}>✕ Închide</button>
+          </div>
+          <div style={s.bbPreviewStates}>
+            {BURSA_PREVIEW_STATES.map((st) => (
+              <button
+                key={st.id} type="button"
+                style={{ ...s.bbPreviewStateBtn, ...(bursaPreviewState === st.id ? s.bbPreviewStateBtnActive : {}) }}
+                onClick={() => setBursaPreviewState(st.id)}
+              >
+                {st.label}
+              </button>
+            ))}
+          </div>
+          <div style={s.bbPreviewBody}>
+            <BursaScreen previewMode previewState={bursaPreviewState} />
           </div>
         </div>
       )}

@@ -1,7 +1,10 @@
 import { collection, doc, getDoc, getDocs, setDoc, query, where, runTransaction, serverTimestamp, deleteField } from "firebase/firestore";
 import { db } from "../firebase";
-import { listActiveUserIds, listGameweeks, getLiveGameweekPoints, isGameweekReadyToResolve, getLastCompletedGameweek, listGameweekScores } from "./adminService";
+import { listActiveUserIds, listGameweeks, getLiveGameweekPoints, isGameweekReadyToResolve, getLastCompletedGameweek, listGameweekScores, listMatches } from "./adminService";
 import { teamScore } from "./scoringEngine";
+import {
+  BURSA_TYPE_ID, BURSA_PUBLIC_NAME, BURSA_ENABLED, computeBursaResults, normalizePortfolio, rankingUidsFor, summarizeBursaResult,
+} from "./bursaService";
 import { applyOutcome, advanceAfterReveal, shuffleStepDoors, START_LIVES, TOTAL_STEPS, MAX_POINTS } from "../treasureHuntMockData";
 
 // ══════════════════════════════════════════════════════════════════
@@ -23,6 +26,9 @@ export const MAIN_CATALOG = [
   { id: "sabotaj", label: "Sabotaj", active: true },
   { id: "betBuilder", label: "🎟️ Bet Builder", active: true },
   { id: "higherLower", label: "📈📉 Mai Mare / Mai Mic", active: true },
+  // Prinț sau Broscoi? — id intern „bursa-prietenilor”. Rămâne „în curând” (neselectabil de Admin) cât timp
+  // BURSA_ENABLED (bursaService.js) e false, adică până când regulile Firestore sunt verificate și publicate.
+  { id: BURSA_TYPE_ID, label: BURSA_PUBLIC_NAME, active: BURSA_ENABLED },
 ];
 
 export const BONUS_CATALOG = [
@@ -263,6 +269,18 @@ export async function revealMain(gameweekId) {
   const gwSnapForFeatured = await getDoc(doc(db, "gameweeks", gameweekId));
   const featuredMatchIdsForBetBuilder = gwSnapForFeatured.exists() ? (gwSnapForFeatured.data().featuredMatchIds || []) : [];
 
+  // Prinț sau Broscoi?: ora primului meci al etapei = blocarea automată a înscrierilor. Se citește DOAR dacă tipul e
+  // Bursa (celelalte tipuri nu fac nicio citire în plus). listMatches e deja sortată după kickoff.
+  let bursaLockAt = null;
+  {
+    const preSecret = await getDoc(secretRef);
+    if (preSecret.exists() && preSecret.data().type === BURSA_TYPE_ID) {
+      const ms = await listMatches(gameweekId);
+      const first = ms.find((m) => m.kickoffAt && typeof m.kickoffAt.toMillis === "function");
+      bursaLockAt = first ? first.kickoffAt : null;
+    }
+  }
+
   await runTransaction(db, async (tx) => {
     const pubSnap = await tx.get(publicRef);
     if (pubSnap.exists() && pubSnap.data().mainRevealed) return; // deja dezvăluit, nu regenerăm
@@ -399,10 +417,23 @@ export async function revealMain(gameweekId) {
       // are deja cele 3 ⭐ Meciuri ale Săptămânii confirmate. Nimic din
       // mecanica Bet Builder existentă nu se modifică aici. ──
       config = { featuredMatchIds: featuredMatchIdsForBetBuilder };
+    } else if (type === BURSA_TYPE_ID) {
+      // ACEEAȘI repartizare ca la Duel 1v1 Random (activeUids deja amestecat determinist); la număr impar ultimul e „bye”.
+      // eligibleUids = lista fixată la dezvăluire; dezactivările ulterioare se aplică la calcul (rankingUidsFor).
+      const pairings = [];
+      let byePlayer = null;
+      for (let i = 0; i < activeUids.length; i += 2) {
+        if (i + 1 < activeUids.length) pairings.push({ playerA: activeUids[i], playerB: activeUids[i + 1] });
+        else byePlayer = activeUids[i];
+      }
+      config = { pairings, byePlayer, eligibleUids: [...activeUids] };
     }
 
     tx.set(secretRef, { ...secretData, type, config }, { merge: true });
-    tx.set(publicRef, { gameweekId, mainRevealed: true, mainRevealedAt: serverTimestamp() }, { merge: true });
+    tx.set(publicRef, {
+      gameweekId, mainRevealed: true, mainRevealedAt: serverTimestamp(),
+      ...(type === BURSA_TYPE_ID ? { bursaActive: true, bursaClosed: false, ...(bursaLockAt ? { bursaLockAt } : {}) } : {}),
+    }, { merge: true });
   });
 }
 
@@ -719,6 +750,15 @@ export async function resolveMain(gameweekId) {
   // tot recitește totul, idempotența nu are de suferit.
   const preSecretSnap = await getDoc(secretRef);
   const preType = preSecretSnap.exists() ? preSecretSnap.data().type : null;
+  // Prinț sau Broscoi?: portofoliile și lista activilor se citesc ÎNAINTE de tranzacție (ca la Trivia/Zaruri).
+  let bursaPicksByUid = {};
+  let bursaActiveSet = null;
+  if (preType === BURSA_TYPE_ID) {
+    const picksSnap = await getDocs(collection(db, "weeklySurprises", gameweekId, "bursaPicks"));
+    picksSnap.docs.forEach((d) => { bursaPicksByUid[d.id] = d.data(); });
+    bursaActiveSet = await listActiveUserIds();
+  }
+
   let triviaBaseByUid = {};
   if (preType === "trivia") {
     const questions = preSecretSnap.data().config?.questions || [];
@@ -922,6 +962,20 @@ export async function resolveMain(gameweekId) {
         const base = zaruriBaseByUid[byePlayer] || 0;
         toWrite.push({ uid: byePlayer, points: base + 25, matchScore: base, opponentMatchScore: null });
       }
+    } else if (mainType === BURSA_TYPE_ID) {
+      // Clasamentul = EXCLUSIV pointsFromMatches (scoreByUid, aceeași sursă ca instantaneul LIVE), doar jucători ACTIVI din
+      // lista de la dezvăluire. Brutul = suma celor 4 selecții; baza plafonată la 150; bonus duel +50/+25; bye +25.
+      const { pairings = [], byePlayer = null, eligibleUids = [] } = config;
+      const rankingUids = rankingUidsFor(eligibleUids, bursaActiveSet);
+      const picks = {};
+      rankingUids.forEach((u) => { if (bursaPicksByUid[u]) picks[u] = normalizePortfolio(bursaPicksByUid[u]); });
+      const res = computeBursaResults({
+        pairings, byePlayer, eligibleUids: rankingUids, validUids: eligibleUids, picksByUid: picks, pointsByUid: scoreByUid,
+      });
+      Object.values(res.byUid).forEach((r) => {
+        const opp = r.opponentUid ? res.byUid[r.opponentUid] : null;
+        toWrite.push({ uid: r.uid, points: r.total, matchScore: r.raw, opponentMatchScore: opp ? opp.raw : null, bursa: summarizeBursaResult(r) });
+      });
     } else if (mainType === "sabotaj") {
       // Transferurile au fost DEJA calculate mai sus (sabotajResultByUid),
       // dintr-un SINGUR snapshot comun — aici doar le transformăm în
@@ -944,6 +998,7 @@ export async function resolveMain(gameweekId) {
       const payload = {
         uid: r.uid, mainPoints: r.points, mainMatchScore: r.matchScore, mainOpponentMatchScore: r.opponentMatchScore,
       };
+      if (r.bursa) payload.bursa = r.bursa;
       if (r.sabotaj) payload.sabotaj = r.sabotaj; // doar la tipul sabotaj — celelalte tipuri neatinse
       tx.set(doc(db, "weeklySurprises", gameweekId, "results", r.uid), payload, { merge: true });
     });

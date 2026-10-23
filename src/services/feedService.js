@@ -29,6 +29,7 @@ import {
 import { listGeneralLeaderboard, listActiveUserIds } from "./adminService";
 import { getAllSurpriseResults } from "./surprisesService";
 import { getUserPublicProfiles } from "./profilesService";
+import { BURSA_TYPE_ID } from "./bursaService";
 import { EDITORIAL_ARTICLES } from "../feedContent/editorialContent";
 import { ALL_QUOTES } from "../feedContent/quotesContent";
 import { CLUB_FACTS } from "../feedContent/clubFactsContent";
@@ -1031,7 +1032,7 @@ export async function processSurpriseResult(gameweekId, kind, type, config, labe
   const pointsField = kind === "main" ? "mainPoints" : "bonusPoints";
 
   let description;
-  if (config?.pairings && config.pairings.length > 0 && config.pairings[0].playerA) {
+  if (type !== BURSA_TYPE_ID && config?.pairings && config.pairings.length > 0 && config.pairings[0].playerA) {
     // Tip cu perechi individuale (Duel Random/Extreme/Rivali) — găsim
     // perechea câștigătoare (suma cea mai mare).
     const byUid = Object.fromEntries(results.map((r) => [r.uid, r[pointsField] || 0]));
@@ -1043,6 +1044,16 @@ export async function processSurpriseResult(gameweekId, kind, type, config, labe
     description = pick([
       `🏆 ${nameOf(winner.a)} & ${nameOf(winner.b)} câștigă ${label} cu ${winner.total}p.`,
       `🏆 Duelul e decis: ${nameOf(winner.a)} & ${nameOf(winner.b)} iau bonusul, cu ${winner.total}p.`,
+    ], `surprise_result_${gameweekId}_${kind}`);
+  } else if (type === BURSA_TYPE_ID) {
+    // Prinț sau Broscoi?: anunț pe jucătorul cu cel mai mare total (nu pe „perechea câștigătoare”).
+    const topB = [...results].sort((a, b) => (b[pointsField] || 0) - (a[pointsField] || 0))[0];
+    if (!topB || !topB[pointsField]) return null;
+    const profilesB = await getUserPublicProfiles([topB.uid]);
+    const nameB = profilesB[topB.uid]?.nickname || topB.uid;
+    description = pick([
+      `👑 ${nameB} e Prințul etapei la ${label}, cu ${topB[pointsField]}p.`,
+      `👑 ${label}: ${nameB} și-a ales cel mai bine Prinții și Broscoii — ${topB[pointsField]}p.`,
     ], `surprise_result_${gameweekId}_${kind}`);
   } else if (config?.pairings && config.pairings[0]?.teamA) {
     // Duel de Echipe — perechi de grupuri.

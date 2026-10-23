@@ -1,5 +1,5 @@
 // ══════════════════════════════════════════════════════════════════
-// 📈📉 BURSA PRIETENILOR — MOTOR DE CALCUL (ETAPA 1A)
+// 👑🐸 PRINȚ SAU BROSCOI? (id intern „bursa-prietenilor”) — MOTOR DE CALCUL
 //
 // STRICT funcții PURE: niciun import Firebase, nicio citire, nicio
 // scriere, niciun listener. Fișierul NU e importat încă de nicio parte
@@ -18,7 +18,15 @@
 // computeGameweekResults — funcțiile de aici NU o recalculează.
 // ══════════════════════════════════════════════════════════════════
 
-export const BURSA_TYPE_ID = "bursa-prietenilor";
+export const BURSA_TYPE_ID = "bursa-prietenilor"; // ID INTERN (stocat în Firestore) — NU se redenumește
+export const BURSA_PUBLIC_NAME = "PRINȚ SAU BROSCOI?"; // numele public
+export const BURSA_LABEL_PRINCE = "Prinț";
+export const BURSA_LABEL_FROG = "Broscoi";
+
+// POARTĂ DE ACTIVARE. Cât timp e false, jocul apare în catalog ca „în curând” și NU poate fi ales de Admin
+// (deci nu poate fi dezvăluit jucătorilor). Se trece pe true DOAR după ce regulile Firestore pentru
+// bursaPicks / bursaMeta sunt verificate și publicate.
+export const BURSA_ENABLED = false;
 
 export const BURSA_CATEGORY_PERF = "perf";
 export const BURSA_CATEGORY_CONTRA = "contra";
@@ -158,8 +166,8 @@ export function validatePortfolio(portfolio, selfUid, eligibleUids) {
   const contra = Array.isArray(portfolio?.contra) ? portfolio.contra : [];
   const eligible = new Set(uniqueStrings(eligibleUids));
 
-  if (perf.length !== BURSA_PICKS_PER_CATEGORY) errors.push("Alege exact 2 colegi la Performanță.");
-  if (contra.length !== BURSA_PICKS_PER_CATEGORY) errors.push("Alege exact 2 colegi la Contraperformanță.");
+  if (perf.length !== BURSA_PICKS_PER_CATEGORY) errors.push("Alege exact 2 Prinți.");
+  if (contra.length !== BURSA_PICKS_PER_CATEGORY) errors.push("Alege exact 2 Broscoi.");
 
   const all = [...perf, ...contra];
   if (all.some((u) => typeof u !== "string" || !u)) errors.push("Selecție invalidă.");
@@ -212,12 +220,16 @@ export function isLeadReversal(prevLeader, nextLeader) {
 // Participă = are portofoliu VALID. Un portofoliu invalid (date
 // corupte) e tratat defensiv ca neparticipare, nu ca eroare.
 // ══════════════════════════════════════════════════════════════════
-export function computeBursaResults({ pairings = [], byePlayer = null, eligibleUids = [], picksByUid = {}, pointsByUid = {} } = {}) {
+// eligibleUids = jucătorii care CONTEAZĂ în clasamentul Bursei (activi acum, din lista de la dezvăluire).
+// validUids (opțional) = cine poate fi ales într-un portofoliu valid (implicit = eligibleUids). Se folosește la
+// calculul real: un coleg dezactivat DUPĂ ce a fost ales nu mai are loc în clasament (recompensă 0), dar
+// portofoliul celui care l-a ales rămâne VALID (nu pierde duelul din cauza unei dezactivări).
+export function computeBursaResults({ pairings = [], byePlayer = null, eligibleUids = [], picksByUid = {}, pointsByUid = {}, validUids = null } = {}) {
   const ranking = buildBursaRanking(pointsByUid, eligibleUids);
 
   function playerState(uid) {
     const pf = picksByUid?.[uid];
-    const valid = !!pf && validatePortfolio(pf, uid, eligibleUids).ok;
+    const valid = !!pf && validatePortfolio(pf, uid, validUids || eligibleUids).ok;
     if (!valid) return { uid, participated: false, selections: [], raw: 0, base: 0 };
     const { selections, raw, base } = computePortfolioScore(pf, ranking);
     return { uid, participated: true, selections, raw, base };
@@ -269,12 +281,12 @@ export function computeBursaResults({ pairings = [], byePlayer = null, eligibleU
 // (o listă de pointsByUid, câte unul per validare). Nu inventează
 // puncte: fiecare punct al graficului = calculul complet de mai sus pe
 // acel moment. Folosit de Preview acum; la LIVE, doar cu istoric real. ──
-export function buildDuelSeries(history, { playerA, playerB, eligibleUids, picksByUid }) {
+export function buildDuelSeries(history, { playerA, playerB, eligibleUids, picksByUid, validUids = null }) {
   const pairings = playerB ? [{ playerA, playerB }] : [];
   const byePlayer = playerB ? null : playerA;
   let prevLeader = null;
   return (Array.isArray(history) ? history : []).map((step, i) => {
-    const res = computeBursaResults({ pairings, byePlayer, eligibleUids, picksByUid, pointsByUid: step?.pointsByUid || {} });
+    const res = computeBursaResults({ pairings, byePlayer, eligibleUids, validUids, picksByUid, pointsByUid: step?.pointsByUid || {} });
     const a = res.byUid[playerA] || null;
     const b = playerB ? (res.byUid[playerB] || null) : null;
     const leader = playerB ? duelLeader(a, b) : null;
@@ -282,4 +294,56 @@ export function buildDuelSeries(history, { playerA, playerB, eligibleUids, picks
     if (leader === "A" || leader === "B") prevLeader = leader;
     return { index: i, label: step?.label || `#${i}`, rawA: a ? a.raw : 0, rawB: b ? b.raw : 0, leader, reversal };
   });
+}
+
+// ── AJUTOARE PURE pentru integrarea reală ─────────────────────────────────────────────────────────
+
+// Cine contează în clasament: lista fixată la dezvăluire ∩ jucătorii ACTIVI acum (un jucător dezactivat de Admin
+// nu apare nicăieri, chiar dacă are puncte). Un jucător activ fără pronosticuri RĂMÂNE (0 puncte).
+export function rankingUidsFor(frozenUids, activeSet) {
+  const active = activeSet instanceof Set ? activeSet : new Set(activeSet || []);
+  return uniqueStrings(frozenUids).filter((u) => active.has(u));
+}
+
+// Bursa e blocată dacă Adminul a închis-o SAU a trecut primul meci al etapei (bursaLockAt).
+export function isBursaLocked(pub, nowMs) {
+  if (!pub) return false;
+  if (pub.bursaClosed === true) return true;
+  const lock = pub.bursaLockAt;
+  const ms = lock && typeof lock.toMillis === "function" ? lock.toMillis() : (typeof lock === "number" ? lock : null);
+  return ms != null && Number(nowMs) >= ms;
+}
+
+// Redeschiderea e permisă DOAR înainte de primul meci (și doar dacă nu e rezolvată).
+export function canReopenBursa(pub, nowMs) {
+  if (!pub || pub.mainResolved) return false;
+  const lock = pub.bursaLockAt;
+  const ms = lock && typeof lock.toMillis === "function" ? lock.toMillis() : (typeof lock === "number" ? lock : null);
+  return ms == null || Number(nowMs) < ms;
+}
+
+// Istoricul real al validărilor (document bursaMeta/history: entries = { [versiune]: { pointsByUid } }) + instantaneul
+// curent, dacă e mai nou decât ultima intrare. Rezultat: [{ label, pointsByUid }], primul = „Start” (toți 0).
+export function buildHistoryFromEntries(entries, snapshot) {
+  const list = Object.entries(entries || {})
+    .map(([v, e]) => ({ v: Number(v), pointsByUid: (e && e.pointsByUid) || {} }))
+    .filter((x) => Number.isFinite(x.v))
+    .sort((a, b) => a.v - b.v);
+  const out = [{ label: "Start — 0 meciuri validate", pointsByUid: {} }];
+  list.forEach((e, i) => out.push({ label: `Validare #${i + 1}`, pointsByUid: e.pointsByUid }));
+  const last = list[list.length - 1];
+  const sv = snapshot && Number.isFinite(Number(snapshot.version)) ? Number(snapshot.version) : null;
+  if (snapshot && snapshot.pointsByUid && sv !== null && (!last || sv > last.v)) {
+    out.push({ label: `Validare #${list.length + 1}`, pointsByUid: snapshot.pointsByUid });
+  }
+  return out;
+}
+
+// Rezumatul unui jucător, pentru results/{uid}.bursa (transparență în Registru; fără date private).
+export function summarizeBursaResult(r) {
+  return {
+    participated: !!r.participated, raw: r.raw || 0, base: r.base || 0, duelBonus: r.duelBonus || 0,
+    outcome: r.outcome || "none", opponentUid: r.opponentUid || null,
+    selections: (r.selections || []).map((x) => ({ uid: x.uid, category: x.category, rank: x.rank, reward: x.reward })),
+  };
 }

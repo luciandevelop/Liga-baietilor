@@ -71,9 +71,12 @@ import {
 } from "../services/higherLowerService";
 import { HIGHER_LOWER_PREVIEW_STATES } from "../higherLowerMockData";
 import HigherLowerScreen from "./HigherLowerScreen";
-// 📈📉 Bursa Prietenilor — DOAR Preview mock (Etapa 1B), zero Firestore.
+// 👑🐸 PRINȚ SAU BROSCOI? — Preview mock (zero Firestore) + panou Admin pentru jocul real.
 import { BURSA_PREVIEW_STATES } from "../bursaMockData";
 import BursaScreen from "./BursaScreen";
+import BursaAdminPanel from "../components/BursaAdminPanel";
+import { appendBursaHistoryIfActive } from "../services/bursaGame";
+import { BURSA_TYPE_ID } from "../services/bursaService";
 import { TREASURE_HUNT_PREVIEW_STATES } from "../treasureHuntMockData";
 import TreasureHuntScreen from "./TreasureHuntScreen";
 import PenaltyPreviewScreen from "./PenaltyPreviewScreen";
@@ -1382,6 +1385,10 @@ export default function AdminScreen({ onBack }) {
           liveSnapshotResultsVersion: capturedResultsVersion,
         });
       });
+      if (!skipped) {
+        appendBursaHistoryIfActive(selectedGameweekId, capturedResultsVersion, pointsByUid)
+          .catch((e) => console.warn("Bursa: istoricul validării nu s-a înregistrat:", e?.code || e?.message));
+      }
       setSnapshotRegenMessage(skipped ? "✅ Există deja un snapshot mai nou — nimic de suprascris." : "✅ Snapshot regenerat cu succes.");
     } catch (err) {
       console.error("Eroare la regenerarea snapshot-ului:", err);
@@ -1822,6 +1829,10 @@ export default function AdminScreen({ onBack }) {
               liveSnapshotResultsVersion: capturedResultsVersion,
             });
           });
+          // PRINȚ SAU BROSCOI?: istoricul real al validărilor (pentru graficul duelului). Se face doar dacă etapa are jocul
+          // activ; un eșec aici NU afectează publicarea snapshot-ului și nu se așteaptă.
+          appendBursaHistoryIfActive(selectedGameweekId, capturedResultsVersion, pointsByUid)
+            .catch((e) => console.warn("Bursa: istoricul validării nu s-a înregistrat:", e?.code || e?.message));
         } catch (err) {
           console.error("Eroare la scrierea snapshot-ului live al clasamentului:", err);
           setPreviewMessage((prev) => (prev ? prev + " " : "") +
@@ -3116,6 +3127,10 @@ export default function AdminScreen({ onBack }) {
                         </div>
                       )}
 
+                      {mainType === BURSA_TYPE_ID && mainRevealed && (
+                        <BursaAdminPanel gameweekId={gw.id} />
+                      )}
+
                       {mainType === "higherLower" && mainRevealed && (
                         <div style={s.triviaBox}>
                           <p style={s.hint}>📈📉 Mai Mare/Mai Mic — 18 jucători, 9 perechi RANDOM, 6 runde comune.</p>
@@ -3552,12 +3567,12 @@ export default function AdminScreen({ onBack }) {
                 </button>
               </SectionCard>
 
-              <SectionCard title="📈📉 Preview Bursa Prietenilor — MOCK · ZERO FIRESTORE">
+              <SectionCard title="👑🐸 Preview PRINȚ SAU BROSCOI? — MOCK · ZERO FIRESTORE">
                 <p style={s.hint}>
                   Demo izolat, 100% local — nu citește/scrie Firestore, nu activează Bursa pentru jucători.
                 </p>
                 <button type="button" style={s.smallBtn} onClick={() => setBursaPreviewOpen(true)}>
-                  👁 Preview Bursa Prietenilor
+                  👁 Preview PRINȚ SAU BROSCOI?
                 </button>
               </SectionCard>
 
@@ -4243,7 +4258,7 @@ export default function AdminScreen({ onBack }) {
       {bursaPreviewOpen && (
         <div style={s.bbPreviewOverlay}>
           <div style={s.bbPreviewBar}>
-            <span style={s.bbPreviewLabel}>👁 PREVIEW Bursa Prietenilor — mock, nimic salvat</span>
+            <span style={s.bbPreviewLabel}>👁 PREVIEW PRINȚ SAU BROSCOI? — mock, nimic salvat</span>
             <button type="button" style={s.bbPreviewCloseBtn} onClick={() => setBursaPreviewOpen(false)}>✕ Închide</button>
           </div>
           <div style={s.bbPreviewStates}>

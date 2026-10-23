@@ -1,10 +1,12 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import PlayerAvatar from "../components/PlayerAvatar";
 import { font } from "../matchdayTheme";
 import {
-  computeBursaResults, buildDuelSeries, buildBursaRanking, validatePortfolio,
-  BURSA_CATEGORY_PERF, BURSA_CATEGORY_CONTRA, BURSA_BASE_CAP,
+  computeBursaResults, buildDuelSeries, buildBursaRanking, validatePortfolio, buildHistoryFromEntries, normalizePortfolio,
+  BURSA_CATEGORY_PERF, BURSA_CATEGORY_CONTRA, BURSA_BASE_CAP, BURSA_PUBLIC_NAME,
 } from "../services/bursaService";
+import { loadBursaGame, loadBursaHistoryEntries, saveBursaPortfolio } from "../services/bursaGame";
+import { subscribeToLiveSnapshot } from "../services/liveSnapshotStore";
 import { getBursaMockScenario, BURSA_MOCK_PLAYERS } from "../bursaMockData";
 
 // ══════════════════════════════════════════════════════════════════
@@ -41,32 +43,44 @@ const C = {
   opp: "#8FC2FF",
 };
 
+// 👑 Prinț = alegi un coleg care va PERFORMA (verde) · 🐸 Broscoi = alegi un coleg care va RATA (roșu).
 const CAT = {
-  [BURSA_CATEGORY_PERF]: { label: "Performanță", arrow: "▲", color: C.up, bg: C.upBg, border: C.upBorder },
-  [BURSA_CATEGORY_CONTRA]: { label: "Contraperformanță", arrow: "▼", color: C.down, bg: C.downBg, border: C.downBorder },
+  [BURSA_CATEGORY_PERF]: { label: "Prinț", icon: (z = 16, anim = false) => <PrinceIcon size={z} anim={anim} />, color: C.up, bg: C.upBg, border: C.upBorder },
+  [BURSA_CATEGORY_CONTRA]: { label: "Broscoi", icon: (z = 16, anim = false) => <FrogIcon size={z} anim={anim} />, color: C.down, bg: C.downBg, border: C.downBorder },
 };
 
 const EMPTY = { perf: [null, null], contra: [null, null] };
 
-function nameOf(uid) { return BURSA_MOCK_PLAYERS[uid]?.nickname || uid; }
-function avatarOf(uid) { return BURSA_MOCK_PLAYERS[uid]?.avatarId || null; }
+// Numele și avatarele vin DOAR din context: în Preview = mock, în jocul real = profilele reale (users/{uid}),
+// aceeași sursă ca Clasamentul. Nu mai există niciun nume hardcodat folosit în jocul real.
+const PlayersCtx = createContext(BURSA_MOCK_PLAYERS);
+function usePlayers() {
+  const players = useContext(PlayersCtx);
+  return { nameOf: (uid) => players?.[uid]?.nickname || uid, avatarOf: (uid) => players?.[uid]?.avatarId || null };
+}
 function compact(p) { return { perf: (p?.perf || []).filter(Boolean), contra: (p?.contra || []).filter(Boolean) }; }
 function toSlots(p) {
   return { perf: [p?.perf?.[0] || null, p?.perf?.[1] || null], contra: [p?.contra?.[0] || null, p?.contra?.[1] || null] };
 }
 
-export default function BursaScreen({ previewMode, previewState = "A" }) {
-  if (!previewMode) {
+export default function BursaScreen({ previewMode, previewState = "A", gameweekId, uid }) {
+  if (previewMode) {
     return (
-      <div style={s.page}>
-        <p style={s.note}>Bursa Prietenilor nu este încă activă.</p>
-      </div>
+      <PlayersCtx.Provider value={BURSA_MOCK_PLAYERS}>
+        <BursaPreview key={previewState} stateId={previewState} />
+      </PlayersCtx.Provider>
     );
   }
-  return <BursaPreview key={previewState} stateId={previewState} />;
+  if (gameweekId && uid) return <BursaLive gameweekId={gameweekId} uid={uid} />;
+  return (
+    <div style={s.page}>
+      <p style={s.note}>{BURSA_PUBLIC_NAME} nu este încă activ.</p>
+    </div>
+  );
 }
 
 function BursaPreview({ stateId }) {
+  const { nameOf, avatarOf } = usePlayers();
   const scen = useMemo(() => getBursaMockScenario(stateId), [stateId]);
   const me = scen.myUid;
   const lastStep = scen.history.length - 1;
@@ -161,7 +175,7 @@ function BursaPreview({ stateId }) {
       <header style={s.head}>
         <div>
           <div style={s.brand}>Play League Stock Exchange</div>
-          <h1 style={s.title}>Bursa Prietenilor</h1>
+          <h1 style={s.title}>{BURSA_PUBLIC_NAME}</h1>
         </div>
         <PhaseBadge phase={phase} step={step} />
       </header>
@@ -175,7 +189,11 @@ function BursaPreview({ stateId }) {
           </div>
           {[BURSA_CATEGORY_PERF, BURSA_CATEGORY_CONTRA].map((cat) => (
             <div key={cat} style={{ marginBottom: 10 }}>
-              <div style={{ ...s.catLabel, color: CAT[cat].color }}>{CAT[cat].arrow} {CAT[cat].label}</div>
+              <div style={{ ...s.catLabel, color: CAT[cat].color, display: "flex", alignItems: "center", gap: 6 }}>
+                {CAT[cat].icon(20)}
+                <span>{cat === BURSA_CATEGORY_PERF ? "PRINȚI" : "BROSCOI"}</span>
+                <span style={{ color: C.dim, fontWeight: 500 }}>· {cat === BURSA_CATEGORY_PERF ? "crezi că performează" : "crezi că ratează"}</span>
+              </div>
               <div style={s.slotRow}>
                 {[0, 1].map((idx) => (
                   <SlotCard
@@ -312,6 +330,7 @@ function BursaPreview({ stateId }) {
 
 // ── Bandă de cotații — locul + punctele din meciuri, în ordinea clasamentului. ──
 function Ticker({ ranking, validated, live }) {
+  const { nameOf, avatarOf } = usePlayers();
   const items = ranking.order.map((uid) => {
     const e = ranking.byUid[uid];
     const up = e.inTopHalf && !ranking.allEqual;
@@ -356,6 +375,7 @@ function PhaseBadge({ phase, step }) {
 }
 
 function SlotCard({ cat, uid, editable, pop, onOpen, onClear }) {
+  const { nameOf, avatarOf } = usePlayers();
   const k = CAT[cat];
   if (!uid) {
     return (
@@ -369,10 +389,10 @@ function SlotCard({ cat, uid, editable, pop, onOpen, onClear }) {
     <div className={pop ? "bx-pop" : ""} style={{ ...s.slot, background: k.bg, borderColor: k.border }}>
       <button type="button" style={s.slotMain} onClick={onOpen} disabled={!editable}>
         <span style={{ ...s.slotRing, boxShadow: `0 0 0 2px ${k.color}, 0 0 18px ${k.border}` }}>
-          <PlayerAvatar avatarId={avatarOf(uid)} nickname={nameOf(uid)} size={52} />
+          <AvatarWithBadge uid={uid} size={52} cat={cat} anim={pop} />
         </span>
         <span style={s.slotName}>{nameOf(uid)}</span>
-        <span style={{ ...s.slotCat, color: k.color }}>{k.arrow} {cat === BURSA_CATEGORY_PERF ? "crește" : "scade"}</span>
+        <span style={{ ...s.slotCat, color: k.color, display: "inline-flex", alignItems: "center", gap: 4 }}>{cat === BURSA_CATEGORY_PERF ? "Prinț" : "Broscoi"}</span>
       </button>
       {editable && (
         <button type="button" style={s.slotX} onClick={onClear} aria-label={`Scoate ${nameOf(uid)}`}>×</button>
@@ -382,6 +402,7 @@ function SlotCard({ cat, uid, editable, pop, onOpen, onClear }) {
 }
 
 function PickerSheet({ cat, me, eligibleUids, slots, current, onPick, onClose }) {
+  const { nameOf, avatarOf } = usePlayers();
   const k = CAT[cat];
   const taken = new Set([...slots.perf, ...slots.contra].filter((u) => u && u !== current));
   // Doar ELIGIBILII (activi), fără mine. Dezactivații nu apar deloc.
@@ -390,7 +411,7 @@ function PickerSheet({ cat, me, eligibleUids, slots, current, onPick, onClose })
     <div style={s.sheetBack} onClick={onClose}>
       <div className="bx-sheet" style={s.sheet} onClick={(e) => e.stopPropagation()}>
         <div style={s.sheetGrip} />
-        <div style={{ ...s.sheetTitle, color: k.color }}>{k.arrow} Alege la {k.label}</div>
+        <div style={{ ...s.sheetTitle, color: k.color, display: "flex", alignItems: "center", gap: 8 }}>{k.icon(22)} Alege {cat === BURSA_CATEGORY_PERF ? "un Prinț" : "un Broscoi"}</div>
         <div style={s.sheetSub}>{list.length} colegi activi. Un coleg poate fi ales o singură dată.</div>
         <div style={s.grid}>
           {list.map((uid) => {
@@ -438,7 +459,7 @@ function AnimatedNumber({ value, style }) {
 }
 
 function outcomeText(r, isBye) {
-  if (!r?.participated) return "n-a investit · 0 PCT";
+  if (!r?.participated) return "n-a participat · 0 PCT";
   if (isBye) return "fără adversar · +25";
   return {
     win: "conduce · +50", lose: "în urmă · +0", tie: "egalitate · +25",
@@ -447,6 +468,7 @@ function outcomeText(r, isBye) {
 }
 
 function DuelHero({ me, oppUid, mine, opp, isBye, final }) {
+  const { nameOf, avatarOf } = usePlayers();
   const side = (uid, r, tone, align) => (
     <div style={{ ...s.side, alignItems: align, opacity: r?.participated ? 1 : 0.55 }}>
       <span style={{ ...s.sideRing, boxShadow: `0 0 0 2px ${tone}` }}>
@@ -469,7 +491,7 @@ function DuelHero({ me, oppUid, mine, opp, isBye, final }) {
         <div style={s.vs}>{oppUid ? "vs" : "bye"}</div>
         {oppUid ? side(oppUid, opp, C.opp, "flex-end") : (
           <div style={{ ...s.side, alignItems: "flex-end", justifyContent: "center" }}>
-            <span style={s.byeText}>Fără adversar în etapa asta. Joci normal și primești +25 dacă ai investit.</span>
+            <span style={s.byeText}>Fără adversar în etapa asta. Joci normal și primești +25 dacă ai participat.</span>
           </div>
         )}
       </div>
@@ -564,11 +586,12 @@ function rewardColor(cat, reward) {
 }
 
 function PortfolioTable({ title, who, data, tone }) {
+  const { nameOf, avatarOf } = usePlayers();
   if (!data?.participated) {
     return (
       <section style={s.block}>
         <div style={s.blockHead}><span style={{ ...s.blockTitle, color: tone }}>{title}</span></div>
-        <p style={s.note}>{nameOf(who)} nu a investit în Bursă în etapa asta.</p>
+        <p style={s.note}>{nameOf(who)} nu a participat la {BURSA_PUBLIC_NAME} în etapa asta.</p>
       </section>
     );
   }
@@ -582,10 +605,10 @@ function PortfolioTable({ title, who, data, tone }) {
         const k = CAT[sel.category];
         return (
           <div key={`${sel.category}-${sel.slot}`} style={{ ...s.posRow, borderLeftColor: k.color }}>
-            <PlayerAvatar avatarId={avatarOf(sel.uid)} nickname={nameOf(sel.uid)} size={36} />
+            <AvatarWithBadge uid={sel.uid} size={36} cat={sel.category} />
             <div style={s.posMid}>
               <span style={s.posName}>{nameOf(sel.uid)}</span>
-              <span style={{ ...s.posCat, color: k.color }}>{k.arrow} {k.label}</span>
+              <span style={{ ...s.posCat, color: k.color, display: "inline-flex", alignItems: "center", gap: 4 }}>{k.label}</span>
             </div>
             <div style={s.posRank}>
               <span style={s.posRankN}>{sel.rank ?? "—"}</span>
@@ -602,6 +625,7 @@ function PortfolioTable({ title, who, data, tone }) {
 }
 
 function AllPortfolios({ eligibleUids, picksByUid, me, ranking, live, revealKey }) {
+  const { nameOf, avatarOf } = usePlayers();
   const owners = eligibleUids.filter((u) => picksByUid[u]).sort((a, b) => (a === me ? -1 : b === me ? 1 : nameOf(a).localeCompare(nameOf(b), "ro")));
   const absent = eligibleUids.filter((u) => !picksByUid[u]);
   return (
@@ -622,12 +646,12 @@ function AllPortfolios({ eligibleUids, picksByUid, me, ranking, live, revealKey 
               {picks.map(({ u, cat }, i) => (
                 <div
                   key={`${revealKey}-${u}-${cat}`}
-                  className={revealKey ? "bx-flip" : ""}
+                  className={revealKey ? (cat === BURSA_CATEGORY_PERF ? "bx-flip bx-shine" : "bx-flip bx-plop") : ""}
                   style={{ ...s.flipCard, borderColor: CAT[cat].border, background: CAT[cat].bg, animationDelay: `${Math.min(oi, 8) * 90 + i * 70}ms` }}
                   title={`${nameOf(u)} · ${CAT[cat].label}`}
                 >
                   <PlayerAvatar avatarId={avatarOf(u)} nickname={nameOf(u)} size={24} />
-                  <span style={{ ...s.flipArrow, color: CAT[cat].color }}>{CAT[cat].arrow}</span>
+                  <span style={{ ...s.flipArrow, color: CAT[cat].color, display: "inline-flex" }}>{CAT[cat].icon(14)}</span>
                   {live && <span style={s.flipRank}>{ranking.byUid[u]?.rank ?? "—"}</span>}
                 </div>
               ))}
@@ -636,9 +660,340 @@ function AllPortfolios({ eligibleUids, picksByUid, me, ranking, live, revealKey 
         );
       })}
       {absent.length > 0 && (
-        <p style={s.note}>Nu au investit: {absent.map(nameOf).join(", ")}.</p>
+        <p style={s.note}>Nu au participat: {absent.map(nameOf).join(", ")}.</p>
       )}
     </div>
+  );
+}
+
+// ══ ICONIȚE: 👑 coroană aurie (Prinț) și 🐸 broscoi simpatic (Broscoi) — SVG inline, fără fișiere noi ══
+function PrinceIcon({ size = 16, anim = false }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 64 64" aria-hidden="true" className={anim ? "bx-crown" : ""} style={{ flexShrink: 0, overflow: "visible" }}>
+      <path d="M8 46 L5 20 L20 32 L32 12 L44 32 L59 20 L56 46 Z" fill="#F2C94C" stroke="#B8860B" strokeWidth="3" strokeLinejoin="round" />
+      <rect x="8" y="46" width="48" height="9" rx="3" fill="#E0A81E" stroke="#B8860B" strokeWidth="3" />
+      <circle cx="32" cy="12" r="4.6" fill="#FF6B81" stroke="#B8860B" strokeWidth="2" />
+      <circle cx="5" cy="20" r="3.6" fill="#6BE3FF" stroke="#B8860B" strokeWidth="2" />
+      <circle cx="59" cy="20" r="3.6" fill="#6BE3FF" stroke="#B8860B" strokeWidth="2" />
+      <circle cx="32" cy="50.5" r="2.6" fill="#FFF3B0" /><circle cx="19" cy="50.5" r="2" fill="#FFF3B0" /><circle cx="45" cy="50.5" r="2" fill="#FFF3B0" />
+    </svg>
+  );
+}
+
+function FrogIcon({ size = 16, anim = false }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 64 64" aria-hidden="true" className={anim ? "bx-frog" : ""} style={{ flexShrink: 0, overflow: "visible" }}>
+      <ellipse cx="32" cy="41" rx="25" ry="19" fill="#5BD16A" stroke="#2E8B3E" strokeWidth="3" />
+      <circle cx="19" cy="23" r="11" fill="#5BD16A" stroke="#2E8B3E" strokeWidth="3" />
+      <circle cx="45" cy="23" r="11" fill="#5BD16A" stroke="#2E8B3E" strokeWidth="3" />
+      <circle cx="19" cy="22.5" r="7.6" fill="#fff" /><circle cx="45" cy="22.5" r="7.6" fill="#fff" />
+      <circle cx="21" cy="24" r="3.7" fill="#17261a" /><circle cx="43" cy="24" r="3.7" fill="#17261a" />
+      <circle cx="22.3" cy="22.5" r="1.3" fill="#fff" /><circle cx="44.3" cy="22.5" r="1.3" fill="#fff" />
+      <path d="M17 42 Q32 55 47 42" stroke="#2E8B3E" strokeWidth="3.2" fill="none" strokeLinecap="round" />
+      <path d="M29.5 49.5 Q32 58 34.5 49.5 Z" fill="#FF6B81" />
+      <ellipse cx="13.5" cy="44" rx="4.6" ry="3" fill="#FF9AA8" opacity="0.7" /><ellipse cx="50.5" cy="44" rx="4.6" ry="3" fill="#FF9AA8" opacity="0.7" />
+    </svg>
+  );
+}
+
+// Avatarul REAL al jucătorului + coroană (Prinț) sau broscoi (Broscoi).
+function AvatarWithBadge({ uid, size, cat, anim }) {
+  const { nameOf, avatarOf } = usePlayers();
+  const badge = Math.max(15, Math.round(size * 0.5));
+  return (
+    <span style={{ position: "relative", display: "inline-flex" }}>
+      <PlayerAvatar avatarId={avatarOf(uid)} nickname={nameOf(uid)} size={size} />
+      {cat === BURSA_CATEGORY_PERF ? (
+        <span style={{ position: "absolute", top: -badge * 0.7, left: "50%", marginLeft: -badge / 2, transform: "rotate(-10deg)", pointerEvents: "none" }}>
+          <PrinceIcon size={badge} anim={anim} />
+        </span>
+      ) : (
+        <span style={{ position: "absolute", right: -badge * 0.4, bottom: -badge * 0.32, pointerEvents: "none" }}>
+          <FrogIcon size={badge} anim />
+        </span>
+      )}
+    </span>
+  );
+}
+
+// ══ JOCUL REAL ═══════════════════════════════════════════════════════════════════════════════════════════
+// Date: bursaGame.loadBursaGame (la deschidere) + instantaneul LIVE partizan (liveSnapshotStore, UN listener comun,
+// doar după blocare) + istoricul validărilor (1 citire, reîncărcat doar când se schimbă versiunea instantaneului).
+// Fără polling: un singur timer până la ora primului meci, ca să treacă singur în modul „blocat/dezvăluit”.
+function BursaLive({ gameweekId, uid }) {
+  const [game, setGame] = useState(null);
+  const [error, setError] = useState("");
+  const [snap, setSnap] = useState(null);
+  const [entries, setEntries] = useState({});
+  const [slots, setSlots] = useState(toSlots(null));
+  const [editing, setEditing] = useState(false);
+  const [picker, setPicker] = useState(null);
+  const [justFilled, setJustFilled] = useState(null);
+  const [saving, setSaving] = useState(false);
+  const [toast, setToast] = useState("");
+  const [showAll, setShowAll] = useState(false);
+  const [revealKey, setRevealKey] = useState(0);
+  const [reversalKey, setReversalKey] = useState(0);
+  const dirtyRef = useRef(false);
+  const wasLockedRef = useRef(null);
+  const prevStepRef = useRef(null);
+
+  const load = useCallback(async () => {
+    try {
+      const g = await loadBursaGame(gameweekId, uid);
+      setGame(g);
+      setEntries(g.entries || {});
+      if (!dirtyRef.current) setSlots(toSlots(g.myPortfolio));
+      if (g.locked && wasLockedRef.current === false) { setShowAll(true); setRevealKey((k) => k + 1); } // tocmai s-a închis → dezvăluire
+      wasLockedRef.current = g.locked;
+      setError("");
+    } catch (e) {
+      console.error("Prinț sau Broscoi?: eroare la încărcare:", e);
+      setError(e?.code === "permission-denied" ? "Jocul nu e disponibil încă (permisiuni)." : (e?.message || "Eroare la încărcare."));
+    }
+  }, [gameweekId, uid]);
+
+  useEffect(() => { load(); }, [load]);
+
+  // UN singur timer până la primul meci (nu polling) → ecranul trece singur în modul dezvăluit.
+  useEffect(() => {
+    if (!game || game.locked || game.resolved || !game.lockAtMs) return undefined;
+    const ms = game.lockAtMs - Date.now() + 1500;
+    if (ms <= 0) { load(); return undefined; }
+    const t = setTimeout(load, Math.min(ms, 2147483000));
+    return () => clearTimeout(t);
+  }, [game, load]);
+
+  // Instantaneul LIVE (listener COMUN, deja folosit de Header/Clasament) — doar după blocare.
+  useEffect(() => {
+    if (!game?.locked) return undefined;
+    return subscribeToLiveSnapshot(gameweekId, setSnap);
+  }, [game?.locked, gameweekId]);
+
+  // Istoricul real: reîncărcat (1 citire) când apare o versiune nouă de instantaneu; Adminul îl scrie imediat după publicare.
+  const snapVersion = snap?.snapshotVersion ?? null;
+  useEffect(() => {
+    if (!game?.locked || snapVersion == null) return undefined;
+    let cancelled = false;
+    const t = setTimeout(async () => {
+      try { const e = await loadBursaHistoryEntries(gameweekId); if (!cancelled) setEntries(e); } catch (err) { /* grafic: rămâne ultimul cunoscut */ }
+    }, 4000);
+    return () => { cancelled = true; clearTimeout(t); };
+  }, [snapVersion, game?.locked, gameweekId]);
+
+  useEffect(() => { if (!toast) return undefined; const t = setTimeout(() => setToast(""), 1800); return () => clearTimeout(t); }, [toast]);
+  useEffect(() => { if (!reversalKey) return undefined; const t = setTimeout(() => setReversalKey(0), 2600); return () => clearTimeout(t); }, [reversalKey]);
+
+  const players = game?.players || {};
+  const nameOf = (u) => players[u]?.nickname || u;
+  const avatarOf = (u) => players[u]?.avatarId || null;
+
+  const locked = !!game?.locked;
+  const resolved = !!game?.resolved;
+  const rankingUids = game?.rankingUids || [];
+  const amIn = rankingUids.includes(uid);
+  const config = game?.config || { pairings: [], byePlayer: null };
+  const myPortfolio = compact(slots);
+  const myValid = validatePortfolio(myPortfolio, uid, rankingUids).ok;
+  const stored = game?.myPortfolio ? compact(game.myPortfolio) : null;
+  const storedValid = !!stored && validatePortfolio(stored, uid, rankingUids).ok;
+  const dirty = JSON.stringify(myPortfolio) !== JSON.stringify(stored || { perf: [], contra: [] });
+  const phase = resolved ? "final" : locked ? "live" : (storedValid && !dirty && !editing ? "saved" : "open");
+  const live = phase === "live" || phase === "final";
+  const editable = phase === "open" && amIn;
+
+  const history = useMemo(
+    () => buildHistoryFromEntries(entries, snap?.pointsByUid ? { version: snap.snapshotVersion, pointsByUid: snap.pointsByUid } : null),
+    [entries, snap],
+  );
+  const step = history.length - 1;
+  const pointsByUid = history[step].pointsByUid;
+  const picksByUid = game?.picksByUid || {};
+
+  const results = useMemo(() => (game && game.isBursa ? computeBursaResults({
+    pairings: config.pairings, byePlayer: config.byePlayer, eligibleUids: rankingUids, validUids: game.frozenUids, picksByUid, pointsByUid,
+  }) : null), [game, picksByUid, pointsByUid]); // eslint-disable-line react-hooks/exhaustive-deps
+  const ranking = useMemo(() => buildBursaRanking(pointsByUid, rankingUids), [pointsByUid, game]); // eslint-disable-line react-hooks/exhaustive-deps
+  const mine = results?.byUid?.[uid] || null;
+  const myPair = (config.pairings || []).find((p) => p.playerA === uid || p.playerB === uid) || null;
+  const oppUid = myPair ? (myPair.playerA === uid ? myPair.playerB : myPair.playerA) : null;
+  const opp = oppUid ? results?.byUid?.[oppUid] || null : null;
+  const series = useMemo(() => (live && game ? buildDuelSeries(history, {
+    playerA: uid, playerB: oppUid, eligibleUids: rankingUids, validUids: game.frozenUids, picksByUid,
+  }) : []), [live, history, uid, oppUid, game, picksByUid]); // eslint-disable-line react-hooks/exhaustive-deps
+  const lastSeries = series[series.length - 1];
+
+  useEffect(() => {
+    if (!live) { prevStepRef.current = step; return; }
+    if (prevStepRef.current !== null && prevStepRef.current !== step && lastSeries?.reversal) setReversalKey((k) => k + 1);
+    prevStepRef.current = step;
+  }, [step, live, lastSeries?.reversal]);
+
+  function choose(u) {
+    if (!picker) return;
+    dirtyRef.current = true;
+    setSlots((prev) => {
+      const next = { perf: [...prev.perf], contra: [...prev.contra] };
+      next[picker.cat][picker.idx] = u;
+      return next;
+    });
+    setJustFilled(`${picker.cat}-${picker.idx}-${u}`);
+    setPicker(null);
+  }
+  function clearSlot(cat, idx) {
+    dirtyRef.current = true;
+    setSlots((prev) => {
+      const next = { perf: [...prev.perf], contra: [...prev.contra] };
+      next[cat][idx] = null;
+      return next;
+    });
+  }
+  async function save() {
+    if (!myValid || saving) return;
+    setSaving(true);
+    try {
+      const saved = await saveBursaPortfolio(gameweekId, uid, myPortfolio, rankingUids);
+      dirtyRef.current = false;
+      setEditing(false);
+      setGame((g) => ({ ...g, myPortfolio: normalizePortfolio(saved), picksByUid: { ...g.picksByUid, [uid]: normalizePortfolio(saved) } }));
+      setError("");
+      setToast("Portofoliu salvat");
+    } catch (e) {
+      console.error("Prinț sau Broscoi?: eroare la salvare:", e);
+      setError(e?.code === "permission-denied" ? "Înscrierile s-au închis sau nu ai permisiunea să salvezi." : (e?.message || "Nu s-a putut salva."));
+      if (/închis|rezolvat|permission|permisiun/i.test(String(e?.message || e?.code))) { dirtyRef.current = false; load(); }
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  if (!game) {
+    return (
+      <div style={s.page}>
+        <style>{CSS}</style>
+        <p style={s.note}>{error || "Se încarcă…"}</p>
+      </div>
+    );
+  }
+  if (!game.isBursa) {
+    return <div style={s.page}><p style={s.note}>Jocul nu e configurat pentru etapa asta.</p></div>;
+  }
+
+  return (
+    <PlayersCtx.Provider value={players}>
+      <div style={s.page}>
+        <style>{CSS}</style>
+        {live && <Ticker ranking={ranking} validated={step} live={live} />}
+
+        <header style={s.head}>
+          <div>
+            <div style={s.brand}>Play League Stock Exchange</div>
+            <h1 style={s.title}>{BURSA_PUBLIC_NAME}</h1>
+          </div>
+          <PhaseBadge phase={phase} step={step} />
+        </header>
+
+        {error && <p style={{ ...s.note, color: C.down }}>{error}</p>}
+        {!amIn && !locked && <p style={s.note}>Nu ești în lista de participanți a acestei etape.</p>}
+
+        {!live && amIn && (
+          <section style={s.block}>
+            <div style={s.blockHead}>
+              <span style={s.blockTitle}>Portofoliul tău</span>
+              <span style={s.blockMeta}>{myPortfolio.perf.length + myPortfolio.contra.length}/4</span>
+            </div>
+            {[BURSA_CATEGORY_PERF, BURSA_CATEGORY_CONTRA].map((cat) => (
+              <div key={cat} style={{ marginBottom: 10 }}>
+                <div style={{ ...s.catLabel, color: CAT[cat].color, display: "flex", alignItems: "center", gap: 6 }}>
+                  {CAT[cat].icon(20)}
+                  <span>{cat === BURSA_CATEGORY_PERF ? "PRINȚI" : "BROSCOI"}</span>
+                  <span style={{ color: C.dim, fontWeight: 500 }}>· {cat === BURSA_CATEGORY_PERF ? "crezi că performează" : "crezi că ratează"}</span>
+                </div>
+                <div style={s.slotRow}>
+                  {[0, 1].map((idx) => (
+                    <SlotCard
+                      key={idx} cat={cat} uid={slots[cat][idx]} editable={editable}
+                      pop={justFilled?.startsWith(`${cat}-${idx}-`)}
+                      onOpen={() => editable && setPicker({ cat, idx })}
+                      onClear={() => clearSlot(cat, idx)}
+                    />
+                  ))}
+                </div>
+              </div>
+            ))}
+            {phase === "open" && (
+              <button type="button" style={{ ...s.cta, ...((myValid && !saving) ? {} : s.ctaOff) }} disabled={!myValid || saving} onClick={save}>
+                {saving ? "Se salvează…" : myValid ? "Salvează portofoliul" : `Mai alege ${4 - myPortfolio.perf.length - myPortfolio.contra.length}`}
+              </button>
+            )}
+            {phase === "saved" && (
+              <div style={s.savedBox}>
+                <div style={s.savedTitle}>✓ Portofoliu salvat</div>
+                <div style={s.savedText}>Alegerile tale rămân secrete până la închiderea înscrierilor. Le poți schimba până atunci.</div>
+                <button type="button" style={s.ghostBtn} onClick={() => setEditing(true)}>Modific</button>
+              </div>
+            )}
+          </section>
+        )}
+
+        {live && !amIn && (
+          <p style={s.note}>Nu ai fost în lista de participanți a acestei etape — poți vedea însă portofoliile și clasamentul celorlalți.</p>
+        )}
+        {live && amIn && (
+          <>
+            <DuelHero me={uid} oppUid={oppUid} mine={mine} opp={opp} isBye={!!mine?.isBye} final={phase === "final"} />
+            <section style={s.block}>
+              <div style={s.blockHead}>
+                <span style={s.blockTitle}>Evoluția duelului</span>
+                <span style={s.blockMeta}>scor brut după fiecare validare</span>
+              </div>
+              <DuelChart series={series} totalSteps={Math.max(series.length, 2)} hasOpp={!!oppUid} />
+              <div style={s.legend}>
+                <span><i style={{ ...s.legendDot, background: C.me }} /> {nameOf(uid)}</span>
+                {oppUid && <span><i style={{ ...s.legendDot, background: C.opp }} /> {nameOf(oppUid)}</span>}
+                <span style={{ color: C.faint }}>- - plafon {BURSA_BASE_CAP}</span>
+              </div>
+            </section>
+            <PortfolioTable title="Portofoliul tău" who={uid} data={mine} tone={C.me} />
+            {oppUid && <PortfolioTable title={`Portofoliul lui ${nameOf(oppUid)}`} who={oppUid} data={opp} tone={C.opp} />}
+          </>
+        )}
+
+        {live && (
+          <section style={s.block}>
+            <button type="button" style={s.toggleRow} onClick={() => setShowAll((v) => !v)}>
+              <span style={s.blockTitle}>Toate portofoliile</span>
+              <span style={s.blockMeta}>{showAll ? "ascunde" : "arată"}</span>
+            </button>
+            {showAll && (
+              <AllPortfolios eligibleUids={rankingUids} picksByUid={picksByUid} me={uid} ranking={ranking} live={live} revealKey={revealKey} />
+            )}
+          </section>
+        )}
+
+        {picker && (
+          <PickerSheet
+            cat={picker.cat} me={uid} eligibleUids={rankingUids} slots={slots}
+            current={slots[picker.cat][picker.idx]} onPick={choose} onClose={() => setPicker(null)}
+          />
+        )}
+
+        {reversalKey > 0 && (
+          <div key={reversalKey} className="bx-rev" style={s.revWrap} aria-live="assertive">
+            <div style={s.revCard}>
+              <div style={s.revKicker}>Liderul s-a schimbat</div>
+              <div style={s.revText}>RĂSTURNARE DE SITUAȚIE!</div>
+              <div style={s.revWho}>
+                <PlayerAvatar avatarId={avatarOf(lastSeries?.leader === "A" ? uid : oppUid)} nickname={nameOf(lastSeries?.leader === "A" ? uid : oppUid)} size={34} />
+                <span>{nameOf(lastSeries?.leader === "A" ? uid : oppUid)} trece în față</span>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {toast && <div className="bx-toast" style={s.toast}>{toast}</div>}
+      </div>
+    </PlayersCtx.Provider>
   );
 }
 
@@ -653,8 +1008,16 @@ const CSS = `
 @keyframes bxTicker { from { transform: translateX(0); } to { transform: translateX(-50%); } }
 @keyframes bxBlink { 0%,100% { opacity: 1; } 50% { opacity: 0.2; } }
 @keyframes bxRev { 0% { opacity: 0; transform: scale(0.6) rotate(-4deg); } 18% { opacity: 1; transform: scale(1.08) rotate(1deg); } 30% { transform: scale(1) rotate(0); } 82% { opacity: 1; } 100% { opacity: 0; transform: scale(0.96); } }
+@keyframes bxCrown { 0% { transform: translateY(-14px) rotate(-18deg) scale(0.7); opacity: 0; } 60% { transform: translateY(2px) rotate(-8deg) scale(1.12); opacity: 1; } 100% { transform: none; } }
+@keyframes bxFail { 0%, 72%, 100% { transform: none; } 78% { transform: rotate(-16deg) translateY(1px); } 85% { transform: rotate(11deg); } 92% { transform: rotate(-5deg); } }
+@keyframes bxPlop { 0% { transform: perspective(400px) rotateY(90deg) scale(0.7); opacity: 0; } 55% { transform: perspective(400px) rotateY(0) scale(1.14, 0.86); opacity: 1; } 80% { transform: scale(0.96, 1.06); } 100% { transform: none; } }
+@keyframes bxShine { 0% { box-shadow: 0 0 0 rgba(242,201,76,0); } 45% { box-shadow: 0 0 16px rgba(242,201,76,0.65); } 100% { box-shadow: 0 0 0 rgba(242,201,76,0); } }
 @keyframes bxToast { 0% { opacity: 0; transform: translate(-50%, 12px); } 15%,85% { opacity: 1; transform: translate(-50%, 0); } 100% { opacity: 0; } }
 .bx-pop { animation: bxPop 380ms ease-out; }
+.bx-crown { animation: bxCrown 520ms ease-out both; }
+.bx-frog { animation: bxFail 4.6s ease-in-out infinite; transform-origin: 50% 88%; }
+.bx-plop { animation: bxPlop 620ms ease-out both; }
+.bx-shine { animation: bxFlip 480ms ease-out both, bxShine 1100ms ease-out 480ms 1; }
 .bx-sheet { animation: bxSheet 260ms ease-out; }
 .bx-draw { stroke-dasharray: 1000; animation: bxDraw 900ms ease-out both; }
 .bx-fade { animation: bxFade 700ms ease-out both; }
@@ -667,7 +1030,7 @@ const CSS = `
 .bx-toast { animation: bxToast 1800ms ease-out both; }
 .bx-cell:active { transform: scale(0.94); }
 @media (prefers-reduced-motion: reduce) {
-  .bx-pop, .bx-sheet, .bx-draw, .bx-fade, .bx-pulse, .bx-flip, .bx-flash, .bx-ticker, .bx-blink { animation: none !important; stroke-dashoffset: 0 !important; }
+  .bx-pop, .bx-sheet, .bx-draw, .bx-fade, .bx-pulse, .bx-flip, .bx-flash, .bx-ticker, .bx-blink, .bx-crown, .bx-frog, .bx-plop, .bx-shine { animation: none !important; stroke-dashoffset: 0 !important; }
 }
 `;
 
@@ -682,7 +1045,7 @@ const s = {
 
   head: { display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 10, marginBottom: 14 },
   brand: { fontSize: 11, color: C.dim, letterSpacing: 0.4 },
-  title: { margin: "2px 0 0", fontFamily: font.display, fontSize: 30, fontWeight: 700, lineHeight: 1, letterSpacing: 0.3 },
+  title: { margin: "2px 0 0", fontFamily: font.display, fontSize: 25, fontWeight: 700, lineHeight: 1.05, letterSpacing: 0.3 },
   badge: { display: "inline-flex", alignItems: "center", gap: 6, border: "1px solid", borderRadius: 999, padding: "5px 10px", fontSize: 11.5, fontWeight: 700, whiteSpace: "nowrap", marginTop: 4 },
   badgeDot: { width: 7, height: 7, borderRadius: "50%", display: "inline-block" },
 

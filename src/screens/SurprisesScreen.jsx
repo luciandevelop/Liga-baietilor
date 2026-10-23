@@ -18,6 +18,8 @@ import TriviaExperience from "../components/TriviaExperience";
 import DiceExperience from "../components/DiceExperience";
 import BetBuilderScreen from "./BetBuilderScreen";
 import HigherLowerScreen from "./HigherLowerScreen";
+import BursaScreen from "./BursaScreen";
+import { BURSA_TYPE_ID } from "../services/bursaService";
 import SabotajExperience from "../components/SabotajExperience";
 import RouletteExperience from "../components/RouletteExperience";
 import MysteryBoxExperience from "../components/MysteryBoxExperience";
@@ -367,6 +369,10 @@ export default function SurprisesScreen({ user, onBack }) {
 
                   {secretMain?.type === "higherLower" && (
                     <HigherLowerScreen gameweekId={gameweek.id} uid={user.uid} embedded />
+                  )}
+
+                  {secretMain?.type === BURSA_TYPE_ID && (
+                    <BursaScreen gameweekId={gameweek.id} uid={user.uid} />
                   )}
 
                   {secretMain?.type === "sabotaj" && (

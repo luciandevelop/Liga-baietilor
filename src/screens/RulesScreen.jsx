@@ -306,6 +306,40 @@ export default function RulesScreen({ onBack }) {
           </P>
         </Section>
 
+        <Section icon="👑" title="Prinț sau Broscoi?">
+          <P>
+            Alegi 4 colegi: 2 PRINȚI (crezi că vor performa în etapă) și 2 BROSCOI (crezi că vor rata). Nu te poți alege pe tine
+            și nu poți alege același coleg de două ori; îl poți alege pe adversarul tău din duel. Alegerile sunt secrete până la
+            închiderea înscrierilor.
+          </P>
+          <Table
+            rows={[
+              ["Prinț: locul 1", "+75p"],
+              ["Prinț: locurile 2–3", "+45p"],
+              ["Prinț: restul jumătății de sus", "+20p"],
+              ["Broscoi: ultimul grup de punctaj", "+75p"],
+              ["Broscoi: următoarele două grupuri de la coadă", "+45p"],
+              ["Broscoi: restul jumătății de jos", "+20p"],
+            ]}
+          />
+          <P small>
+            Contează doar punctele din cele 20 de meciuri (cu Joker, Meciul Săptămânii și Lupul Singuratic), fără bonusurile de
+            clasament sau alte surprize. La egalitate, locul se împarte (1, 1, 3) și toți primesc aceeași valoare; un grup de
+            egalitate care trece granița dintre jumătăți nu primește recompensa de 20p.
+          </P>
+          <P>
+            Punctele brute = suma celor 4 alegeri. În clasament intră maximum 150p, dar duelul se decide pe punctele BRUTE:
+            câștigi +50p, egalitate perfectă +25p fiecare. Atingerea plafonului de 150p de către amândoi nu înseamnă egalitate.
+            Maxim absolut 200p.
+          </P>
+          <P small>
+            Fără adversar în etapă: +25p dacă ai participat. Dacă adversarul nu a participat și tu da: +50p. Dacă niciunul nu a
+            participat: 0p. Poți schimba alegerile până la închiderea înscrierilor (manual de Admin sau automat la începutul
+            primului meci). Apoi toate portofoliile devin publice, iar clasamentul duelului se actualizează LIVE după fiecare
+            rezultat validat. Punctele devin definitive când Adminul finalizează etapa.
+          </P>
+        </Section>
+
         <Section icon="🎰" title="Ruletă (Surpriza Bonus)">
           <P>O singură învârtire, cu 16 segmente posibile. Poți învârti a doua oară, dar pierzi definitiv primul rezultat dacă o faci.</P>
           <Table rows={[["Segmente posibile", "0, 25 sau 50 (cele mai dese) · 75 (mai rar) · 100 (cel mai rar)"]]} />

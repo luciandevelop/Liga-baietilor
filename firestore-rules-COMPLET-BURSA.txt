@@ -1,0 +1,1194 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isAdmin() {
+      return isSignedIn() &&
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid));
+    }
+
+    function isBeforeLock(matchId) {
+      let m = get(/databases/$(database)/documents/matches/$(matchId)).data;
+      return request.time.toMillis() < (m.kickoffAt.toMillis() - 1800000);
+    }
+
+    function isAfterLock(matchId) {
+      let m = get(/databases/$(database)/documents/matches/$(matchId)).data;
+      return request.time.toMillis() >= (m.kickoffAt.toMillis() - 1800000);
+    }
+
+    // ══════════════════════════════════════════════════════════════════
+    // 🎟️ BET BUILDER — termen propriu: 12 ore înainte de meciul repartizat
+    // (SEPARAT de lock-ul pronosticurilor, de 30 de minute). Folosit doar
+    // la scrierea biletelor jucătorilor.
+    // ══════════════════════════════════════════════════════════════════
+    function isBetBuilderBeforeDeadline(matchId) {
+      let m = get(/databases/$(database)/documents/matches/$(matchId)).data;
+      return request.time.toMillis() < (m.kickoffAt.toMillis() - 43200000);
+    }
+
+    function isValidJokerMatch(gameweekId, matchId) {
+      return exists(/databases/$(database)/documents/gameweeks/$(gameweekId)) &&
+        exists(/databases/$(database)/documents/matches/$(matchId)) &&
+        get(/databases/$(database)/documents/matches/$(matchId)).data.gameweekId == gameweekId &&
+        !(matchId in get(/databases/$(database)/documents/gameweeks/$(gameweekId)).data.get('featuredMatchIds', [])) &&
+        isBeforeLock(matchId);
+    }
+
+    function isSpecialPhaseOpen(phaseId) {
+      let p = get(/databases/$(database)/documents/specialPhases/$(phaseId)).data;
+      return p.status == "open" &&
+        request.time.toMillis() < p.closesAt.toMillis();
+    }
+
+    function isSpecialPhaseAfterClose(phaseId) {
+      let p = get(/databases/$(database)/documents/specialPhases/$(phaseId)).data;
+      return request.time.toMillis() >= p.closesAt.toMillis();
+    }
+
+    function isActivePlayer(uid) {
+      let u = get(/databases/$(database)/documents/users/$(uid)).data;
+      return !('status' in u) || u.status == 'active';
+    }
+
+    // ══════════════════════════════════════════════════════════════════
+    // 📈📉 MAI MARE / MAI MIC — funcții NOI, EXCLUSIV pentru acest joc.
+    // NU ating isBeforeLock/isAfterLock (alt deadline, alte colecții).
+    // Deadline-ul e o valoare scrisă O SINGURĂ DATĂ de Admin (la
+    // generare), pe weeklySurprises/{gameweekId} — document deja
+    // scriptibil DOAR de Admin (regula existentă, neatinsă), citibil de
+    // orice user autentificat (regula existentă, neatinsă) — deci
+    // câmpul nou (higherLowerDeadlineAt) nu cere nicio schimbare de
+    // regulă pe acel document, doar un câmp în plus scris de Admin.
+    // ══════════════════════════════════════════════════════════════════
+    function isHigherLowerBeforeDeadline(gameweekId) {
+      let ws = get(/databases/$(database)/documents/weeklySurprises/$(gameweekId)).data;
+      return request.time.toMillis() < ws.higherLowerDeadlineAt.toMillis();
+    }
+
+    // Validează o alegere (pick) de rundă: jucătorul chiar face parte
+    // din duelul respectiv, ID-ul documentului e cel corect, întrebarea
+    // corespunde exact rundei declarate, ȘI — esențial — jucătorul are
+    // efectiv PRIORITATE pe acea rundă (impar → starter, par → celălalt).
+    // secret/main e citit prin get() — asta NU e supus regulii lui
+    // proprii de citire (mainRevealed); get() în interiorul unei reguli
+    // e o verificare server-side, nu o cerere de citire a clientului.
+    function isValidHigherLowerPick(gameweekId, pickId, data) {
+      let secret = get(/databases/$(database)/documents/weeklySurprises/$(gameweekId)/secret/main).data;
+      let duel = secret.duels[data.duelId];
+      let isPlayerA = duel.playerA == data.uid;
+      let isPlayerB = duel.playerB == data.uid;
+      let starterIsUid = duel.starterUid == data.uid;
+      let isOddRound = data.roundNumber == 1 || data.roundNumber == 3 || data.roundNumber == 5;
+      return secret.type == "higherLower" &&
+        (isPlayerA || isPlayerB) &&
+        pickId == (data.duelId + '_' + data.uid + '_' + data.questionId) &&
+        data.questionId == secret.questions[data.roundNumber - 1].id &&
+        (
+          (isOddRound && starterIsUid) ||
+          (!isOddRound && !starterIsUid)
+        );
+    }
+
+    match /admins/{userId} {
+      allow read: if isOwner(userId);
+      allow write: if false;
+    }
+
+    match /users/{userId} {
+      allow read: if isSignedIn();
+
+      allow create: if isOwner(userId) &&
+        request.resource.data.keys().hasOnly([
+          'uid',
+          'nickname',
+          'avatarId',
+          'seasonPoints',
+          'gameweeksPlayed',
+          'status'
+        ]) &&
+        request.resource.data.keys().hasAll([
+          'uid',
+          'nickname',
+          'avatarId',
+          'seasonPoints',
+          'gameweeksPlayed',
+          'status'
+        ]) &&
+        request.resource.data.uid == userId &&
+        request.resource.data.uid is string &&
+        request.resource.data.nickname is string &&
+        (
+          request.resource.data.avatarId == null ||
+          request.resource.data.avatarId is string
+        ) &&
+        request.resource.data.seasonPoints == 0 &&
+        request.resource.data.gameweeksPlayed == 0 &&
+        request.resource.data.status == 'pending';
+
+      // Jucătorul își poate edita propriul profil (nickname, avatar) și poate salva starea
+      // „am văzut Story-ul” (lastSeenGwStoryKey / lastSeenSeasonStoryKey — doar șiruri de text).
+      // 'specialPoints' e scris de Admin; apare în listă DOAR ca să nu respingă orice
+      // modificare a unui profil care îl are deja — jucătorul NU îl poate schimba (verificat mai jos).
+      allow update: if isOwner(userId) &&
+        request.resource.data.keys().hasOnly([
+          'uid',
+          'nickname',
+          'avatarId',
+          'seasonPoints',
+          'gameweeksPlayed',
+          'status',
+          'specialPoints',
+          'lastSeenGwStoryKey',
+          'lastSeenSeasonStoryKey'
+        ]) &&
+        request.resource.data.uid == resource.data.uid &&
+        request.resource.data.seasonPoints == resource.data.seasonPoints &&
+        request.resource.data.gameweeksPlayed == resource.data.gameweeksPlayed &&
+        request.resource.data.get('specialPoints', 0) ==
+          resource.data.get('specialPoints', 0) &&
+        request.resource.data.nickname is string &&
+        (
+          request.resource.data.avatarId == null ||
+          request.resource.data.avatarId is string
+        ) &&
+        (
+          !('lastSeenGwStoryKey' in request.resource.data) ||
+          request.resource.data.lastSeenGwStoryKey is string
+        ) &&
+        (
+          !('lastSeenSeasonStoryKey' in request.resource.data) ||
+          request.resource.data.lastSeenSeasonStoryKey is string
+        ) &&
+        request.resource.data.get('status', 'active') ==
+          resource.data.get('status', 'active');
+
+      allow update, delete: if isAdmin();
+
+      match /private/{docId} {
+        allow read: if isOwner(userId) || isAdmin();
+
+        allow create: if isOwner(userId) &&
+          docId == 'profile' &&
+          request.resource.data.keys().hasOnly([
+            'email',
+            'createdAt',
+            'lastLoginAt'
+          ]) &&
+          request.resource.data.keys().hasAll([
+            'email',
+            'createdAt',
+            'lastLoginAt'
+          ]) &&
+          request.resource.data.email is string &&
+          request.resource.data.createdAt == request.time &&
+          request.resource.data.lastLoginAt == request.time;
+
+        allow update: if isOwner(userId) &&
+          docId == 'profile' &&
+          request.resource.data.keys().hasOnly([
+            'email',
+            'createdAt',
+            'lastLoginAt'
+          ]) &&
+          request.resource.data.email == resource.data.email &&
+          request.resource.data.createdAt == resource.data.createdAt &&
+          request.resource.data.lastLoginAt == request.time;
+
+        allow write: if isAdmin();
+      }
+    }
+
+    match /seasons/{seasonId} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+
+    match /gameweeks/{gameweekId} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+
+    match /matches/{matchId} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+
+    match /externalFootballCache/{docId} {
+      allow read: if isSignedIn();
+      allow write: if false;
+    }
+
+    match /predictions/{predictionId} {
+      allow read: if isAdmin() || (
+        isSignedIn() && (
+          predictionId.matches(".*_" + request.auth.uid) ||
+          isAfterLock(resource.data.matchId)
+        )
+      );
+
+      allow create: if isSignedIn() &&
+        predictionId ==
+          request.resource.data.matchId + '_' + request.auth.uid &&
+        request.resource.data.userId == request.auth.uid &&
+        request.resource.data.keys().hasOnly([
+          'userId',
+          'matchId',
+          'scoreA',
+          'scoreB',
+          'corners',
+          'cards'
+        ]) &&
+        request.resource.data.keys().hasAll([
+          'userId',
+          'matchId',
+          'scoreA',
+          'scoreB'
+        ]) &&
+        request.resource.data.scoreA is int &&
+        request.resource.data.scoreA >= 0 &&
+        request.resource.data.scoreB is int &&
+        request.resource.data.scoreB >= 0 &&
+        (
+          !('corners' in request.resource.data) ||
+          (
+            request.resource.data.corners is int &&
+            request.resource.data.corners >= 0
+          )
+        ) &&
+        (
+          !('cards' in request.resource.data) ||
+          (
+            request.resource.data.cards is int &&
+            request.resource.data.cards >= 0
+          )
+        ) &&
+        isBeforeLock(request.resource.data.matchId) &&
+        isActivePlayer(request.auth.uid);
+
+      allow update: if isSignedIn() &&
+        resource.data.userId == request.auth.uid &&
+        request.resource.data.userId == resource.data.userId &&
+        request.resource.data.matchId == resource.data.matchId &&
+        request.resource.data.keys().hasOnly([
+          'userId',
+          'matchId',
+          'scoreA',
+          'scoreB',
+          'corners',
+          'cards'
+        ]) &&
+        request.resource.data.scoreA is int &&
+        request.resource.data.scoreA >= 0 &&
+        request.resource.data.scoreB is int &&
+        request.resource.data.scoreB >= 0 &&
+        (
+          !('corners' in request.resource.data) ||
+          (
+            request.resource.data.corners is int &&
+            request.resource.data.corners >= 0
+          )
+        ) &&
+        (
+          !('cards' in request.resource.data) ||
+          (
+            request.resource.data.cards is int &&
+            request.resource.data.cards >= 0
+          )
+        ) &&
+        isBeforeLock(request.resource.data.matchId);
+
+      allow delete: if isAdmin();
+    }
+
+    match /jokers/{jokerId} {
+      allow read: if isAdmin() || (
+        isSignedIn() && (
+          jokerId.matches(".*_" + request.auth.uid) ||
+          isAfterLock(resource.data.matchId)
+        )
+      );
+
+      allow create: if isSignedIn() &&
+        jokerId ==
+          request.resource.data.gameweekId + '_' + request.auth.uid &&
+        request.resource.data.userId == request.auth.uid &&
+        request.resource.data.keys().hasOnly([
+          'userId',
+          'gameweekId',
+          'matchId'
+        ]) &&
+        request.resource.data.keys().hasAll([
+          'userId',
+          'gameweekId',
+          'matchId'
+        ]) &&
+        isValidJokerMatch(
+          request.resource.data.gameweekId,
+          request.resource.data.matchId
+        ) &&
+        isActivePlayer(request.auth.uid);
+
+      allow update: if isSignedIn() &&
+        resource.data.userId == request.auth.uid &&
+        request.resource.data.userId == resource.data.userId &&
+        request.resource.data.gameweekId == resource.data.gameweekId &&
+        request.resource.data.keys().hasOnly([
+          'userId',
+          'gameweekId',
+          'matchId'
+        ]) &&
+        isValidJokerMatch(
+          request.resource.data.gameweekId,
+          request.resource.data.matchId
+        ) &&
+        isBeforeLock(resource.data.matchId);
+
+      allow delete: if isAdmin() || (
+        isSignedIn() &&
+        resource.data.userId == request.auth.uid &&
+        isBeforeLock(resource.data.matchId)
+      );
+    }
+
+    /*
+      JOKER EXTRA
+      Aceeași structură de document ca Jokerul normal:
+      { userId, gameweekId, matchId }
+    */
+    match /jokerExtra/{jokerExtraId} {
+      allow read: if isAdmin() || (
+        isSignedIn() && (
+          jokerExtraId.matches(".*_" + request.auth.uid) ||
+          isAfterLock(resource.data.matchId)
+        )
+      );
+
+      allow create: if isSignedIn() &&
+        jokerExtraId ==
+          request.resource.data.gameweekId + '_' + request.auth.uid &&
+        request.resource.data.userId == request.auth.uid &&
+        request.resource.data.keys().hasOnly([
+          'userId',
+          'gameweekId',
+          'matchId'
+        ]) &&
+        request.resource.data.keys().hasAll([
+          'userId',
+          'gameweekId',
+          'matchId'
+        ]) &&
+        isValidJokerMatch(
+          request.resource.data.gameweekId,
+          request.resource.data.matchId
+        ) &&
+        isActivePlayer(request.auth.uid);
+
+      allow update: if isSignedIn() &&
+        resource.data.userId == request.auth.uid &&
+        request.resource.data.userId == resource.data.userId &&
+        request.resource.data.gameweekId == resource.data.gameweekId &&
+        request.resource.data.keys().hasOnly([
+          'userId',
+          'gameweekId',
+          'matchId'
+        ]) &&
+        isValidJokerMatch(
+          request.resource.data.gameweekId,
+          request.resource.data.matchId
+        ) &&
+        isBeforeLock(resource.data.matchId);
+
+      allow delete: if isAdmin() || (
+        isSignedIn() &&
+        resource.data.userId == request.auth.uid &&
+        isBeforeLock(resource.data.matchId)
+      );
+    }
+
+    /*
+      IMPORTANT:
+      matchPoints este COLECȚIE ROOT în cod:
+      /matchPoints/{matchId}_{uid}
+    */
+    match /matchPoints/{docId} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+
+    match /gameweekScores/{scoreId} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+
+    match /gameweekLiveScores/{docId} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+
+    match /specialPhases/{phaseId} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+
+    match /specialPicks/{pickId} {
+      allow read: if isAdmin() || (
+        isSignedIn() && (
+          resource.data.userId == request.auth.uid ||
+          pickId.matches(".*_" + request.auth.uid) ||
+          isSpecialPhaseAfterClose(resource.data.phaseId)
+        )
+      );
+
+      allow create: if isSignedIn() &&
+        pickId ==
+          request.resource.data.phaseId + '_' + request.auth.uid &&
+        request.resource.data.userId == request.auth.uid &&
+        isSpecialPhaseOpen(request.resource.data.phaseId) &&
+        isActivePlayer(request.auth.uid);
+
+      allow update: if isSignedIn() &&
+        resource.data.userId == request.auth.uid &&
+        request.resource.data.userId == resource.data.userId &&
+        request.resource.data.phaseId == resource.data.phaseId &&
+        isSpecialPhaseOpen(resource.data.phaseId);
+
+      allow delete: if isAdmin();
+    }
+
+    match /specialScores/{scoreId} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+
+    match /feedEvents/{eventId} {
+      allow read: if isSignedIn();
+
+      allow create, update: if isSignedIn() &&
+        request.resource.data.keys().hasAll([
+          'id',
+          'category',
+          'priority',
+          'ts',
+          'title'
+        ]) &&
+        request.resource.data.id == eventId;
+
+      allow delete: if isAdmin();
+    }
+
+    match /feedState/{docId} {
+      allow read: if isSignedIn();
+      allow write: if isSignedIn();
+    }
+
+    match /feedEditorialHidden/{articleId} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+
+    match /feedFunItems/{itemId} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+
+    // ══════════════════════════════════════════════════════════════════
+    // 👀 „CINE N-A PONTAT” — marcaj FĂRĂ conținut: doar ID-urile meciurilor
+    // pe care jucătorul a pus un pronostic (niciun scor). Citibil de oricine
+    // e logat; scris doar de proprietar, în documentul lui.
+    // ══════════════════════════════════════════════════════════════════
+    match /predictionStatus/{statusId} {
+      allow read: if isSignedIn();
+
+      allow create, update: if isSignedIn() &&
+        statusId.matches(".*_" + request.auth.uid) &&
+        request.resource.data.uid == request.auth.uid &&
+        request.resource.data.keys().hasOnly([
+          'uid',
+          'gameweekId',
+          'matchIds',
+          'updatedAt'
+        ]) &&
+        request.resource.data.matchIds is list &&
+        request.resource.data.matchIds.size() <= 100;
+
+      allow delete: if isAdmin();
+    }
+
+    // ══════════════════════════════════════════════════════════════════
+    // 🎟️ BET BUILDER
+    // betBuilders/{etapă}: documentul comun (dueluri, întrebări, rezultate).
+    // betBuilderPicks/{etapă}_{uid}: biletul fiecărui jucător.
+    // ══════════════════════════════════════════════════════════════════
+    match /betBuilders/{gameweekId} {
+      allow get: if isSignedIn();
+      allow list: if isAdmin();
+      allow create, update, delete: if isAdmin();
+    }
+
+    match /betBuilderPicks/{pickId} {
+      // Biletele altora se arată în aplicație doar după termen / după confirmare
+      // (gardă în aplicație), așa cum s-a stabilit la Bet Builder.
+      allow get: if isSignedIn();
+      allow list: if isAdmin();
+
+      // Jucătorul își scrie DOAR propriul bilet, doar înainte de termen (12 ore
+      // înainte de meci) și doar cât timp nu e confirmat. Adminul scrie punctele.
+      allow create, update: if isAdmin() || (
+        isSignedIn() &&
+        pickId.matches(".*_" + request.auth.uid) &&
+        request.resource.data.uid == request.auth.uid &&
+        request.resource.data.keys().hasOnly([
+          'gameweekId',
+          'uid',
+          'matchId',
+          'duelId',
+          'opponentUid',
+          'picks',
+          'tiebreakerAnswer',
+          'confirmed',
+          'confirmedAt',
+          'updatedAt'
+        ]) &&
+        (resource == null || resource.data.confirmed != true) &&
+        isBetBuilderBeforeDeadline(request.resource.data.matchId) &&
+        isActivePlayer(request.auth.uid)
+      );
+
+      allow delete: if isAdmin();
+    }
+
+    match /weeklySurprises/{gameweekId} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+
+      match /secret/{docId} {
+        allow read: if isAdmin() || (
+          isSignedIn() && (
+            (
+              docId == "main" &&
+              get(
+                /databases/$(database)/documents/weeklySurprises/$(gameweekId)
+              ).data.get('mainRevealed', false) == true
+            ) ||
+            (
+              docId == "bonus" &&
+              get(
+                /databases/$(database)/documents/weeklySurprises/$(gameweekId)
+              ).data.get('bonusRevealed', false) == true
+            )
+          )
+        );
+
+        allow write: if isAdmin();
+      }
+
+      match /results/{uid} {
+        allow read: if isAdmin() || isOwner(uid) || (
+          isSignedIn() && (
+            get(
+              /databases/$(database)/documents/weeklySurprises/$(gameweekId)
+            ).data.get('mainResolved', false) == true ||
+            get(
+              /databases/$(database)/documents/weeklySurprises/$(gameweekId)
+            ).data.get('bonusResolved', false) == true
+          )
+        );
+
+        allow write: if isAdmin();
+      }
+
+      match /rouletteSpins/{spinId} {
+        allow read: if isAdmin() ||
+          (
+            isSignedIn() &&
+            spinId.matches(".*_" + request.auth.uid)
+          ) ||
+          (
+            isSignedIn() &&
+            get(
+              /databases/$(database)/documents/weeklySurprises/$(gameweekId)
+            ).data.get('bonusRevealed', false) == true
+          );
+
+        allow create: if isSignedIn() &&
+          spinId.matches(".*_" + request.auth.uid) &&
+          request.resource.data.uid == request.auth.uid &&
+          request.resource.data.keys().hasOnly([
+            'uid',
+            'value',
+            'spinNumber',
+            'createdAt'
+          ]) &&
+          request.resource.data.keys().hasAll([
+            'uid',
+            'value',
+            'spinNumber',
+            'createdAt'
+          ]) &&
+          request.resource.data.value in [0, 25, 50, 75, 100] &&
+          request.resource.data.spinNumber in [1, 2];
+
+        allow update, delete: if false;
+      }
+
+      match /mysteryBoxPicks/{boxIndex} {
+        allow read: if isSignedIn();
+
+        allow create: if isSignedIn() &&
+          request.resource.data.uid == request.auth.uid &&
+          request.resource.data.keys().hasOnly([
+            'uid',
+            'pickNumber',
+            'createdAt'
+          ]) &&
+          request.resource.data.keys().hasAll([
+            'uid',
+            'pickNumber',
+            'createdAt'
+          ]) &&
+          request.resource.data.pickNumber in [1, 2] &&
+          get(
+            /databases/$(database)/documents/weeklySurprises/$(gameweekId)
+          ).data.get('bonusRevealed', false) == true &&
+          get(
+            /databases/$(database)/documents/weeklySurprises/$(gameweekId)
+          ).data.get('bonusResolved', false) == false;
+
+        allow update, delete: if false;
+      }
+
+      match /triviaAnswers/{docId} {
+        allow read: if isAdmin() ||
+          (
+            isSignedIn() &&
+            docId.matches(".*_" + request.auth.uid)
+          ) ||
+          (
+            isSignedIn() &&
+            get(
+              /databases/$(database)/documents/weeklySurprises/$(gameweekId)
+            ).data.get('mainResolved', false) == true
+          );
+
+        allow create, update: if isSignedIn() &&
+          docId.matches(".*_" + request.auth.uid) &&
+          request.resource.data.uid == request.auth.uid &&
+          request.resource.data.keys().hasOnly([
+            'uid',
+            'questionId',
+            'answer',
+            'updatedAt'
+          ]) &&
+          request.resource.data.keys().hasAll([
+            'uid',
+            'questionId',
+            'answer'
+          ]) &&
+          request.resource.data.answer in ['A', 'B'];
+
+        allow delete: if false;
+      }
+
+      match /diceRolls/{docId} {
+        allow read: if isAdmin() ||
+          (
+            isSignedIn() &&
+            docId.matches(".*_" + request.auth.uid + "_[0-9]+")
+          ) ||
+          (
+            isSignedIn() &&
+            get(
+              /databases/$(database)/documents/weeklySurprises/$(gameweekId)
+            ).data.get('mainResolved', false) == true
+          );
+
+        allow create: if isSignedIn() &&
+          docId.matches(".*_" + request.auth.uid + "_[0-9]+") &&
+          request.resource.data.uid == request.auth.uid &&
+          request.resource.data.keys().hasOnly([
+            'uid',
+            'questionId',
+            'rollNumber',
+            'value',
+            'createdAt'
+          ]) &&
+          request.resource.data.keys().hasAll([
+            'uid',
+            'questionId',
+            'rollNumber',
+            'value',
+            'createdAt'
+          ]) &&
+          request.resource.data.value in [1, 2, 3, 4, 5, 6] &&
+          request.resource.data.rollNumber is int &&
+          request.resource.data.rollNumber > 0;
+
+        allow update, delete: if false;
+      }
+
+      match /diceStops/{docId} {
+        allow read: if isAdmin() ||
+          (
+            isSignedIn() &&
+            docId.matches(".*_" + request.auth.uid)
+          ) ||
+          (
+            isSignedIn() &&
+            get(
+              /databases/$(database)/documents/weeklySurprises/$(gameweekId)
+            ).data.get('mainResolved', false) == true
+          );
+
+        allow create: if isSignedIn() &&
+          docId.matches(".*_" + request.auth.uid) &&
+          request.resource.data.uid == request.auth.uid &&
+          request.resource.data.keys().hasOnly([
+            'uid',
+            'questionId',
+            'stoppedAt'
+          ]) &&
+          request.resource.data.keys().hasAll([
+            'uid',
+            'questionId',
+            'stoppedAt'
+          ]);
+
+        allow update, delete: if false;
+      }
+
+      match /sabotajChoices/{uid} {
+        allow read: if isAdmin() || isOwner(uid) || (
+          isSignedIn() &&
+          get(
+            /databases/$(database)/documents/weeklySurprises/$(gameweekId)
+          ).data.get('sabotajRevealed', false) == true
+        );
+
+        allow create: if isSignedIn() &&
+          uid == request.auth.uid &&
+          request.resource.data.uid == request.auth.uid &&
+          request.resource.data.keys().hasOnly([
+            'uid',
+            'target',
+            'pickerIndex',
+            'createdAt'
+          ]) &&
+          request.resource.data.keys().hasAll([
+            'uid',
+            'target',
+            'pickerIndex'
+          ]) &&
+          request.resource.data.target is string &&
+          request.resource.data.target != request.auth.uid &&
+          request.resource.data.pickerIndex is int &&
+          get(
+            /databases/$(database)/documents/weeklySurprises/$(gameweekId)/secret/main
+          ).data.config.order[
+            request.resource.data.pickerIndex
+          ] == request.auth.uid &&
+          get(
+            /databases/$(database)/documents/weeklySurprises/$(gameweekId)/secret/main
+          ).data.config.order.hasAny([
+            request.resource.data.target
+          ]) &&
+          (
+            request.resource.data.pickerIndex == 0 ||
+            exists(
+              /databases/$(database)/documents/weeklySurprises/$(gameweekId)/sabotajPicked/$(
+                get(
+                  /databases/$(database)/documents/weeklySurprises/$(gameweekId)/secret/main
+                ).data.config.order[
+                  request.resource.data.pickerIndex - 1
+                ]
+              )
+            )
+          ) &&
+          existsAfter(
+            /databases/$(database)/documents/weeklySurprises/$(gameweekId)/sabotajPicked/$(request.auth.uid)
+          ) &&
+          existsAfter(
+            /databases/$(database)/documents/weeklySurprises/$(gameweekId)/sabotajTaken/$(request.resource.data.target)
+          );
+
+        allow update: if false;
+        allow delete: if isAdmin();
+      }
+
+      match /sabotajPicked/{uid} {
+        allow read: if isSignedIn();
+
+        allow create: if isSignedIn() &&
+          uid == request.auth.uid &&
+          request.resource.data.keys().hasOnly(['picked']) &&
+          request.resource.data.picked == true &&
+          existsAfter(
+            /databases/$(database)/documents/weeklySurprises/$(gameweekId)/sabotajChoices/$(request.auth.uid)
+          );
+
+        allow update: if false;
+        allow delete: if isAdmin();
+      }
+
+      match /sabotajTaken/{uid} {
+        allow read: if isSignedIn();
+
+        allow create: if isSignedIn() &&
+          request.resource.data.keys().hasOnly(['taken']) &&
+          request.resource.data.taken == true &&
+          get(
+            /databases/$(database)/documents/weeklySurprises/$(gameweekId)/secret/main
+          ).data.config.order.hasAny([
+            request.auth.uid
+          ]) &&
+          existsAfter(
+            /databases/$(database)/documents/weeklySurprises/$(gameweekId)/sabotajChoices/$(request.auth.uid)
+          );
+
+        allow update: if false;
+        allow delete: if isAdmin();
+      }
+
+      match /penaltyChoices/{uid} {
+        allow read: if isAdmin() || isOwner(uid) || (
+          isSignedIn() &&
+          exists(
+            /databases/$(database)/documents/weeklySurprises/$(gameweekId)/penaltySubmitted/$(request.auth.uid)
+          ) &&
+          exists(
+            /databases/$(database)/documents/weeklySurprises/$(gameweekId)/penaltySubmitted/$(uid)
+          )
+        );
+
+        allow create: if isSignedIn() &&
+          uid == request.auth.uid &&
+          request.resource.data.uid == request.auth.uid &&
+          request.resource.data.keys().hasOnly([
+            'uid',
+            'shots',
+            'defends',
+            'createdAt'
+          ]) &&
+          request.resource.data.keys().hasAll([
+            'uid',
+            'shots',
+            'defends'
+          ]) &&
+          request.resource.data.shots.size() == 5 &&
+          request.resource.data.defends.size() == 5 &&
+          get(
+            /databases/$(database)/documents/weeklySurprises/$(gameweekId)
+          ).data.get('bonusRevealed', false) == true &&
+          get(
+            /databases/$(database)/documents/weeklySurprises/$(gameweekId)
+          ).data.get('bonusResolved', false) == false;
+
+        allow update, delete: if false;
+      }
+
+      match /penaltySubmitted/{uid} {
+        allow read: if isSignedIn();
+
+        allow create: if isSignedIn() &&
+          uid == request.auth.uid &&
+          request.resource.data.uid == request.auth.uid;
+
+        allow update, delete: if false;
+      }
+
+      match /matchPoints/{docId} {
+        allow read: if isSignedIn();
+        allow write: if isAdmin();
+      }
+
+      // ══════════════════════════════════════════════════════════════
+      // 📈📉 MAI MARE / MAI MIC — NOU, izolat. Nimic din blocurile de
+      // mai sus atins.
+      // ══════════════════════════════════════════════════════════════
+
+      // Un document PER ALEGERE/RUNDĂ — definitiv la creare (update
+      // interzis mereu, delete doar Admin, pentru corectare/debug).
+      // Citirea e deschisă oricui autentificat: reveal-ul e IMEDIAT ce
+      // documentul rundei există — asta E mecanica jocului, nu o
+      // scurgere (exact ca predictions/jokers după lock, doar că aici
+      // "lock"-ul e per-rundă, nu per-etapă).
+      match /higherLowerPicks/{pickId} {
+        allow read: if isSignedIn();
+
+        allow create: if isSignedIn() &&
+          request.auth.uid == request.resource.data.uid &&
+          isActivePlayer(request.auth.uid) &&
+          request.resource.data.keys().hasOnly([
+            'uid', 'duelId', 'questionId', 'roundNumber', 'choice', 'createdAt'
+          ]) &&
+          request.resource.data.keys().hasAll([
+            'uid', 'duelId', 'questionId', 'roundNumber', 'choice'
+          ]) &&
+          request.resource.data.choice in ['mai_mare', 'mai_mic'] &&
+          request.resource.data.roundNumber in [1, 2, 3, 4, 5, 6] &&
+          isHigherLowerBeforeDeadline(gameweekId) &&
+          isValidHigherLowerPick(gameweekId, pickId, request.resource.data);
+
+        allow update: if false;
+        allow delete: if isAdmin();
+      }
+
+      // Baraj — SEPARAT, cu adevărat secret până la reveal. Citire
+      // restricționată la proprietar + Admin, până Admin marchează
+      // explicit higherLowerRevealed == true pe documentul părinte
+      // (câmp nou, aditiv, pe un document deja scriptibil doar de
+      // Admin — regula lui de write, neatinsă).
+      match /higherLowerTiebreakers/{uid} {
+        allow read: if isAdmin() || isOwner(uid) || (
+          isSignedIn() &&
+          get(
+            /databases/$(database)/documents/weeklySurprises/$(gameweekId)
+          ).data.get('higherLowerRevealed', false) == true
+        );
+
+        allow create: if isSignedIn() &&
+          uid == request.auth.uid &&
+          isActivePlayer(request.auth.uid) &&
+          request.resource.data.uid == request.auth.uid &&
+          request.resource.data.keys().hasOnly(['uid', 'value', 'createdAt']) &&
+          request.resource.data.keys().hasAll(['uid', 'value']) &&
+          request.resource.data.value is int &&
+          request.resource.data.value >= 0 &&
+          isHigherLowerBeforeDeadline(gameweekId);
+
+        allow update: if false;
+        allow delete: if isAdmin();
+      }
+
+      // ══════════════════════════════════════════════════════════════
+      // 🏴‍☠️ COMOARA BLESTEMATĂ — NOU, izolat (două subcolecții). Nimic din
+      // blocurile de mai sus atins. treasureRuns = joc PRIVAT; treasureResults
+      // = rezultat PUBLIC derivat din jocul privat terminat.
+      // ══════════════════════════════════════════════════════════════
+      // ───────────────────────── JOCUL PRIVAT ─────────────────────────
+      match /treasureRuns/{uid} {
+
+        function isOpen() {
+          let pub = get(/databases/$(database)/documents/weeklySurprises/$(gameweekId)).data;
+          return pub.get('bonusRevealed', false) == true && pub.get('bonusResolved', false) == false;
+        }
+
+        function pt(v) { return { 'type': 'points', 'value': v }; }
+        function lifeOutcome() { return { 'type': 'life', 'value': -1 }; }
+        function clamp100(v) { return v < 0 ? 0 : (v > 100 ? 100 : v); }
+
+        // Drumurile unui pas = EXACT mulțimea aprobată (în orice ordine):
+        //  pașii 1-3: +5, +10, +15 · pașii 4-5: +10, +20, -10, viață · pașii 6-7: +10, +20, viață, viață.
+        function doorsOk(step, d) {
+          return d is list && (
+            (step >= 1 && step <= 3 && d.size() == 3
+              && [d[0].outcome, d[1].outcome, d[2].outcome].hasAll([pt(5), pt(10), pt(15)]))
+            || (step >= 4 && step <= 5 && d.size() == 4
+              && [d[0].outcome, d[1].outcome, d[2].outcome, d[3].outcome].hasAll([pt(10), pt(20), pt(-10), lifeOutcome()]))
+            || (step >= 6 && step <= 7 && d.size() == 4
+              && [d[0].outcome, d[1].outcome, d[2].outcome, d[3].outcome].hasAll([pt(10), pt(20), lifeOutcome()])
+              && (d[0].outcome == lifeOutcome() ? 1 : 0) + (d[1].outcome == lifeOutcome() ? 1 : 0)
+                 + (d[2].outcome == lifeOutcome() ? 1 : 0) + (d[3].outcome == lifeOutcome() ? 1 : 0) == 2)
+          );
+        }
+
+        function shapeOk(n) {
+          return n.keys().hasOnly(['uid','step','total','lives','phase','doors','chosenIndex','preTreasureTotal','finished','version','createdAt','updatedAt'])
+            && n.keys().hasAll(['uid','step','total','lives','phase','doors','chosenIndex','finished','version','createdAt','updatedAt'])
+            && n.uid == uid
+            && n.step is int && n.step >= 1 && n.step <= 7
+            && n.total is int && n.total >= 0 && n.total <= 100
+            && n.lives is int && n.lives >= 0 && n.lives <= 2
+            && n.phase in ['choosing', 'revealed', 'cashout', 'cashedout', 'treasure', 'gameover']
+            && (n.chosenIndex == null || n.chosenIndex is int)
+            && n.finished == (n.phase in ['gameover', 'cashedout', 'treasure'])
+            && n.version is int
+            && n.updatedAt == request.time;
+        }
+
+        // Singurele tranziții permise — aceleași ca în motorul jocului (treasureHuntMockData.js).
+        // FINAL AUTOMAT: la pasul 7 SAU când totalul a atins 100, singura mutare posibilă după dezvăluire e „treasure”.
+        function validNext(p, n) {
+          return (
+            // 1) alegerea unui drum: rezultatul se ia DIN drumurile deja salvate, nu e liber
+            (p.phase == 'choosing' && n.phase == 'revealed' && n.step == p.step && n.doors == p.doors
+              && n.chosenIndex is int && n.chosenIndex >= 0 && n.chosenIndex < p.doors.size()
+              && !('preTreasureTotal' in n)
+              && ((p.doors[n.chosenIndex].outcome.type == 'points' && n.lives == p.lives
+                    && n.total == clamp100(p.total + p.doors[n.chosenIndex].outcome.value))
+                  || (p.doors[n.chosenIndex].outcome.type == 'life' && n.lives == p.lives - 1 && n.total == p.total)))
+            ||
+            // 2) după dezvăluire
+            (p.phase == 'revealed' && (
+                (p.lives <= 0 && n.phase == 'gameover' && n.step == p.step && n.lives == p.lives && n.total == 0
+                  && n.doors == p.doors && n.chosenIndex == p.chosenIndex && !('preTreasureTotal' in n))
+                || (p.lives > 0 && (p.step == 7 || p.total == 100) && n.phase == 'treasure' && n.step == p.step && n.lives == p.lives
+                  && n.total == clamp100(p.total + 25) && n.get('preTreasureTotal', null) == p.total
+                  && n.doors == p.doors && n.chosenIndex == p.chosenIndex)
+                || (p.lives > 0 && p.total < 100 && p.step >= 3 && p.step <= 6 && n.phase == 'cashout' && n.step == p.step
+                  && n.total == p.total && n.lives == p.lives && n.doors == p.doors && n.chosenIndex == p.chosenIndex
+                  && !('preTreasureTotal' in n))
+                || (p.lives > 0 && p.total < 100 && p.step <= 2 && n.phase == 'choosing' && n.step == p.step + 1 && n.total == p.total
+                  && n.lives == p.lives && n.chosenIndex == null && doorsOk(n.step, n.doors) && !('preTreasureTotal' in n))))
+            ||
+            // 3) după pasul 3: „mă opresc” sau „continui”
+            (p.phase == 'cashout' && (
+                (n.phase == 'cashedout' && n.step == p.step && n.total == p.total && n.lives == p.lives
+                  && n.doors == p.doors && n.chosenIndex == p.chosenIndex && !('preTreasureTotal' in n))
+                || (n.phase == 'choosing' && n.step == p.step + 1 && n.total == p.total && n.lives == p.lives
+                  && n.chosenIndex == null && doorsOk(n.step, n.doors) && !('preTreasureTotal' in n))))
+          );
+        }
+
+        // Jucătorul își vede doar propriul joc; Admin le vede pe toate (rezolvare, status, backup).
+        allow read: if isSignedIn() && (uid == request.auth.uid || isAdmin());
+
+        // O singură rulare: se creează o dată, de proprietar, doar cât jocul e deschis, doar la pasul 1 cu 0 puncte
+        // și 2 vieți. Nu există ștergere pentru jucător → nu există restart.
+        allow create: if isSignedIn() && uid == request.auth.uid && isActivePlayer(uid) && isOpen()
+          && shapeOk(request.resource.data)
+          && request.resource.data.createdAt == request.time
+          && request.resource.data.version == 1
+          && request.resource.data.step == 1 && request.resource.data.total == 0 && request.resource.data.lives == 2
+          && request.resource.data.phase == 'choosing' && request.resource.data.chosenIndex == null
+          && !('preTreasureTotal' in request.resource.data)
+          && doorsOk(1, request.resource.data.doors);
+
+        // Actualizare: doar proprietarul, doar cât jocul e deschis, doar dacă nu s-a terminat, doar cu versiunea
+        // următoare și doar printr-o tranziție validă.
+        allow update: if isSignedIn() && uid == request.auth.uid && isActivePlayer(uid) && isOpen()
+          && resource.data.finished == false
+          && shapeOk(request.resource.data)
+          && request.resource.data.version == resource.data.version + 1
+          && request.resource.data.createdAt == resource.data.createdAt
+          && validNext(resource.data, request.resource.data);
+
+        // Doar Admin poate șterge (ex. curățare de test din consolă).
+        allow delete: if isAdmin();
+      }
+
+      // ───────────────────────── REZULTATUL PUBLIC ─────────────────────────
+      match /treasureResults/{uid} {
+
+        function isOpen() {
+          let pub = get(/databases/$(database)/documents/weeklySurprises/$(gameweekId)).data;
+          return pub.get('bonusRevealed', false) == true && pub.get('bonusResolved', false) == false;
+        }
+        function privateRun() {
+          return get(/databases/$(database)/documents/weeklySurprises/$(gameweekId)/treasureRuns/$(uid)).data;
+        }
+        function stateOfPhase(phase) {
+          return phase == 'treasure' ? 'treasure' : (phase == 'cashedout' ? 'cashout' : 'lives-lost');
+        }
+        function resultShapeOk(d) {
+          return d.keys().hasOnly(['uid','nickname','points','state','finishedAt','source'])
+            && d.keys().hasAll(['uid','nickname','points','state','finishedAt','source'])
+            && d.uid == uid && d.nickname is string && d.points is int
+            && d.finishedAt == request.time;
+        }
+
+        // Public pentru jucătorii autentificați ai ligii (nu pentru anonimi).
+        allow read: if isSignedIn();
+
+        // Crearea o singură dată. JUCĂTORUL: doar al lui, doar cât Surprinza e deschisă, doar dacă jocul lui PRIVAT e
+        // terminat, cu puncte și stare IDENTICE cu cele din jocul privat și cu porecla din profilul lui.
+        // ADMIN: completează la rezolvare pentru cei neterminați / care n-au început.
+        allow create: if resultShapeOk(request.resource.data) && (
+          (isAdmin() && request.resource.data.source == 'admin'
+            && request.resource.data.state in ['treasure', 'cashout', 'lives-lost', 'ended', 'not-started']
+            && request.resource.data.points >= 0 && request.resource.data.points <= 100)
+          ||
+          (isSignedIn() && uid == request.auth.uid && isActivePlayer(uid) && isOpen()
+            && request.resource.data.source == 'player'
+            && privateRun().finished == true
+            && request.resource.data.points == (privateRun().phase == 'gameover' ? 0 : privateRun().total)
+            && request.resource.data.state == stateOfPhase(privateRun().phase)
+            && request.resource.data.nickname == get(/databases/$(database)/documents/users/$(uid)).data.get('nickname', ''))
+        );
+
+        // Un rezultat publicat NU se mai modifică (nici de jucător, nici de Admin). Doar Admin poate șterge.
+        allow update: if false;
+        allow delete: if isAdmin();
+      }
+
+      // ══════════════════════════════════════════════════════════════
+      // 👑🐸 PRINȚ SAU BROSCOI? (id intern „bursa-prietenilor”) — NOU, izolat.
+      // Portofoliul fiecărui jucător: private până la blocare, apoi publice pentru jucătorii logați.
+      // Câmpurile bursaActive / bursaLockAt / bursaClosed sunt scrise de Admin pe documentul părinte (regula lui de
+      // write, neatinsă: doar Admin). „Blocat” = Admin a închis SAU a început primul meci SAU etapa e rezolvată.
+      // ══════════════════════════════════════════════════════════════
+      match /bursaPicks/{uid} {
+
+        function bursaLocked() {
+          let pub = get(/databases/$(database)/documents/weeklySurprises/$(gameweekId)).data;
+          return pub.get('bursaClosed', false) == true
+            || pub.get('mainResolved', false) == true
+            || ('bursaLockAt' in pub && request.time >= pub.bursaLockAt);
+        }
+
+        function bursaOpenForEntry() {
+          let pub = get(/databases/$(database)/documents/weeklySurprises/$(gameweekId)).data;
+          return pub.get('bursaActive', false) == true
+            && pub.get('mainRevealed', false) == true
+            && !bursaLocked();
+        }
+
+        // Lista de participanți fixată la dezvăluire (secret/main.config.eligibleUids) — get() e verificare pe server.
+        function bursaEligible() {
+          return get(/databases/$(database)/documents/weeklySurprises/$(gameweekId)/secret/main).data;
+        }
+
+        function bursaPortfolioOk(d) {
+          return d.perf is list && d.contra is list && d.perf.size() == 2 && d.contra.size() == 2
+            && d.perf[0] is string && d.perf[1] is string && d.contra[0] is string && d.contra[1] is string
+            && d.perf[0] != uid && d.perf[1] != uid && d.contra[0] != uid && d.contra[1] != uid
+            && d.perf[0] != d.perf[1] && d.perf[0] != d.contra[0] && d.perf[0] != d.contra[1]
+            && d.perf[1] != d.contra[0] && d.perf[1] != d.contra[1] && d.contra[0] != d.contra[1];
+        }
+
+        // Propriul portofoliu: oricând. Ale celorlalți: doar după blocare. Admin: oricând.
+        allow read: if isSignedIn() && (isOwner(uid) || isAdmin() || bursaLocked());
+
+        // Salvare/modificare (până la blocare): doar al lui, doar jucător activ din lista fixată, exact 2 + 2 colegi,
+        // fără el însuși, fără dubluri, toți ACTIVI și din lista fixată. Adversarul poate fi ales.
+        allow create, update: if isSignedIn() && uid == request.auth.uid && isActivePlayer(uid)
+          && bursaOpenForEntry()
+          && request.resource.data.keys().hasOnly(['uid', 'perf', 'contra', 'updatedAt'])
+          && request.resource.data.keys().hasAll(['uid', 'perf', 'contra', 'updatedAt'])
+          && request.resource.data.uid == uid
+          && request.resource.data.updatedAt == request.time
+          && bursaPortfolioOk(request.resource.data)
+          && bursaEligible().type == 'bursa-prietenilor'
+          && bursaEligible().config.eligibleUids.hasAll([
+               uid, request.resource.data.perf[0], request.resource.data.perf[1],
+               request.resource.data.contra[0], request.resource.data.contra[1]
+             ])
+          && isActivePlayer(request.resource.data.perf[0]) && isActivePlayer(request.resource.data.perf[1])
+          && isActivePlayer(request.resource.data.contra[0]) && isActivePlayer(request.resource.data.contra[1]);
+
+        // Doar Admin poate șterge (corectare/debug). Jucătorul nu poate șterge.
+        allow delete: if isAdmin();
+      }
+
+      // Istoricul validărilor (pentru graficul duelului): conține doar punctele din meciuri ale tuturor — aceleași cifre
+      // ca instantaneul LIVE deja public. Citit de jucători, scris doar de Admin.
+      match /bursaMeta/{docId} {
+        allow read: if isSignedIn();
+        allow write: if isAdmin();
+      }
+
+      match /{document=**} {
+        allow read, write: if false;
+      }
+    }
+  }
+}

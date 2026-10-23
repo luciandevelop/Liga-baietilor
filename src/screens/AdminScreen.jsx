@@ -3567,9 +3567,9 @@ export default function AdminScreen({ onBack }) {
                 </button>
               </SectionCard>
 
-              <SectionCard title="👑🐸 Preview PRINȚ SAU BROSCOI? — MOCK · ZERO FIRESTORE">
+              <SectionCard title="👑🐸 Preview PRINȚ SAU BROSCOI? — MOCK · ZERO SCRIERI">
                 <p style={s.hint}>
-                  Demo izolat, 100% local — nu citește/scrie Firestore, nu activează Bursa pentru jucători.
+                  Demo izolat — nu scrie nimic în Firestore și nu activează jocul pentru jucători. Citește o singură dată profilele jucătorilor (nume și avatare), ca să arate cu jucătorii actuali.
                 </p>
                 <button type="button" style={s.smallBtn} onClick={() => setBursaPreviewOpen(true)}>
                   👁 Preview PRINȚ SAU BROSCOI?

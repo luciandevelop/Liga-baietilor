@@ -5,9 +5,10 @@ import {
   computeBursaResults, buildDuelSeries, buildBursaRanking, validatePortfolio, buildHistoryFromEntries, normalizePortfolio,
   BURSA_CATEGORY_PERF, BURSA_CATEGORY_CONTRA, BURSA_BASE_CAP, BURSA_PUBLIC_NAME,
 } from "../services/bursaService";
-import { loadBursaGame, loadBursaHistoryEntries, saveBursaPortfolio } from "../services/bursaGame";
+import { loadBursaGame, loadBursaHistoryEntries, loadBursaPlayers, saveBursaPortfolio } from "../services/bursaGame";
+import { auth } from "../firebase";
 import { subscribeToLiveSnapshot } from "../services/liveSnapshotStore";
-import { getBursaMockScenario, BURSA_MOCK_PLAYERS } from "../bursaMockData";
+import { getBursaMockScenario, BURSA_MOCK_PLAYERS, BURSA_MOCK_ME } from "../bursaMockData";
 
 // ══════════════════════════════════════════════════════════════════
 // 📈📉 BURSA PRIETENILOR — PLAY LEAGUE STOCK EXCHANGE (ETAPA 1B)
@@ -64,18 +65,59 @@ function toSlots(p) {
 }
 
 export default function BursaScreen({ previewMode, previewState = "A", gameweekId, uid }) {
-  if (previewMode) {
-    return (
-      <PlayersCtx.Provider value={BURSA_MOCK_PLAYERS}>
-        <BursaPreview key={previewState} stateId={previewState} />
-      </PlayersCtx.Provider>
-    );
-  }
+  if (previewMode) return <BursaPreviewShell previewState={previewState} />;
   if (gameweekId && uid) return <BursaLive gameweekId={gameweekId} uid={uid} />;
   return (
     <div style={s.page}>
       <p style={s.note}>{BURSA_PUBLIC_NAME} nu este încă activ.</p>
     </div>
+  );
+}
+
+// ── PREVIEW cu jucătorii ACTUALI ────────────────────────────────────────────────────────────────────────
+// Scenariile A–L rămân simulate (punctaje, portofolii, duele), dar numele și avatarele vin din profilele reale
+// (users/{uid}) — aceeași sursă ca Clasamentul — în loc de numele vechi scrise de mână în bursaMockData.js.
+// Se face O SINGURĂ citire a colecției users (reținută 2 min; Admin-only). ZERO scrieri.
+// Locurile din scenariu primesc, în ordine alfabetică, jucătorii activi actuali; „Tu” = contul Adminului logat.
+// Dacă sunt mai puțini jucători reali decât locuri, restul sunt „Jucător N” (fără avatar), niciodată nume vechi.
+export function buildPreviewPlayers(real, meUid) {
+  const keys = Object.keys(BURSA_MOCK_PLAYERS);
+  const activeKeys = keys.filter((k) => BURSA_MOCK_PLAYERS[k].active);
+  const inactiveKeys = keys.filter((k) => !BURSA_MOCK_PLAYERS[k].active);
+  const cmp = (a, b) => String(a.nickname).localeCompare(String(b.nickname), "ro");
+  const list = Object.values(real || {});
+  const act = list.filter((p) => p.active).sort(cmp);
+  const inact = list.filter((p) => !p.active).sort(cmp);
+  const me = act.find((p) => p.uid === meUid) || null;
+  const rest = act.filter((p) => p !== me);
+  const meIdx = activeKeys.indexOf(BURSA_MOCK_ME);
+  const out = {};
+  let r = 0;
+  activeKeys.forEach((k, i) => {
+    const p = (me && i === meIdx) ? me : (rest[r++] || null);
+    out[k] = { uid: k, nickname: p ? p.nickname : `Jucător ${i + 1}`, avatarId: p ? p.avatarId : null, active: true };
+  });
+  inactiveKeys.forEach((k, i) => {
+    const p = inact[i] || null;
+    out[k] = { uid: k, nickname: p ? p.nickname : "Jucător dezactivat", avatarId: p ? p.avatarId : null, active: false };
+  });
+  return out;
+}
+
+function BursaPreviewShell({ previewState }) {
+  const [players, setPlayers] = useState(null);
+  useEffect(() => {
+    let off = false;
+    loadBursaPlayers()
+      .then((real) => { if (!off) setPlayers(buildPreviewPlayers(real, auth.currentUser?.uid || null)); })
+      .catch(() => { if (!off) setPlayers(buildPreviewPlayers({}, null)); });
+    return () => { off = true; };
+  }, []);
+  if (!players) return <div style={s.page}><p style={s.note}>Se încarcă jucătorii…</p></div>;
+  return (
+    <PlayersCtx.Provider value={players}>
+      <BursaPreview key={previewState} stateId={previewState} />
+    </PlayersCtx.Provider>
   );
 }
 

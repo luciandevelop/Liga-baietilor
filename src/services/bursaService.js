@@ -26,7 +26,7 @@ export const BURSA_LABEL_FROG = "Broscoi";
 // POARTĂ DE ACTIVARE. Cât timp e false, jocul apare în catalog ca „în curând” și NU poate fi ales de Admin
 // (deci nu poate fi dezvăluit jucătorilor). Se trece pe true DOAR după ce regulile Firestore pentru
 // bursaPicks / bursaMeta sunt verificate și publicate.
-export const BURSA_ENABLED = false;
+export const BURSA_ENABLED = true;
 
 export const BURSA_CATEGORY_PERF = "perf";
 export const BURSA_CATEGORY_CONTRA = "contra";

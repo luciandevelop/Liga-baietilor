@@ -74,6 +74,9 @@ import HigherLowerScreen from "./HigherLowerScreen";
 // 👑🐸 PRINȚ SAU BROSCOI? — Preview mock (zero Firestore) + panou Admin pentru jocul real.
 import { BURSA_PREVIEW_STATES } from "../bursaMockData";
 import BursaScreen from "./BursaScreen";
+// 🐷 Pușculița — DOAR Preview DEMO (Etapa 2), fără scrieri.
+import { PUSCULITA_PREVIEW_STATES } from "../pusculitaMockData";
+import PusculitaScreen from "./PusculitaScreen";
 import BursaAdminPanel from "../components/BursaAdminPanel";
 import { appendBursaHistoryIfActive } from "../services/bursaGame";
 import { BURSA_TYPE_ID } from "../services/bursaService";
@@ -384,6 +387,8 @@ export default function AdminScreen({ onBack }) {
   const [higherLowerPreviewOpen, setHigherLowerPreviewOpen] = useState(false);
   const [bursaPreviewOpen, setBursaPreviewOpen] = useState(false);
   const [bursaPreviewState, setBursaPreviewState] = useState("A");
+  const [pusculitaPreviewOpen, setPusculitaPreviewOpen] = useState(false);
+  const [pusculitaPreviewState, setPusculitaPreviewState] = useState("A");
   const [higherLowerPreviewState, setHigherLowerPreviewState] = useState("A");
   // ── 🏴‍☠️ Comoara Blestemată — PREVIEW MOCK ONLY, runda asta. Nicio
   // stare de generare/Admin reală încă — doar toggle-ul de preview. ──
@@ -3567,6 +3572,15 @@ export default function AdminScreen({ onBack }) {
                 </button>
               </SectionCard>
 
+              <SectionCard title="🐷 Preview PUȘCULIȚA — DEMO · ZERO SCRIERI">
+                <p style={s.hint}>
+                  Demo izolat — nu scrie nimic în Firestore și nu activează jocul pentru jucători. Citește doar numele și avatarele jucătorilor activi.
+                </p>
+                <button type="button" style={s.smallBtn} onClick={() => setPusculitaPreviewOpen(true)}>
+                  👁 Preview PUȘCULIȚA
+                </button>
+              </SectionCard>
+
               <SectionCard title="👑🐸 Preview PRINȚ SAU BROSCOI? — MOCK · ZERO SCRIERI">
                 <p style={s.hint}>
                   Demo izolat — nu scrie nimic în Firestore și nu activează jocul pentru jucători. Citește o singură dată profilele jucătorilor (nume și avatare), ca să arate cu jucătorii actuali.
@@ -4251,6 +4265,29 @@ export default function AdminScreen({ onBack }) {
           </div>
           <div style={s.bbPreviewBody}>
             <HigherLowerScreen previewMode previewState={higherLowerPreviewState} embedded />
+          </div>
+        </div>
+      )}
+
+      {pusculitaPreviewOpen && (
+        <div style={s.bbPreviewOverlay}>
+          <div style={s.bbPreviewBar}>
+            <span style={s.bbPreviewLabel}>👁 PREVIEW PUȘCULIȚA — demo, nimic salvat</span>
+            <button type="button" style={s.bbPreviewCloseBtn} onClick={() => setPusculitaPreviewOpen(false)}>✕ Închide</button>
+          </div>
+          <div style={s.bbPreviewStates}>
+            {PUSCULITA_PREVIEW_STATES.map((st) => (
+              <button
+                key={st.id} type="button"
+                style={{ ...s.bbPreviewStateBtn, ...(pusculitaPreviewState === st.id ? s.bbPreviewStateBtnActive : {}) }}
+                onClick={() => setPusculitaPreviewState(st.id)}
+              >
+                {st.label}
+              </button>
+            ))}
+          </div>
+          <div style={s.bbPreviewBody}>
+            <PusculitaScreen previewMode previewState={pusculitaPreviewState} />
           </div>
         </div>
       )}

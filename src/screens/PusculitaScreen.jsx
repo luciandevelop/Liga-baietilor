@@ -5,6 +5,10 @@ import useNow from "../hooks/useNow";
 import { auth } from "../firebase";
 import { listActiveUserIds } from "../services/adminService";
 import { getUserPublicProfiles } from "../services/profilesService";
+import { subscribeToLiveSnapshot } from "../services/liveSnapshotStore";
+import { getPusculita, buildPusculitaInput, submitVote, getMyVote, listVoted } from "../services/pusculitaGame";
+import { getSeasonNumbers, formatPlayerNumber } from "../services/seasonNumbersService";
+import { computePusculita, roundThreshold } from "../services/pusculitaService";
 import {
   PUSCULITA_STOP_POT, PUSCULITA_PODIUM_CAP, VOTE_CONTINUE,
 } from "../services/pusculitaService";
@@ -63,20 +67,94 @@ const SHIRT_NUMBERS = ["001", "067", "101", "199", "456", "218", "240", "322", "
 
 const STATE_TAB = { C: "arena", F: "arena", H: "arena", D: "vote", E: "vote", G: "vote", I: "vote", J: "podium", M: "podium" };
 
-export default function PusculitaScreen({ previewMode, previewState = "A" }) {
-  if (!previewMode) {
-    return <div style={{ ...s.page, padding: 20 }}><p style={s.note}>Pușculița nu este încă activă.</p></div>;
-  }
-  return <PusculitaPreview stateId={previewState} />;
+export default function PusculitaScreen({ previewMode, previewState = "A", gameweekId, uid }) {
+  if (previewMode) return <PusculitaPreview stateId={previewState} />;
+  if (gameweekId && uid) return <PusculitaLive gameweekId={gameweekId} uid={uid} />;
+  return <div style={{ ...s.page, padding: 20 }}><p style={s.note}>Pușculița nu este încă activă.</p></div>;
 }
 
 function PusculitaPreview({ stateId }) {
   const view = useMemo(() => buildPusculitaMockView(stateId), [stateId]);
   const who = useRoster();
-  const [tab, setTab] = useState(STATE_TAB[stateId] || "arena");
+  return <Shell view={view} who={who} initialTab={STATE_TAB[stateId] || "arena"} resetKey={stateId} note={`DEMO · nimic nu se salvează${who.real ? "" : " · nume de test"}`} />;
+}
+
+// ══════════════════════════════════════════════════════════════════
+// JOCUL REAL — documentul jocului + punctele pe rundă din snapshot-ul LIVE
+// (listener-ul existent, partajat). Doar meciuri validate de Admin.
+// ══════════════════════════════════════════════════════════════════
+function PusculitaLive({ gameweekId, uid }) {
+  const [game, setGame] = useState(undefined);
+  const [live, setLive] = useState(null);
+  const [profiles, setProfiles] = useState({});
+  const [numbers, setNumbers] = useState({});
+  const [myVote, setMyVote] = useState(null);
+  const [voted, setVoted] = useState([]);
+  const [msg, setMsg] = useState("");
+  const [tick, setTick] = useState(0);
+
+  const reload = useCallback(() => setTick((x) => x + 1), []);
+  useEffect(() => subscribeToLiveSnapshot(gameweekId, (d) => { setLive(d?.pusculita || null); setTick((x) => x + 1); }), [gameweekId]);
+  useEffect(() => { getPusculita(gameweekId).then(setGame).catch(() => setGame(null)); }, [gameweekId, tick]);
+  useEffect(() => { getSeasonNumbers().then((d) => setNumbers(d?.numbers || {})).catch(() => {}); }, []);
+  useEffect(() => {
+    if (!game?.participants?.length) return;
+    getUserPublicProfiles(game.participants).then(setProfiles).catch(() => {});
+  }, [game?.participants?.length]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const input = useMemo(() => (game ? buildPusculitaInput(game, live) : null), [game, live]);
+  const result = useMemo(() => (input ? computePusculita(input) : null), [input]);
+  const voteEntry = result ? [...result.timeline].reverse().find((t) => t.vote) : null;
+  const openRound = voteEntry && !voteEntry.vote.closed ? voteEntry.index : null;
+
+  useEffect(() => {
+    if (openRound === null) { setVoted([]); setMyVote(null); return; }
+    getMyVote(gameweekId, openRound, uid).then(setMyVote);
+    listVoted(gameweekId, openRound).then(setVoted).catch(() => setVoted([]));
+  }, [gameweekId, uid, openRound, tick]);
+
+  const who = useMemo(() => ({
+    real: true,
+    name: (u) => profiles[u]?.nickname || "Jucător",
+    avatar: (u) => SEASON3_AVATAR_BY_UID[u] || profiles[u]?.avatarId || null,
+    number: (u) => formatPlayerNumber(numbers[u]),
+    me: uid,
+  }), [profiles, numbers, uid]);
+
+  if (game === undefined) return <div style={{ ...s.page, padding: 20 }}><p style={s.note}>Se încarcă Pușculița…</p></div>;
+  if (!game?.published || !result) return <div style={{ ...s.page, padding: 20 }}><p style={s.note}>Pușculița nu a fost încă publicată pentru această etapă.</p></div>;
+
+  const cur = result.timeline[result.timeline.length - 1];
+  const view = { input: { ...input, validatedInRound: live?.validated?.[`r${cur?.index ?? 0}`] ?? 0 }, result, me: uid };
+  const deadline = openRound !== null ? game.rounds?.[openRound]?.voteDeadline : null;
+  const deadlineMs = deadline?.toMillis ? deadline.toMillis() : null;
+  const initialTab = result.outcome.reason === "final" ? "podium" : voteEntry ? "vote" : "arena";
+
+  const real = openRound === null ? null : {
+    myVote, votedUids: voted, deadlineMs,
+    canVote: (game.alive?.[`r${openRound}`] || []).includes(uid) && (!deadlineMs || Date.now() < deadlineMs),
+    async onVote(v) {
+      if (!window.confirm(`Votezi ${v === VOTE_CONTINUE ? "○ CONTINUĂ" : "✕ STOP"}? Votul e definitiv.`)) return;
+      setMsg("");
+      try { await submitVote(gameweekId, openRound, uid, v); setMyVote(v); reload(); }
+      catch (e) { setMsg(`Votul nu a fost înregistrat: ${e.message || e.code}`); }
+    },
+  };
+
+  return (
+    <>
+      <Shell view={view} who={who} initialTab={initialTab} resetKey={`${result.outcome.reason}-${cur?.index}`} note="LIVE · doar meciuri validate" real={real} deadlineMs={deadlineMs} onRefresh={reload} />
+      {msg && <p style={{ ...s.note, color: C.red }}>{msg}</p>}
+    </>
+  );
+}
+
+// ── Cadrul comun (Preview și jocul real): bară sunet/9:16, antet, tab-uri ──
+function Shell({ view, who, initialTab, resetKey, note, real, deadlineMs, onRefresh }) {
+  const [tab, setTab] = useState(initialTab);
   const [vertical, setVertical] = useState(false);
   const [sound, setSound] = useState(isSoundOn());
-  useEffect(() => { setTab(STATE_TAB[stateId] || "arena"); }, [stateId]);
+  useEffect(() => { setTab(initialTab); }, [resetKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Sunet: preferința salvată; browserul cere o atingere înainte de redare.
   useEffect(() => {
@@ -98,14 +176,14 @@ function PusculitaPreview({ stateId }) {
   const content = (
     <div style={{ ...s.page, ...(vertical ? s.pageVertical : {}) }}>
       <style>{CSS}</style>
-      <Header view={view} who={who} />
+      <Header view={view} who={who} deadlineMs={deadlineMs} demo={!real && note?.startsWith("DEMO")} />
       <div style={s.tabs}>
         {[["arena", "Arena"], ["vote", "Sala voturilor"], ["podium", "Podium"]].map(([k, l]) => (
           <button key={k} type="button" onClick={() => setTab(k)} style={{ ...s.tab, ...(tab === k ? s.tabOn : {}) }}>{l}</button>
         ))}
       </div>
-      {tab === "arena" && <Arena key={`a-${stateId}`} view={view} who={who} />}
-      {tab === "vote" && <VoteHall key={`v-${stateId}`} view={view} who={who} />}
+      {tab === "arena" && <Arena key={`a-${resetKey}`} view={view} who={who} />}
+      {tab === "vote" && <VoteHall key={`v-${resetKey}`} view={view} who={who} real={real} />}
       {tab === "podium" && <Podium view={view} who={who} />}
     </div>
   );
@@ -113,10 +191,11 @@ function PusculitaPreview({ stateId }) {
   return (
     <>
       <div style={s.adminBar}>
-        <span style={s.adminNote}>DEMO · nimic nu se salvează{who.real ? "" : " · nume de test"}</span>
+        <span style={s.adminNote}>{note}</span>
         <span style={{ display: "flex", gap: 6 }}>
+          {onRefresh && <button type="button" style={s.adminBtn} onClick={onRefresh} aria-label="Actualizează">↻</button>}
           {soundBtn}
-          <button type="button" style={s.adminBtn} onClick={() => setVertical(true)}>📱 Mod 9:16</button>
+          <button type="button" style={s.adminBtn} onClick={() => setVertical(true)}>📱 9:16</button>
         </span>
       </div>
       {vertical ? (
@@ -179,7 +258,7 @@ function Avatar({ uid, who, size = 36, ring }) {
   return (
     <span style={{ position: "relative", display: "inline-flex", borderRadius: "50%", boxShadow: ring ? `0 0 0 2px ${ring}` : "none", flexShrink: 0 }}>
       <PlayerAvatar avatarId={who.avatar(uid)} nickname={who.name(uid)} size={size} />
-      {size >= 30 && <span style={{ ...s.shirt, fontSize: Math.max(8, size * 0.2) }}>{who.number(uid)}</span>}
+      {size >= 30 && who.number(uid) && <span style={{ ...s.shirt, fontSize: Math.max(8, size * 0.2) }}>{who.number(uid)}</span>}
     </span>
   );
 }
@@ -191,15 +270,20 @@ function currentStage(view) {
   return { last, outcome, roundIndex: last ? last.index : 0 };
 }
 
-function Header({ view, who }) {
+function Header({ view, who, deadlineMs, demo }) {
   const { last, outcome, roundIndex } = currentStage(view);
   const now = useNow(1000);
   const startRef = useRef(Date.now());
-  const remaining = Math.max(0, startRef.current + (outcome.reason === "vote_open" ? 9 * 3600e3 + 14 * 60e3 : 3 * 3600e3 + 20 * 60e3) - now);
+  // Demo: termene simulate. Joc real: doar termenul votului (dacă e deschis).
+  const target = demo
+    ? startRef.current + (outcome.reason === "vote_open" ? 9 * 3600e3 + 14 * 60e3 : 3 * 3600e3 + 20 * 60e3)
+    : deadlineMs;
+  const showTimer = outcome.status !== "ended" && Number.isFinite(target);
+  const remaining = Math.max(0, (target || now) - now);
   const h = Math.floor(remaining / 3600e3), m = Math.floor((remaining % 3600e3) / 60e3), sec = Math.floor((remaining % 60e3) / 1000);
   const timerLabel = outcome.status === "ended" ? "Joc încheiat"
-    : outcome.reason === "vote_open" ? "Votul se închide în"
-      : "Următorul meci în";
+    : outcome.reason === "vote_open" ? (showTimer ? "Votul se închide în" : "Vot în curs")
+      : demo ? "Următorul meci în" : `Runda ${roundIndex + 1} în desfășurare`;
   const rounds = view.input.rounds;
   return (
     <header style={s.header}>
@@ -215,14 +299,14 @@ function Header({ view, who }) {
           return (
             <div key={i} style={{ ...s.roundChip, ...(state === "live" ? s.roundLive : {}), ...(state === "done" ? s.roundDone : {}), ...(ended ? s.roundOff : {}) }}>
               <span style={s.roundNo}>Runda {i + 1}</span>
-              <span style={s.roundMeta}>{r.matchIds.length} meciuri · prag {r.thresholdPerMatch * r.matchIds.length}</span>
+              <span style={s.roundMeta}>{r.matchIds.length} meciuri · prag {roundThreshold(r, i)}</span>
             </div>
           );
         })}
       </div>
       <div style={s.timerRow}>
         <span style={s.timerLabel}>{timerLabel}</span>
-        {outcome.status !== "ended" && (
+        {showTimer && (
           <span style={s.timer}>{String(h).padStart(2, "0")}:{String(m).padStart(2, "0")}:{String(sec).padStart(2, "0")}</span>
         )}
         <span style={s.roundNow}>Runda {roundIndex + 1}{last?.provisional ? ` · ${view.input.validatedInRound ?? 0}/${view.input.rounds[roundIndex].matchIds.length} meciuri validate` : ""}</span>
@@ -485,18 +569,22 @@ function SpecialBanner({ outcome, who }) {
 // ══════════════════════════════════════════════════════════════════
 // SALA VOTURILOR
 // ══════════════════════════════════════════════════════════════════
-function VoteHall({ view, who }) {
+function VoteHall({ view, who, real }) {
   const voteEntry = [...view.result.timeline].reverse().find((t) => t.vote);
-  if (!voteEntry) return <p style={s.note}>În această stare nu există vot.</p>;
-  if (!voteEntry.vote.closed) return <VoteOpen entry={voteEntry} who={who} view={view} />;
+  if (!voteEntry) return <p style={s.note}>Încă nu există niciun vot.</p>;
+  if (!voteEntry.vote.closed) return <VoteOpen entry={voteEntry} who={who} view={view} real={real} />;
   return <VoteReveal entry={voteEntry} who={who} outcome={view.result.outcome} />;
 }
 
-function VoteOpen({ entry, who, view }) {
-  const [myVote, setMyVote] = useState(null);
+function VoteOpen({ entry, who, view, real }) {
+  const [demoVote, setDemoVote] = useState(null);
   const [copied, setCopied] = useState(false);
   const voters = entry.vote.rows;
-  const raw = view.input.votes?.[entry.index] || {};
+  // Joc real: doar „a votat” (alegerile rămân secrete). Demo: datele simulate.
+  const raw = real ? Object.fromEntries((real.votedUids || []).map((u) => [u, true])) : (view.input.votes?.[entry.index] || {});
+  const myVote = real ? real.myVote : demoVote;
+  const setMyVote = real ? (v) => real.onVote(v) : setDemoVote;
+  const canVote = real ? real.canVote && !real.myVote : true;
   const voted = voters.filter((r) => raw[r.uid]);
   const missing = voters.filter((r) => !raw[r.uid]);
   const meIn = voters.some((r) => r.uid === who.me);
@@ -513,7 +601,7 @@ function VoteOpen({ entry, who, view }) {
         <div style={s.voteTitle}>Votul după runda {entry.index + 1}</div>
         <div style={s.voteRule}>Jocul continuă doar dacă cel puțin <b>{need} din {voters.length}</b> votează CONTINUĂ. Cine nu votează e trecut la STOP.</div>
       </div>
-      {meIn && (
+      {meIn && (canVote || myVote) && (
         <div style={s.voteBtns}>
           <button type="button" className="pg-press" onClick={() => setMyVote(VOTE_CONTINUE)} disabled={!!myVote}
             style={{ ...s.voteBtn, ...s.voteO, ...(myVote === VOTE_CONTINUE ? s.voteChosen : {}), ...(myVote && myVote !== VOTE_CONTINUE ? s.voteDim : {}) }}>
@@ -525,7 +613,8 @@ function VoteOpen({ entry, who, view }) {
           </button>
         </div>
       )}
-      {myVote && <p style={s.note}>Vot confirmat (demo). Votul e definitiv și rămâne secret până la dezvăluire.</p>}
+      {myVote && <p style={s.note}>Vot confirmat{real ? "" : " (demo)"}. Votul e definitiv și rămâne secret până la dezvăluire.</p>}
+      {real && meIn && !myVote && !real.canVote && <p style={s.note}>Termenul votului a trecut. Fără vot, ești trecut automat la STOP.</p>}
 
       <div style={s.board}>
         <div style={s.boardHead}>

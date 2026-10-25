@@ -79,6 +79,9 @@ import { PUSCULITA_PREVIEW_STATES } from "../pusculitaMockData";
 import PusculitaScreen from "./PusculitaScreen";
 // 🔢 Numerele Sezonului 3 („Player 001”…), salvate separat de profiluri.
 import SeasonNumbersPanel from "../components/SeasonNumbersPanel";
+import PusculitaAdminPanel from "../components/PusculitaAdminPanel";
+import { buildRoundSnapshot, autoAdvancePusculita } from "../services/pusculitaGame";
+import { PUSCULITA_TYPE_ID } from "../services/pusculitaService";
 import BursaAdminPanel from "../components/BursaAdminPanel";
 import { appendBursaHistoryIfActive } from "../services/bursaGame";
 import { BURSA_TYPE_ID } from "../services/bursaService";
@@ -1821,6 +1824,8 @@ export default function AdminScreen({ onBack }) {
           const activeUids = await listActiveUserIds();
           const pointsByUid = {};
           result.rows.forEach((r) => { if (activeUids.has(r.uid)) pointsByUid[r.uid] = r.pointsFromMatches || 0; });
+          const pusculitaRounds = preGwSnap.exists() ? preGwSnap.data().pusculitaRounds : null;
+          const pusculitaLive = pusculitaRounds ? buildRoundSnapshot(pusculitaRounds, result.rows, result.matches, activeUids) : null;
           // ── FAZA 2 — scriere MONOTONĂ: dacă între timp a fost publicat un
           // snapshot pentru o versiune mai nouă (două validări rapide,
           // publicări terminate în ordine inversă), cel vechi NU îl mai
@@ -1834,8 +1839,16 @@ export default function AdminScreen({ onBack }) {
               liveSnapshotPointsByUid: pointsByUid,
               liveSnapshotUpdatedAt: serverTimestamp(),
               liveSnapshotResultsVersion: capturedResultsVersion,
+              // 🐷 Pușculița: punctele pe rundă, din aceleași rezultate validate (zero citiri în plus).
+              ...(pusculitaLive ? { liveSnapshotPusculita: pusculitaLive } : {}),
             });
           });
+          // 🐷 Pușculița: când o rundă tocmai s-a completat, confirmă supraviețuitorii și deschide votul.
+          if (pusculitaLive) {
+            autoAdvancePusculita(selectedGameweekId, pusculitaLive)
+              .then((acts) => { if (acts?.length) setPreviewMessage((prev) => (prev ? prev + " " : "") + acts.map((x) => `🐷 Runda ${x.round + 1} confirmată (${x.survivors} supraviețuitori)${x.voteOpened ? ", votul e deschis." : "."}`).join(" ")); })
+              .catch((e) => console.warn("Pușculița: avansarea automată a eșuat:", e?.code || e?.message));
+          }
           // PRINȚ SAU BROSCOI?: istoricul real al validărilor (pentru graficul duelului). Se face doar dacă etapa are jocul
           // activ; un eșec aici NU afectează publicarea snapshot-ului și nu se așteaptă.
           appendBursaHistoryIfActive(selectedGameweekId, capturedResultsVersion, pointsByUid)
@@ -3140,6 +3153,10 @@ export default function AdminScreen({ onBack }) {
 
                       {mainType === BURSA_TYPE_ID && mainRevealed && (
                         <BursaAdminPanel gameweekId={gw.id} />
+                      )}
+
+                      {mainType === PUSCULITA_TYPE_ID && (
+                        <PusculitaAdminPanel gameweekId={gw.id} />
                       )}
 
                       {mainType === "higherLower" && mainRevealed && (

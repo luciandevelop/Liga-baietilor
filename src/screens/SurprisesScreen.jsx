@@ -20,6 +20,8 @@ import BetBuilderScreen from "./BetBuilderScreen";
 import HigherLowerScreen from "./HigherLowerScreen";
 import BursaScreen from "./BursaScreen";
 import { BURSA_TYPE_ID } from "../services/bursaService";
+import PusculitaScreen from "./PusculitaScreen";
+import { PUSCULITA_TYPE_ID } from "../services/pusculitaService";
 import SabotajExperience from "../components/SabotajExperience";
 import RouletteExperience from "../components/RouletteExperience";
 import MysteryBoxExperience from "../components/MysteryBoxExperience";
@@ -373,6 +375,10 @@ export default function SurprisesScreen({ user, onBack }) {
 
                   {secretMain?.type === BURSA_TYPE_ID && (
                     <BursaScreen gameweekId={gameweek.id} uid={user.uid} />
+                  )}
+
+                  {secretMain?.type === PUSCULITA_TYPE_ID && (
+                    <PusculitaScreen gameweekId={gameweek.id} uid={user.uid} />
                   )}
 
                   {secretMain?.type === "sabotaj" && (

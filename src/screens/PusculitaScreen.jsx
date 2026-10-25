@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import PlayerAvatar from "../components/PlayerAvatar";
 import { font } from "../matchdayTheme";
 import useNow from "../hooks/useNow";
@@ -9,6 +9,17 @@ import {
   PUSCULITA_STOP_POT, PUSCULITA_PODIUM_CAP, VOTE_CONTINUE,
 } from "../services/pusculitaService";
 import { buildPusculitaMockView, PUSCULITA_MOCK_PLAYERS, PUSCULITA_MOCK_ME } from "../pusculitaMockData";
+import { getAvatarUrl } from "../assets/avatars";
+
+// Pușculița 3D (Three.js) se încarcă DOAR aici, la nevoie — restul aplicației
+// nu descarcă biblioteca 3D. Fără WebGL, rămâne pușculița 2D de mai jos.
+const PiggyBank3D = lazy(() => import("../components/PiggyBank3D"));
+function canUse3D() {
+  try {
+    const c = document.createElement("canvas");
+    return !!(window.WebGLRenderingContext && (c.getContext("webgl2") || c.getContext("webgl")));
+  } catch { return false; }
+}
 
 // ══════════════════════════════════════════════════════════════════
 // 🐷 PUȘCULIȚA — ECRANUL DE JOC (ETAPA 2: DOAR PREVIEW ADMIN / DEMO)
@@ -201,36 +212,124 @@ function Arena({ view, who }) {
   const timeline = view.result.timeline;
   const prevFallen = timeline.slice(0, last ? last.index : 0).flatMap((t) => t.eliminated);
   const current = last?.complete ? last.eliminated : [];
-  const [step, setStep] = useState(0); // câți din eliminații rundei au căzut deja
-  const [playing, setPlaying] = useState(false);
+  const potLabel = outcome.reason === "final" ? `${PUSCULITA_PODIUM_CAP}` : `${PUSCULITA_STOP_POT}`;
+
+  const [use3D, setUse3D] = useState(() => canUse3D());
+  const [run, setRun] = useState(0);          // schimbat la „Reia” → pușculița se reconstruiește
+  const [step, setStep] = useState(0);        // câți eliminați din runda curentă au fost trimiși în pușculiță
+  const [landed, setLanded] = useState(0);    // câți s-au așezat efectiv (contorul)
+  const [instant, setInstant] = useState(true);
+  const [auto, setAuto] = useState(false);
+  const [flyer, setFlyer] = useState(null);   // { uid, from:{x,y}, to:{x,y}, go }
+  const piggyRef = useRef(null);
+  const busy = !!flyer || step > landed;      // o monedă e în zbor sau încă cade
+
+  // ── 1. Avatarul se desprinde din clasament și zboară spre fanta pușculiței ──
+  const launch = useCallback(() => {
+    if (busy || step >= current.length) return;
+    const uid = current[step];
+    const row = document.querySelector(`[data-pg-uid="${uid}"]`);
+    const pig = piggyRef.current?.getBoundingClientRect();
+    const vh = window.innerHeight, vw = window.innerWidth;
+    let from = { x: vw / 2, y: vh - 40 };
+    if (row) {
+      const r = row.getBoundingClientRect();
+      if (r.top < vh && r.bottom > 0) from = { x: r.left + 52, y: r.top + r.height / 2 };
+    }
+    const to = pig ? { x: pig.left + pig.width * 0.49, y: pig.top + pig.height * 0.16 } : { x: vw / 2, y: 120 };
+    setInstant(false);
+    setFlyer({ uid, from, to, go: false });
+  }, [busy, step, current]);
 
   useEffect(() => {
-    if (!playing) return undefined;
-    if (step >= current.length) { setPlaying(false); return undefined; }
-    const t = setTimeout(() => setStep((x) => x + 1), step === 0 ? 700 : 1100);
-    return () => clearTimeout(t);
-  }, [playing, step, current.length]);
+    if (!flyer || flyer.go) return undefined;
+    const id = requestAnimationFrame(() => requestAnimationFrame(() => setFlyer((f) => (f ? { ...f, go: true } : f))));
+    return () => cancelAnimationFrame(id);
+  }, [flyer]);
 
-  const fallen = [...prevFallen, ...current.slice(0, step)];
-  const justFell = step > 0 ? current[step - 1] : null;
-  const potLabel = outcome.reason === "final" ? `${PUSCULITA_PODIUM_CAP}` : `${PUSCULITA_STOP_POT}`;
+  // ── 2. La sosire, avatarul devine monedă 3D și cade prin fantă ──
+  const onFlyEnd = () => {
+    setFlyer(null);
+    setStep((x) => x + 1);
+    if (!use3D) setLanded((x) => x + 1); // varianta 2D nu are cădere 3D
+  };
+  const onLanded = useCallback((id) => {
+    if (current.includes(id)) setLanded((x) => Math.min(current.length, x + 1));
+  }, [current]);
+
+  // ── Redare automată: următoarea eliminare doar după ce s-a așezat moneda precedentă ──
+  useEffect(() => {
+    if (!auto) return undefined;
+    if (landed >= current.length) { setAuto(false); return undefined; }
+    if (busy) return undefined;
+    const t = setTimeout(launch, step === 0 ? 400 : 650);
+    return () => clearTimeout(t);
+  }, [auto, busy, landed, step, current.length, launch]);
+
+  const skip = () => { setAuto(false); setFlyer(null); setInstant(true); setStep(current.length); setLanded(current.length); };
+  const reset = () => { setAuto(false); setFlyer(null); setInstant(true); setStep(0); setLanded(0); setRun((x) => x + 1); };
+
+  const fallenIds = [...prevFallen, ...current.slice(0, step)];
+  const coins = useMemo(() => fallenIds.map((uid) => ({
+    id: uid, avatarSrc: getAvatarUrl(who.avatar(uid)), number: who.number(uid), name: who.name(uid),
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  })), [fallenIds.join("|"), who]);
+  const countShown = prevFallen.length + landed;
+  const done = current.length > 0 && landed >= current.length;
 
   return (
     <section>
-      <PiggyBank fallen={fallen} justFell={playing || step > 0 ? justFell : null} who={who} value={potLabel} />
+      <div ref={piggyRef} style={s.piggy3dWrap}>
+        <div style={s.spot} aria-hidden="true" />
+        {use3D ? (
+          <Suspense fallback={<div style={s.piggyLoading}>Se pregătește pușculița…</div>}>
+            <PiggyBank3D key={run} coins={coins} instant={instant} onLanded={onLanded} onUnsupported={() => setUse3D(false)} height={330} />
+          </Suspense>
+        ) : (
+          <PiggyBank fallen={fallenIds} justFell={step > 0 ? current[step - 1] : null} who={who} value={potLabel} />
+        )}
+        {use3D && (
+          <div style={s.potOverlay}>
+            <span style={s.potNum}>{potLabel}</span>
+            <span style={s.potUnit}>PCT</span>
+          </div>
+        )}
+      </div>
+      <div style={s.potCaption}>
+        {countShown === 0 ? "Pușculița e goală. Încă." : `${countShown} ${countShown === 1 ? "jucător a căzut" : "jucători au căzut"} în pușculiță`}
+      </div>
 
       {current.length > 0 && (
         <div style={s.controls}>
-          <button type="button" style={s.ctrlMain} onClick={() => { setStep(0); setPlaying(true); }}>
-            {step === 0 ? "▶ Pornește eliminările" : "↺ Reia eliminările"}
-          </button>
-          <button type="button" style={s.ctrlGhost} onClick={() => { setPlaying(false); setStep(current.length); }}>Sari la final</button>
+          {!done && (
+            <button type="button" style={s.ctrlMain} onClick={() => { if (!auto) { setAuto(true); } else { setAuto(false); } }}>
+              {auto ? "⏸ Pauză" : step === 0 ? "▶ Pornește eliminările" : "▶ Continuă automat"}
+            </button>
+          )}
+          {!done && !auto && <button type="button" style={s.ctrlGhost} onClick={launch} disabled={busy}>Următoarea</button>}
+          {!done && <button type="button" style={s.ctrlGhost} onClick={skip}>Sari la final</button>}
+          {(step > 0 || done) && <button type="button" style={s.ctrlGhost} onClick={reset}>↺ Reia</button>}
         </div>
       )}
 
       <SpecialBanner outcome={outcome} who={who} />
 
-      {last && <Ranking entry={last} who={who} revealed={step} current={current} />}
+      {last && <Ranking entry={last} who={who} revealed={step + (flyer ? 1 : 0)} current={current} />}
+
+      {flyer && (
+        <div
+          onTransitionEnd={onFlyEnd}
+          style={{
+            ...s.flyer,
+            transform: flyer.go
+              ? `translate(${flyer.to.x - 28}px, ${flyer.to.y - 28}px) scale(0.75)`
+              : `translate(${flyer.from.x - 28}px, ${flyer.from.y - 28}px) scale(1.25)`,
+            transition: flyer.go ? "transform 820ms cubic-bezier(.55,0,.85,.4)" : "none",
+          }}
+        >
+          <Avatar uid={flyer.uid} who={who} size={56} ring={C.red} />
+        </div>
+      )}
     </section>
   );
 }
@@ -296,7 +395,7 @@ function Ranking({ entry, who, revealed, current }) {
           <div key={r.uid}>
             {i === zoneIdx && zoneIdx !== thresholdIdx && <Line color={C.red} label="Zona de eliminare" />}
             {i === thresholdIdx && <Line color={C.gold} label={`Prag minim: ${entry.threshold} PCT`} sub={zoneIdx === thresholdIdx ? "și zona de eliminare" : null} />}
-            <div className={shownOut ? "pg-out" : ""} style={{ ...s.row, ...(r.inEliminationZone ? s.rowZone : {}), ...(r.uid === who.me ? s.rowMe : {}) }}>
+            <div data-pg-uid={r.uid} className={shownOut ? "pg-out" : ""} style={{ ...s.row, ...(r.inEliminationZone ? s.rowZone : {}), ...(r.uid === who.me ? s.rowMe : {}) }}>
               <span style={s.rank}>{r.rank}</span>
               <Avatar uid={r.uid} who={who} size={34} ring={r.inEliminationZone ? C.red : C.mint} />
               <span style={s.rowName}>{who.name(r.uid)}{r.uid === who.me ? " (tu)" : ""}</span>
@@ -621,6 +720,10 @@ const s = {
   tab: { flex: 1, background: "transparent", border: "none", color: C.dim, padding: "9px 6px", borderRadius: 9, fontWeight: 700, fontSize: 13, cursor: "pointer" },
   tabOn: { background: C.floor, color: C.text, boxShadow: `inset 0 0 0 1px ${C.line}` },
 
+  piggy3dWrap: { position: "relative", margin: "0 -12px", minHeight: 330 },
+  piggyLoading: { height: 330, display: "flex", alignItems: "center", justifyContent: "center", color: C.dim, fontSize: 13 },
+  potOverlay: { position: "absolute", top: 10, left: 16, display: "flex", alignItems: "baseline", gap: 4, pointerEvents: "none" },
+  flyer: { position: "fixed", left: 0, top: 0, zIndex: 30000, pointerEvents: "none", filter: "drop-shadow(0 0 14px rgba(255,64,83,0.7))" },
   piggyWrap: { position: "relative", display: "flex", flexDirection: "column", alignItems: "center", padding: "10px 0 6px" },
   spot: { position: "absolute", top: -30, left: "50%", transform: "translateX(-50%)", width: 260, height: 300, background: "radial-gradient(closest-side, rgba(245,196,81,0.22), rgba(245,196,81,0))", pointerEvents: "none", animation: "pgSpot 5s ease-in-out infinite" },
   wire: { width: 2, height: 26, background: "linear-gradient(rgba(220,255,245,0), rgba(220,255,245,0.6))" },

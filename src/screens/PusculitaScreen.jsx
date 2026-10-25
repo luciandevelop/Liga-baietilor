@@ -10,6 +10,11 @@ import {
 } from "../services/pusculitaService";
 import { buildPusculitaMockView, PUSCULITA_MOCK_PLAYERS, PUSCULITA_MOCK_ME } from "../pusculitaMockData";
 import { getAvatarUrl } from "../assets/avatars";
+import {
+  isSoundOn, setSoundOn, onSoundChange, unlockAudio, startAmbience, stopAmbience, stopHeartbeat, startHeartbeat,
+  playClick, playStamp, playWhoosh, playCoinImpact, playCoinSettle, playStopVerdict, playContinueVerdict,
+  playPodiumHit, playVictory,
+} from "../services/pusculitaAudio";
 
 // Pușculița 3D (Three.js) se încarcă DOAR aici, la nevoie — restul aplicației
 // nu descarcă biblioteca 3D. Fără WebGL, rămâne pușculița 2D de mai jos.
@@ -70,7 +75,25 @@ function PusculitaPreview({ stateId }) {
   const who = useRoster();
   const [tab, setTab] = useState(STATE_TAB[stateId] || "arena");
   const [vertical, setVertical] = useState(false);
+  const [sound, setSound] = useState(isSoundOn());
   useEffect(() => { setTab(STATE_TAB[stateId] || "arena"); }, [stateId]);
+
+  // Sunet: preferința salvată; browserul cere o atingere înainte de redare.
+  useEffect(() => {
+    const off = onSoundChange(setSound);
+    let unlocked = false;
+    const firstTouch = () => {
+      if (unlocked) return; unlocked = true;
+      unlockAudio(); if (isSoundOn()) startAmbience();
+    };
+    window.addEventListener("pointerdown", firstTouch, { once: true });
+    return () => { off(); window.removeEventListener("pointerdown", firstTouch); stopAmbience(); stopHeartbeat(); };
+  }, []);
+  const soundBtn = (
+    <button type="button" style={s.adminBtn} onClick={() => setSoundOn(!sound)} aria-pressed={sound}>
+      {sound ? "🔊 Sunet ON" : "🔇 Sunet OFF"}
+    </button>
+  );
 
   const content = (
     <div style={{ ...s.page, ...(vertical ? s.pageVertical : {}) }}>
@@ -91,12 +114,16 @@ function PusculitaPreview({ stateId }) {
     <>
       <div style={s.adminBar}>
         <span style={s.adminNote}>DEMO · nimic nu se salvează{who.real ? "" : " · nume de test"}</span>
-        <button type="button" style={s.adminBtn} onClick={() => setVertical(true)}>📱 Mod 9:16</button>
+        <span style={{ display: "flex", gap: 6 }}>
+          {soundBtn}
+          <button type="button" style={s.adminBtn} onClick={() => setVertical(true)}>📱 Mod 9:16</button>
+        </span>
       </div>
       {vertical ? (
         <div style={s.verticalBack}>
           <div style={s.verticalFrame}>{content}</div>
           <button type="button" aria-label="Ieși din modul 9:16" style={s.verticalExit} onClick={() => setVertical(false)}>✕</button>
+          <button type="button" aria-label={sound ? "Oprește sunetul" : "Pornește sunetul"} style={s.verticalSound} onClick={() => setSoundOn(!sound)}>{sound ? "🔊" : "🔇"}</button>
         </div>
       ) : content}
     </>
@@ -238,6 +265,7 @@ function Arena({ view, who }) {
     }
     const to = pig ? { x: pig.left + pig.width * 0.49, y: pig.top + pig.height * 0.16 } : { x: vw / 2, y: 120 };
     setInstant(false);
+    playWhoosh();
     setFlyer({ uid, from, to, go: false });
   }, [busy, step, current]);
 
@@ -248,13 +276,18 @@ function Arena({ view, who }) {
   }, [flyer]);
 
   // ── 2. La sosire, avatarul devine monedă 3D și cade prin fantă ──
+  const impactTimer = useRef(null);
+  useEffect(() => () => clearTimeout(impactTimer.current), []);
   const onFlyEnd = () => {
     setFlyer(null);
     setStep((x) => x + 1);
-    if (!use3D) setLanded((x) => x + 1); // varianta 2D nu are cădere 3D
+    if (!use3D) { setLanded((x) => x + 1); playCoinImpact(); return; } // varianta 2D nu are cădere 3D
+    // În 3D, moneda stă ~0,9 s deasupra fantei, se întoarce și cade: impactul vine după ~1,5 s.
+    clearTimeout(impactTimer.current);
+    impactTimer.current = setTimeout(playCoinImpact, 1500);
   };
   const onLanded = useCallback((id) => {
-    if (current.includes(id)) setLanded((x) => Math.min(current.length, x + 1));
+    if (current.includes(id)) { setLanded((x) => Math.min(current.length, x + 1)); playCoinSettle(); }
   }, [current]);
 
   // ── Redare automată: următoarea eliminare doar după ce s-a așezat moneda precedentă ──
@@ -562,6 +595,16 @@ function VoteReveal({ entry, who, outcome }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cur, n, total, order, contCount, remaining]);
 
+  // Sunetele fazelor unui vot.
+  useEffect(() => {
+    if (!cur) return;
+    if (cur.phase === "enter") playClick();
+    else if (cur.phase === "suspense") startHeartbeat(cur.decisive || cur.last);
+    else if (cur.phase === "stamp") { stopHeartbeat(); playStamp(cur.row.vote === VOTE_CONTINUE); }
+    else if (cur.phase === "fly") playWhoosh();
+  }, [cur?.phase, cur?.row?.uid]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => () => stopHeartbeat(), []);
+
   // Mașina de stări a unui vot: intrare → suspans → ștampilă → zbor spre tabără.
   useEffect(() => {
     if (!cur) return undefined;
@@ -598,13 +641,16 @@ function VoteReveal({ entry, who, outcome }) {
   // Verdictul apare DOAR după ultimul vot.
   useEffect(() => {
     if (!done) return undefined;
-    const t = setTimeout(() => { setShowVerdict(true); setFullVerdict(true); }, 700);
+    const t = setTimeout(() => {
+      setShowVerdict(true); setFullVerdict(true);
+      if (entry.vote.decision === "continue") playContinueVerdict(); else playStopVerdict();
+    }, 700);
     const t2 = setTimeout(() => setFullVerdict(false), 3300);
     return () => { clearTimeout(t); clearTimeout(t2); };
   }, [done]);
 
-  const reset = () => { setAuto(false); setCur(null); setFlyer(null); setN(0); setShowVerdict(false); setFullVerdict(false); };
-  const skip = () => { setAuto(false); setCur(null); setFlyer(null); setN(total); };
+  const reset = () => { stopHeartbeat(); setAuto(false); setCur(null); setFlyer(null); setN(0); setShowVerdict(false); setFullVerdict(false); };
+  const skip = () => { stopHeartbeat(); setAuto(false); setCur(null); setFlyer(null); setN(total); };
 
   const curVoteO = cur?.row.vote === VOTE_CONTINUE;
   const stamped = cur && (cur.phase === "stamp" || cur.phase === "fly");
@@ -775,6 +821,12 @@ function Podium({ view, who }) {
     const ts = [setTimeout(() => setStage(1), 500), setTimeout(() => setStage(2), 1900), setTimeout(() => setStage(3), 3300), setTimeout(() => setStage(4), 4300)];
     return () => ts.forEach(clearTimeout);
   }, [run]);
+  const isFinal = outcome.reason === "final";
+  useEffect(() => {
+    if (!isFinal) return;
+    if (stage === 1 || stage === 2) playPodiumHit();
+    else if (stage === 3) playVictory();
+  }, [stage, isFinal]);
 
   if (outcome.reason !== "final") return <p style={s.note}>Podiumul apare după finală (stările J și M).</p>;
   const finalEntry = view.result.timeline[3];
@@ -891,6 +943,7 @@ const s = {
   adminBtn: { background: "transparent", border: "1px solid rgba(255,255,255,0.18)", color: "#e9eef7", borderRadius: 999, padding: "7px 12px", fontSize: 12.5, fontWeight: 700, cursor: "pointer" },
   verticalBack: { position: "fixed", inset: 0, zIndex: 20000, background: "#000", display: "flex", alignItems: "center", justifyContent: "center" },
   verticalFrame: { height: "100vh", maxWidth: "100vw", aspectRatio: "9 / 16", overflow: "hidden", background: C.bg },
+  verticalSound: { position: "fixed", top: 10, right: 52, zIndex: 20001, width: 34, height: 34, borderRadius: "50%", border: "none", background: "rgba(255,255,255,0.12)", color: "#fff", fontSize: 15, opacity: 0.6, cursor: "pointer" },
   verticalExit: { position: "fixed", top: 10, right: 10, zIndex: 20001, width: 34, height: 34, borderRadius: "50%", border: "none", background: "rgba(255,255,255,0.12)", color: "#fff", fontSize: 16, opacity: 0.5, cursor: "pointer" },
 
   header: { marginBottom: 12 },

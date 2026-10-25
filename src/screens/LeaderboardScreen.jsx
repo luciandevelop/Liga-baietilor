@@ -127,6 +127,11 @@ export default function LeaderboardScreen({ onBack, user, isAdmin }) {
   // apăsare (nu se încarcă toate dinainte, ca să nu tragem degeaba date
   // pentru etape pe care nimeni nu le mai deschide).
   const [pastGameweeks, setPastGameweeks] = useState([]);
+  // Etapele sezoanelor ANTERIOARE (ex. Sezonul 1) — aduse doar la apăsare,
+  // o singură dată per sezon (cache), ca deschiderea Clasamentului să nu
+  // facă citiri în plus.
+  const [olderSeasonGws, setOlderSeasonGws] = useState({}); // seasonId -> [etape] | "loading"
+  const [openOlderSeasonId, setOpenOlderSeasonId] = useState("");
   const [expandedGwId, setExpandedGwId] = useState("");
   const [expandedGwRows, setExpandedGwRows] = useState({}); // cache: gwId -> rows
   const [expandedGwLoading, setExpandedGwLoading] = useState("");
@@ -285,6 +290,22 @@ export default function LeaderboardScreen({ onBack, user, isAdmin }) {
   // O etapă anterioară se deschide DOAR la apăsare — dacă e deja deschisă,
   // apăsarea o închide (accordion simplu). Rândurile se aduc o singură
   // dată per etapă (cache local) — a doua deschidere nu mai cere Firestore.
+  async function toggleOlderSeason(sn) {
+    if (openOlderSeasonId === sn.id) { setOpenOlderSeasonId(""); return; }
+    setOpenOlderSeasonId(sn.id);
+    if (olderSeasonGws[sn.id]) return;
+    setOlderSeasonGws((prev) => ({ ...prev, [sn.id]: "loading" }));
+    try {
+      const gws = (await listGameweeks(sn.id))
+        .filter((g) => g.status === "completed")
+        .sort((a, b) => Number(b.number) - Number(a.number));
+      setOlderSeasonGws((prev) => ({ ...prev, [sn.id]: gws }));
+    } catch (err) {
+      console.error("Eroare la încărcarea etapelor sezonului:", err);
+      setOlderSeasonGws((prev) => ({ ...prev, [sn.id]: [] }));
+    }
+  }
+
   async function toggleExpandGw(gw) {
     if (expandedGwId === gw.id) {
       setExpandedGwId("");
@@ -407,6 +428,41 @@ export default function LeaderboardScreen({ onBack, user, isAdmin }) {
     return <SurpriseRegistryScreen seasonId={season?.id} onBack={() => setShowRegistry(false)} />;
   }
 
+  // Un bloc „etapă anterioară” (folosit pentru sezonul curent și pentru cele vechi).
+  function renderPastGw(gw) {
+                  const isOpen = expandedGwId === gw.id;
+                  const rows = expandedGwRows[gw.id] || [];
+                  const isLoadingThis = expandedGwLoading === gw.id;
+                  return (
+                    <div key={gw.id} style={s.pastGwBlock}>
+                      <button type="button" style={s.pastGwHeader} onClick={() => toggleExpandGw(gw)}>
+                        <span>{gw.title}</span>
+                        <span style={{ ...s.pastGwChevron, transform: isOpen ? "rotate(180deg)" : "rotate(0deg)" }}>▾</span>
+                      </button>
+                      {isOpen && (
+                        <div style={s.pastGwBody}>
+                          {isLoadingThis && <div style={s.centerBox}>Se încarcă…</div>}
+                          {!isLoadingThis && rows.map((r) => (
+                            <PlayerRankRow
+                              key={r.uid}
+                              rank={r.rank}
+                              nickname={profiles[r.uid]?.nickname || r.uid}
+                              avatarId={profiles[r.uid]?.avatarId}
+                              pointsFromMatches={r.pointsFromMatches}
+                              rankingBonus={r.rankingBonus}
+                              totalPoints={r.totalPoints}
+                              top3={r.rank <= 3}
+                              showBonus={true}
+                              onClick={() => handleOpenPlayer(r.uid, r.rank, gw.id, "etapa")}
+                            />
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  );
+
+  }
+
   return (
     <div style={{ ...layout.page, paddingBottom: 96 }}>
       <div style={layout.wrap}>
@@ -517,40 +573,25 @@ export default function LeaderboardScreen({ onBack, user, isAdmin }) {
             {pastGameweeks.length > 0 && (
               <div style={s.pastSection}>
                 <div style={s.pastSectionLabel}>Etape anterioare</div>
-                {pastGameweeks.map((gw) => {
-                  const isOpen = expandedGwId === gw.id;
-                  const rows = expandedGwRows[gw.id] || [];
-                  const isLoadingThis = expandedGwLoading === gw.id;
-                  return (
-                    <div key={gw.id} style={s.pastGwBlock}>
-                      <button type="button" style={s.pastGwHeader} onClick={() => toggleExpandGw(gw)}>
-                        <span>{gw.title}</span>
-                        <span style={{ ...s.pastGwChevron, transform: isOpen ? "rotate(180deg)" : "rotate(0deg)" }}>▾</span>
-                      </button>
-                      {isOpen && (
-                        <div style={s.pastGwBody}>
-                          {isLoadingThis && <div style={s.centerBox}>Se încarcă…</div>}
-                          {!isLoadingThis && rows.map((r) => (
-                            <PlayerRankRow
-                              key={r.uid}
-                              rank={r.rank}
-                              nickname={profiles[r.uid]?.nickname || r.uid}
-                              avatarId={profiles[r.uid]?.avatarId}
-                              pointsFromMatches={r.pointsFromMatches}
-                              rankingBonus={r.rankingBonus}
-                              totalPoints={r.totalPoints}
-                              top3={r.rank <= 3}
-                              showBonus={true}
-                              onClick={() => handleOpenPlayer(r.uid, r.rank, gw.id, "etapa")}
-                            />
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
+                {pastGameweeks.map((gw) => renderPastGw(gw))}
               </div>
             )}
+
+            {allSeasons.filter((sn) => sn.id !== season?.id).map((sn) => {
+              const list = olderSeasonGws[sn.id];
+              const open = openOlderSeasonId === sn.id;
+              return (
+                <div key={sn.id} style={s.pastSection}>
+                  <button type="button" style={s.pastGwHeader} onClick={() => toggleOlderSeason(sn)}>
+                    <span>Etapele din {sn.name || sn.id}</span>
+                    <span style={{ ...s.pastGwChevron, transform: open ? "rotate(180deg)" : "rotate(0deg)" }}>▾</span>
+                  </button>
+                  {open && list === "loading" && <div style={s.centerBox}>Se încarcă…</div>}
+                  {open && Array.isArray(list) && list.length === 0 && <div style={s.centerBox}>Nicio etapă finalizată.</div>}
+                  {open && Array.isArray(list) && list.map((gw) => renderPastGw(gw))}
+                </div>
+              );
+            })}
           </div>
         )}
 

@@ -334,14 +334,15 @@ function buildScene(wrap, notifyLanded) {
     c.grp.visible = true; c.grp.position.set(-0.05, 2.25, 0.25); c.grp.scale.setScalar(1.7); c.phase = "show"; c.t = 0;
   }
 
-  // ── Interacțiune: rotire limitată cu degetul, revine singură din profil ──
-  let dragging = false, lastX = 0, userRot = 0, userVel = 0;
+  // ── Interacțiune: rotire completă cu degetul (360°). După ~2,5 s fără
+  // atingere, pușculița revine lin din profil, unde se văd toate portretele. ──
+  let dragging = false, lastX = 0, userRot = 0, userVel = 0, idleSince = 0;
   const onDown = (e) => { dragging = true; lastX = e.clientX; };
-  const onUp = () => { dragging = false; };
+  const onUp = () => { if (dragging) idleSince = performance.now(); dragging = false; };
   const onMove = (e) => {
     if (!dragging) return;
-    const dx = e.clientX - lastX; lastX = e.clientX; userVel = dx * 0.006;
-    userRot = Math.max(-0.9, Math.min(0.9, userRot + userVel));
+    const dx = e.clientX - lastX; lastX = e.clientX; userVel = dx * 0.008;
+    userRot += userVel;
   };
   canvas.addEventListener("pointerdown", onDown);
   window.addEventListener("pointerup", onUp);
@@ -364,7 +365,13 @@ function buildScene(wrap, notifyLanded) {
 
   function step(dt) {
     const now = performance.now();
-    if (!dragging) { userVel *= 0.85; userRot += userVel; userRot *= 0.96; }
+    if (!dragging) {
+      userVel *= 0.92; userRot += userVel;
+      if (now - idleSince > 2500 && Math.abs(userVel) < 0.002) {
+        const home = Math.round(userRot / (Math.PI * 2)) * Math.PI * 2; // cel mai apropiat profil
+        userRot += (home - userRot) * Math.min(1, dt * 1.6);
+      }
+    }
     holder.rotation.y = (reduce ? 0 : Math.sin(now / 5200) * 0.32) + userRot;
     wobbleV += (-wobble * 18 - wobbleV * 3.2) * dt; wobble += wobbleV * dt;
     pig.rotation.z = wobble * 0.5 + Math.sin(now / 2400) * 0.012;

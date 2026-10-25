@@ -56,7 +56,7 @@ const C = {
 // Numerele de pe trening (decor, deterministe pe loc).
 const SHIRT_NUMBERS = ["001", "067", "101", "199", "456", "218", "240", "322", "333", "388", "007", "119", "212", "278", "096"];
 
-const STATE_TAB = { C: "arena", F: "arena", H: "arena", D: "vote", E: "vote", G: "vote", I: "vote", J: "podium" };
+const STATE_TAB = { C: "arena", F: "arena", H: "arena", D: "vote", E: "vote", G: "vote", I: "vote", J: "podium", M: "podium" };
 
 export default function PusculitaScreen({ previewMode, previewState = "A" }) {
   if (!previewMode) {
@@ -723,37 +723,102 @@ function VoteReveal({ entry, who, outcome }) {
 // ══════════════════════════════════════════════════════════════════
 // PODIUM (finala)
 // ══════════════════════════════════════════════════════════════════
+// ── Numărătoare animată a premiului ──
+function CountUp({ to, run, duration = 1100 }) {
+  const [v, setV] = useState(run ? 0 : to);
+  useEffect(() => {
+    if (!run) { setV(0); return undefined; }
+    let raf; const t0 = performance.now();
+    const tick = (t) => { const k = Math.min(1, (t - t0) / duration); setV(Math.round(to * (1 - Math.pow(1 - k, 3)))); if (k < 1) raf = requestAnimationFrame(tick); };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [to, run, duration]);
+  return <>{v}</>;
+}
+
+// ── Confetti aurii (canvas, ~2,8 s, se oprește singur) ──
+function Confetti({ fire }) {
+  const ref = useRef(null);
+  useEffect(() => {
+    if (!fire) return undefined;
+    if (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) return undefined;
+    const c = ref.current; if (!c) return undefined;
+    const ctx = c.getContext("2d"); const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    const w = c.clientWidth, h = c.clientHeight; c.width = w * dpr; c.height = h * dpr; ctx.scale(dpr, dpr);
+    const cols = ["#F5C451", "#FFE08A", "#E8B440", "#FF2D7A", "#2FBF9A", "#FFFFFF"];
+    const parts = Array.from({ length: 140 }, () => ({
+      x: w / 2 + (Math.random() - 0.5) * 60, y: h * 0.35, vx: (Math.random() - 0.5) * 9, vy: -Math.random() * 9 - 3,
+      r: Math.random() * 5 + 3, a: Math.random() * 6, va: (Math.random() - 0.5) * 0.4, c: cols[(Math.random() * cols.length) | 0],
+    }));
+    let raf; const t0 = performance.now();
+    const tick = (t) => {
+      const el = (t - t0) / 1000; ctx.clearRect(0, 0, w, h);
+      parts.forEach((p) => {
+        p.vy += 0.28; p.vx *= 0.99; p.x += p.vx; p.y += p.vy; p.a += p.va;
+        ctx.save(); ctx.globalAlpha = Math.max(0, 1 - el / 2.8); ctx.translate(p.x, p.y); ctx.rotate(p.a);
+        ctx.fillStyle = p.c; ctx.fillRect(-p.r, -p.r / 2.5, p.r * 2, p.r / 1.25); ctx.restore();
+      });
+      if (el < 2.8) raf = requestAnimationFrame(tick); else ctx.clearRect(0, 0, w, h);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [fire]);
+  return <canvas ref={ref} style={s.confetti} aria-hidden="true" />;
+}
+
 function Podium({ view, who }) {
   const { outcome } = view.result;
-  if (outcome.reason !== "final") return <p style={s.note}>Podiumul apare după finală (starea J).</p>;
+  const [stage, setStage] = useState(0); // 0 nimic · 1 locul 3 · 2 locul 2 · 3 locul 1 · 4 confetti
+  const [run, setRun] = useState(0);
+  useEffect(() => {
+    setStage(0);
+    const ts = [setTimeout(() => setStage(1), 500), setTimeout(() => setStage(2), 1900), setTimeout(() => setStage(3), 3300), setTimeout(() => setStage(4), 4300)];
+    return () => ts.forEach(clearTimeout);
+  }, [run]);
+
+  if (outcome.reason !== "final") return <p style={s.note}>Podiumul apare după finală (stările J și M).</p>;
   const finalEntry = view.result.timeline[3];
   const places = outcome.podium || [];
-  const ranksByCol = [2, 1, 3]; // stânga: locul 2, centru: locul 1, dreapta: locul 3
-  const heights = [120, 160, 96];
-  const medal = ["🥇", "🥈", "🥉"];
+  const cols = [2, 1, 3];                         // stânga: locul 2 · centru: locul 1 · dreapta: locul 3
+  const revealAt = { 3: 1, 2: 2, 1: 3 };         // în ce etapă apare fiecare loc
+  const heights = { 1: 170, 2: 125, 3: 95 };
+  const medal = { 1: "🥇", 2: "🥈", 3: "🥉" };
+
   return (
     <section>
-      <div style={s.podium}>
-        {ranksByCol.map((rk, k) => {
-          const g = places.find((p) => p.rank === rk) || null;
-          return (
-            <div key={k} style={s.podCol}>
-              <div style={s.podPeople}>
-                {g ? g.uids.map((uid) => (
-                  <div key={uid} className="pg-rise" style={s.podPerson}>
-                    <Avatar uid={uid} who={who} size={rk === 1 ? 64 : 48} ring={C.gold} />
-                    <div style={s.podName}>{who.name(uid)}</div>
-                    <div style={s.podPrize}>{outcome.prizes[uid]} PCT</div>
-                  </div>
-                )) : <div style={s.podEmpty}>—</div>}
+      <div style={s.podStage}>
+        <div className="pg-sweep-l" style={{ ...s.podBeam, left: "8%" }} aria-hidden="true" />
+        <div className="pg-sweep-r" style={{ ...s.podBeam, right: "8%" }} aria-hidden="true" />
+        <div style={s.podTitle}>Finala</div>
+        <div style={s.podium}>
+          {cols.map((rk) => {
+            const g = places.find((p) => p.rank === rk) || null;
+            const shown = stage >= revealAt[rk];
+            return (
+              <div key={rk} style={s.podCol}>
+                <div style={s.podPeople}>
+                  {g && shown ? g.uids.map((uid) => (
+                    <div key={`${run}-${uid}`} className="pg-rise" style={s.podPerson}>
+                      <span style={rk === 1 ? s.podCrownGlow : null}>
+                        <Avatar uid={uid} who={who} size={rk === 1 ? (g.uids.length > 1 ? 58 : 76) : 54} ring={C.gold} />
+                      </span>
+                      <div style={s.podName}>{who.name(uid)}</div>
+                      <div style={s.podPrize}>+<CountUp to={outcome.prizes[uid] || 0} run={shown} /> PCT</div>
+                    </div>
+                  )) : <div style={s.podEmpty}>{shown && !g ? "—" : ""}</div>}
+                </div>
+                <div style={{ ...s.podStep, height: shown ? heights[rk] : 8, ...(rk === 1 ? s.podStepFirst : {}) }}>
+                  {shown && <span style={s.podMedal}>{g ? medal[g.rank] : ""}</span>}
+                  {shown && <span style={s.podPlace}>{`Locul ${rk}`}</span>}
+                </div>
               </div>
-              <div style={{ ...s.podStep, height: heights[k] }}>
-                <span style={s.podMedal}>{g ? medal[g.rank - 1] : ""}</span>
-                <span style={s.podPlace}>{g ? `Locul ${g.rank}` : ""}</span>
-              </div>
-            </div>
-          );
-        })}
+            );
+          })}
+        </div>
+        <Confetti key={run} fire={stage >= 4} />
+      </div>
+      <div style={s.controls}>
+        <button type="button" style={s.ctrlGhost} onClick={() => setRun((x) => x + 1)}>↺ Reia ceremonia</button>
       </div>
       <div style={s.board}>
         <div style={s.boardHead}><span style={s.boardTitle}>Finala · prag {finalEntry.threshold} PCT</span></div>
@@ -799,6 +864,10 @@ const CSS = `
 @keyframes pgLand { 0% { transform: scale(0.2); opacity: 0; } 70% { transform: scale(1.2); opacity: 1; } 100% { transform: none; } }
 @keyframes pgFull { 0% { opacity: 0; } 12% { opacity: 1; } 85% { opacity: 1; } 100% { opacity: 0; } }
 .pg-full { animation: pgFull 2600ms ease-out both; }
+@keyframes pgSweepL { 0%,100% { transform: rotate(-18deg); } 50% { transform: rotate(14deg); } }
+@keyframes pgSweepR { 0%,100% { transform: rotate(18deg); } 50% { transform: rotate(-14deg); } }
+.pg-sweep-l { animation: pgSweepL 5.5s ease-in-out infinite; transform-origin: 50% 0; }
+.pg-sweep-r { animation: pgSweepR 6.2s ease-in-out infinite; transform-origin: 50% 0; }
 @keyframes pgBeam { 0%,100% { opacity: 0.55; } 50% { opacity: 0.85; } }
 .pg-enter { animation: pgEnter 650ms cubic-bezier(.2,.8,.2,1) both; }
 .pg-leave { animation: pgLeave 300ms ease-in both; }
@@ -943,14 +1012,20 @@ const s = {
   verdictTitle: { fontFamily: font.display, fontSize: 30, fontWeight: 700 },
   verdictText: { fontSize: 13.5, color: C.text, marginTop: 6, lineHeight: 1.45 },
 
-  podium: { display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, alignItems: "end", padding: "10px 0" },
+  podium: { position: "relative", zIndex: 1, display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, alignItems: "end", padding: "10px 0 0" },
+  podStage: { position: "relative", overflow: "hidden", borderRadius: 18, padding: "10px 8px 0", minHeight: 420, background: "radial-gradient(70% 55% at 50% 30%, rgba(245,196,81,0.16), rgba(0,0,0,0) 70%), rgba(0,0,0,0.35)" },
+  podBeam: { position: "absolute", top: -20, width: 90, height: 460, background: "linear-gradient(180deg, rgba(255,226,150,0.26), rgba(255,226,150,0) 80%)", clipPath: "polygon(40% 0, 60% 0, 100% 100%, 0 100%)", pointerEvents: "none" },
+  podTitle: { position: "relative", zIndex: 1, textAlign: "center", fontFamily: font.display, fontSize: 24, fontWeight: 700, color: C.gold, textShadow: "0 0 16px rgba(245,196,81,0.5)" },
+  podStepFirst: { background: "linear-gradient(180deg, rgba(245,196,81,0.55), rgba(245,196,81,0.12))", boxShadow: "0 0 30px rgba(245,196,81,0.35)" },
+  podCrownGlow: { display: "inline-flex", borderRadius: "50%", boxShadow: "0 0 30px rgba(245,196,81,0.6)" },
+  confetti: { position: "absolute", inset: 0, width: "100%", height: "100%", pointerEvents: "none", zIndex: 2 },
   podCol: { display: "flex", flexDirection: "column", alignItems: "center" },
   podPeople: { display: "flex", flexDirection: "column", alignItems: "center", gap: 8, marginBottom: 8 },
   podPerson: { display: "flex", flexDirection: "column", alignItems: "center", gap: 4 },
   podName: { fontWeight: 800, fontSize: 13, textAlign: "center", maxWidth: 110, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
   podPrize: { fontFamily: font.display, fontSize: 17, fontWeight: 700, color: C.gold },
   podEmpty: { color: C.faint, fontSize: 20, marginBottom: 20 },
-  podStep: { width: "100%", borderRadius: "10px 10px 0 0", background: "linear-gradient(180deg, rgba(245,196,81,0.35), rgba(245,196,81,0.08))", border: `1px solid rgba(245,196,81,0.4)`, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "flex-start", paddingTop: 8 },
+  podStep: { transition: "height 900ms cubic-bezier(.2,.9,.2,1)", width: "100%", borderRadius: "10px 10px 0 0", background: "linear-gradient(180deg, rgba(245,196,81,0.35), rgba(245,196,81,0.08))", border: `1px solid rgba(245,196,81,0.4)`, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "flex-start", paddingTop: 8 },
   podMedal: { fontSize: 26 },
   podPlace: { fontSize: 12, fontWeight: 800, color: C.gold },
 };

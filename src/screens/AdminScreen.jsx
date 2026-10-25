@@ -77,6 +77,8 @@ import BursaScreen from "./BursaScreen";
 // 🐷 Pușculița — DOAR Preview DEMO (Etapa 2), fără scrieri.
 import { PUSCULITA_PREVIEW_STATES } from "../pusculitaMockData";
 import PusculitaScreen from "./PusculitaScreen";
+// 🔢 Numerele Sezonului 3 („Player 001”…), salvate separat de profiluri.
+import SeasonNumbersPanel from "../components/SeasonNumbersPanel";
 import BursaAdminPanel from "../components/BursaAdminPanel";
 import { appendBursaHistoryIfActive } from "../services/bursaGame";
 import { BURSA_TYPE_ID } from "../services/bursaService";
@@ -2779,6 +2781,10 @@ export default function AdminScreen({ onBack }) {
                             </div>
                           ))}
                         </div>
+                      </SectionCard>
+
+                      <SectionCard title="🔢 Numerele Sezonului 3">
+                        <SeasonNumbersPanel players={players} seasons={seasons} />
                       </SectionCard>
 
                       {disabled.length > 0 && (

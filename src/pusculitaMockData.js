@@ -67,6 +67,7 @@ export const PUSCULITA_PREVIEW_STATES = [
   { id: "J", label: "J · Finala: podiumul" },
   { id: "K", label: "K · Doar 2 supraviețuitori: 200 fiecare" },
   { id: "L", label: "L · Zero supraviețuitori" },
+  { id: "M", label: "M · Finala: podium complet (3 câștigători)" },
 ];
 
 // Construiește intrarea pentru motor pentru fiecare stare.
@@ -111,6 +112,12 @@ export function getPusculitaMockInput(stateId) {
       const f = s3; const top = Math.max(...f.map((u) => R4[u])) + 30;
       const R4t = { ...R4, [f[0]]: top, [f[1]]: top };
       return { ...base, roundPoints: [R1, R2, R3, R4t], roundComplete: [true, true, true, true], votes: [contAll1, contAll2, votesAll(s3, O)], voteClosed: [true, true, true] };
+    }
+    case "M": {
+      // Trei câștigători diferiți (locurile 1, 2, 3); ceilalți doi finaliști sub prag.
+      const f = s3;
+      const R4m = { ...R4, [f[0]]: 420, [f[1]]: 360, [f[2]]: 300, [f[3]]: 240, [f[4]]: 190 };
+      return { ...base, roundPoints: [R1, R2, R3, R4m], roundComplete: [true, true, true, true], votes: [contAll1, contAll2, votesAll(s3, O)], voteClosed: [true, true, true] };
     }
     case "K": {
       // Runda 1: toți, cu excepția a doi jucători, sub prag.

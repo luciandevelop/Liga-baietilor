@@ -521,88 +521,199 @@ function seededShuffle(list, seed) {
   return a;
 }
 
+// ── Cifre care se rostogolesc la schimbare ──
+function RollNumber({ value, color }) {
+  return (
+    <span style={{ ...s.rollBox, color }}>
+      <span key={value} className="pg-roll" style={s.rollNum}>{value}</span>
+    </span>
+  );
+}
+
+// Durata fiecărei faze a unui vot (ms). Ultimul vot și voturile decisive sunt mai lente.
+const VOTE_TIMING = { enter: 650, suspense: 900, suspenseDecisive: 1700, stamp: 750, fly: 700 };
+
 function VoteReveal({ entry, who, outcome }) {
   const order = useMemo(() => seededShuffle(entry.vote.rows, entry.index * 97 + entry.vote.rows.length), [entry]);
-  const [n, setN] = useState(0);
+  const total = order.length;
+  const need = Math.floor(total / 2) + 1;
+  const [n, setN] = useState(0);            // voturi deja plasate în tabere
+  const [cur, setCur] = useState(null);     // { row, phase: enter|suspense|stamp|fly, decisive, last }
   const [auto, setAuto] = useState(false);
-  useEffect(() => {
-    if (!auto) return undefined;
-    if (n >= order.length) { setAuto(false); return undefined; }
-    const t = setTimeout(() => setN((x) => x + 1), n === 0 ? 600 : 1300);
-    return () => clearTimeout(t);
-  }, [auto, n, order.length]);
+  const [showVerdict, setShowVerdict] = useState(false);
+  const [fullVerdict, setFullVerdict] = useState(false);
+  const [flyer, setFlyer] = useState(null);
+  const contRef = useRef(null), stopRef = useRef(null), centerRef = useRef(null);
 
-  const shown = order.slice(0, n);
-  const cur = n > 0 ? order[n - 1] : null;
-  const cont = shown.filter((r) => r.vote === VOTE_CONTINUE);
-  const stop = shown.filter((r) => r.vote !== VOTE_CONTINUE);
-  const done = n >= order.length;
-  const need = Math.floor(order.length / 2) + 1;
+  const placed = order.slice(0, n);
+  const contCount = placed.filter((r) => r.vote === VOTE_CONTINUE).length;
+  const stopCount = n - contCount;
+  const remaining = total - n;
+  const done = n >= total;
   const decisionContinue = entry.vote.decision === "continue";
   const stopEach = !decisionContinue ? (Object.values(outcome.prizes || {})[0] || 0) : 0;
+
+  // Un vot e „decisiv” dacă, ÎNAINTE de dezvăluire, poate hotărî rezultatul (nu dezvăluie nimic).
+  const isDecisive = (c, r) => (c === need - 1) || (c + r === need);
+
+  const begin = useCallback(() => {
+    if (cur || n >= total) return;
+    setCur({ row: order[n], phase: "enter", decisive: isDecisive(contCount, remaining), last: n === total - 1 });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cur, n, total, order, contCount, remaining]);
+
+  // Mașina de stări a unui vot: intrare → suspans → ștampilă → zbor spre tabără.
+  useEffect(() => {
+    if (!cur) return undefined;
+    let t;
+    if (cur.phase === "enter") t = setTimeout(() => setCur((c) => ({ ...c, phase: "suspense" })), VOTE_TIMING.enter);
+    else if (cur.phase === "suspense") t = setTimeout(() => setCur((c) => ({ ...c, phase: "stamp" })), cur.decisive || cur.last ? VOTE_TIMING.suspenseDecisive : VOTE_TIMING.suspense);
+    else if (cur.phase === "stamp") t = setTimeout(() => {
+      const target = (cur.row.vote === VOTE_CONTINUE ? contRef : stopRef).current?.getBoundingClientRect();
+      const from = centerRef.current?.getBoundingClientRect();
+      if (target && from) {
+        setFlyer({ uid: cur.row.uid, from: { x: from.left + from.width / 2, y: from.top + from.height / 2 }, to: { x: target.left + target.width / 2, y: target.top + 70 }, go: false });
+      }
+      setCur((c) => ({ ...c, phase: "fly" }));
+    }, VOTE_TIMING.stamp);
+    else if (cur.phase === "fly") t = setTimeout(() => { setFlyer(null); setCur(null); setN((x) => x + 1); }, VOTE_TIMING.fly);
+    return () => clearTimeout(t);
+  }, [cur]);
+
+  useEffect(() => {
+    if (!flyer || flyer.go) return undefined;
+    const id = requestAnimationFrame(() => requestAnimationFrame(() => setFlyer((f) => (f ? { ...f, go: true } : f))));
+    return () => cancelAnimationFrame(id);
+  }, [flyer]);
+
+  // Redare automată
+  useEffect(() => {
+    if (!auto) return undefined;
+    if (done) { setAuto(false); return undefined; }
+    if (cur) return undefined;
+    const t = setTimeout(begin, n === 0 ? 300 : 450);
+    return () => clearTimeout(t);
+  }, [auto, cur, done, n, begin]);
+
+  // Verdictul apare DOAR după ultimul vot.
+  useEffect(() => {
+    if (!done) return undefined;
+    const t = setTimeout(() => { setShowVerdict(true); setFullVerdict(true); }, 700);
+    const t2 = setTimeout(() => setFullVerdict(false), 3300);
+    return () => { clearTimeout(t); clearTimeout(t2); };
+  }, [done]);
+
+  const reset = () => { setAuto(false); setCur(null); setFlyer(null); setN(0); setShowVerdict(false); setFullVerdict(false); };
+  const skip = () => { setAuto(false); setCur(null); setFlyer(null); setN(total); };
+
+  const curVoteO = cur?.row.vote === VOTE_CONTINUE;
+  const stamped = cur && (cur.phase === "stamp" || cur.phase === "fly");
 
   return (
     <section>
       <div style={s.voteIntro}>
-        <div style={s.voteTitle}>Dezvăluirea votului · după runda {entry.index + 1}</div>
-        <div style={s.voteRule}>Pentru CONTINUĂ e nevoie de <b>{need} din {order.length}</b>.</div>
+        <div style={s.voteTitle}>Dezvăluirea votului</div>
+        <div style={s.voteRule}>După runda {entry.index + 1} · CONTINUĂ are nevoie de <b>{need} din {total}</b></div>
       </div>
 
-      <div style={s.hall}>
-        <div style={{ ...s.hallCol, borderColor: C.mint }}>
-          <div style={{ ...s.hallSym, color: C.mint }}>○</div>
-          <div style={{ ...s.hallCount, color: C.mint }}>{cont.length}</div>
-          <div style={s.hallStack}>{cont.map((r) => <span key={r.uid} className="pg-slide-l"><Avatar uid={r.uid} who={who} size={28} /></span>)}</div>
-        </div>
-        <div style={s.hallCenter}>
-          {cur ? (
-            <div key={cur.uid} className="pg-stand" style={s.standing}>
-              <Avatar uid={cur.uid} who={who} size={72} ring={cur.vote === VOTE_CONTINUE ? C.mint : C.red} />
-              <div style={s.standName}>{who.name(cur.uid)}</div>
-              <div style={{ ...s.standVote, color: cur.vote === VOTE_CONTINUE ? C.mint : C.red }}>
-                {cur.vote === VOTE_CONTINUE ? "○ CONTINUĂ" : "✕ STOP"}
+      <div style={s.stage}>
+        <div style={s.stageBeam} aria-hidden="true" />
+        <div style={s.hall}>
+          <div ref={contRef} style={{ ...s.camp, borderColor: C.mint, boxShadow: stamped && curVoteO ? `0 0 26px ${C.mint}` : "none" }}>
+            <div style={{ ...s.hallSym, color: C.mint }}>○</div>
+            <RollNumber value={contCount} color={C.mint} />
+            <div style={s.campLabel}>CONTINUĂ</div>
+            <div style={s.hallStack}>{placed.filter((r) => r.vote === VOTE_CONTINUE).map((r) => <span key={r.uid} className="pg-land"><Avatar uid={r.uid} who={who} size={28} /></span>)}</div>
+          </div>
+
+          <div ref={centerRef} style={s.hallCenter}>
+            {cur ? (
+              <div key={cur.row.uid} style={s.standing}>
+                {stamped && (
+                  <div className="pg-stamp" style={{ ...s.bigStamp, color: curVoteO ? C.mint : C.red, textShadow: `0 0 30px ${curVoteO ? C.mint : C.red}` }} aria-hidden="true">
+                    {curVoteO ? "○" : "✕"}
+                  </div>
+                )}
+                <div className={cur.phase === "enter" ? "pg-enter" : cur.phase === "fly" ? "pg-leave" : ""} style={{ position: "relative", zIndex: 1 }}>
+                  {cur.phase === "suspense" && <span className="pg-pulse" style={s.pulseRing} aria-hidden="true" />}
+                  <Avatar uid={cur.row.uid} who={who} size={92} ring={stamped ? (curVoteO ? C.mint : C.red) : C.gold} />
+                </div>
+                <div style={s.standName}>{who.name(cur.row.uid)}</div>
+                <div style={{ ...s.standVote, color: stamped ? (curVoteO ? C.mint : C.red) : C.dim }}>
+                  {stamped ? (curVoteO ? "CONTINUĂ" : "STOP") : "…"}
+                </div>
+                {stamped && cur.row.auto && <div style={s.autoTag}>VOT AUTOMAT</div>}
+                {!stamped && (cur.last ? <div style={s.tension}>Ultimul vot</div> : cur.decisive ? <div style={s.tension}>Vot decisiv</div> : null)}
               </div>
-              {cur.auto && <div style={s.autoTag}>VOT AUTOMAT</div>}
-            </div>
-          ) : (
-            <div style={s.standEmpty}>Voturile sunt sigilate</div>
-          )}
+            ) : (
+              <div style={s.standEmpty}>{done ? "Toate voturile au fost dezvăluite" : n === 0 ? "Voturile sunt sigilate" : `Încă ${remaining} ${remaining === 1 ? "vot" : "voturi"}`}</div>
+            )}
+          </div>
+
+          <div ref={stopRef} style={{ ...s.camp, borderColor: C.red, boxShadow: stamped && !curVoteO ? `0 0 26px ${C.red}` : "none" }}>
+            <div style={{ ...s.hallSym, color: C.red }}>✕</div>
+            <RollNumber value={stopCount} color={C.red} />
+            <div style={s.campLabel}>STOP</div>
+            <div style={s.hallStack}>{placed.filter((r) => r.vote !== VOTE_CONTINUE).map((r) => <span key={r.uid} className="pg-land" style={{ position: "relative" }}><Avatar uid={r.uid} who={who} size={28} />{r.auto && <i style={s.autoDot} />}</span>)}</div>
+          </div>
         </div>
-        <div style={{ ...s.hallCol, borderColor: C.red }}>
-          <div style={{ ...s.hallSym, color: C.red }}>✕</div>
-          <div style={{ ...s.hallCount, color: C.red }}>{stop.length}</div>
-          <div style={s.hallStack}>{stop.map((r) => <span key={r.uid} className="pg-slide-r" style={{ position: "relative" }}><Avatar uid={r.uid} who={who} size={28} />{r.auto && <i style={s.autoDot} />}</span>)}</div>
+
+        <div style={s.meter} aria-hidden="true">
+          <div style={{ ...s.meterFill, width: `${(contCount / total) * 100}%` }} />
+          <div style={{ ...s.meterNeed, left: `${(need / total) * 100}%` }} />
         </div>
+        <div style={s.meterText}>{contCount} / {need} pentru CONTINUĂ · {remaining} {remaining === 1 ? "vot rămas" : "voturi rămase"}</div>
       </div>
 
       <div style={s.controls}>
-        {!done && <button type="button" style={s.ctrlMain} onClick={() => setAuto(true)} disabled={auto}>▶ Redare automată</button>}
-        {!done && <button type="button" style={s.ctrlGhost} onClick={() => { setAuto(false); setN((x) => Math.min(order.length, x + 1)); }}>Următorul vot</button>}
-        {(done || n > 0) && <button type="button" style={s.ctrlGhost} onClick={() => { setAuto(false); setN(0); }}>↺ Reia</button>}
+        {!done && <button type="button" style={s.ctrlMain} onClick={() => setAuto((a) => !a)}>{auto ? "⏸ Pauză" : n === 0 ? "▶ Redare automată" : "▶ Continuă automat"}</button>}
+        {!done && !auto && <button type="button" style={s.ctrlGhost} onClick={begin} disabled={!!cur}>Următorul vot</button>}
+        {!done && <button type="button" style={s.ctrlGhost} onClick={skip}>Sari la final</button>}
+        {(n > 0 || done) && <button type="button" style={s.ctrlGhost} onClick={reset}>↺ Reia</button>}
       </div>
 
-      {done && (
-        <div className="pg-verdict" style={{ ...s.verdict, borderColor: decisionContinue ? C.mint : C.red }}>
-          <div style={{ ...s.verdictTitle, color: decisionContinue ? C.mint : C.red }}>{decisionContinue ? "Jocul continuă" : "STOP"}</div>
-          <div style={s.verdictText}>
-            {decisionContinue
-              ? `${cont.length} din ${order.length} au ales să meargă mai departe. Runda ${entry.index + 2} începe la ora programată.`
-              : `Pușculița de ${PUSCULITA_STOP_POT} PCT se împarte la ${order.length}: ${stopEach} PCT fiecare.`}
+      {done && !showVerdict && <div style={s.verdictWait}>…</div>}
+
+      {done && showVerdict && (
+        <>
+          <div className="pg-verdict" style={{ ...s.verdict, borderColor: decisionContinue ? C.mint : C.red }}>
+            <div style={{ ...s.verdictTitle, color: decisionContinue ? C.mint : C.red }}>{decisionContinue ? "Jocul continuă" : "STOP"}</div>
+            <div style={s.verdictText}>
+              {decisionContinue
+                ? `${contCount} din ${total} au ales să meargă mai departe. Runda ${entry.index + 2} începe la ora programată.`
+                : `Pușculița de ${PUSCULITA_STOP_POT} PCT se împarte la ${total}: ${stopEach} PCT fiecare.`}
+            </div>
           </div>
+          <div style={s.board}>
+            <div style={s.boardHead}><span style={s.boardTitle}>Cine ce a votat</span></div>
+            {order.map((r) => (
+              <div key={r.uid} style={s.rowSmall}>
+                <Avatar uid={r.uid} who={who} size={26} />
+                <span style={s.rowName}>{who.name(r.uid)}</span>
+                <span style={{ color: r.vote === VOTE_CONTINUE ? C.mint : C.red, fontWeight: 800 }}>{r.vote === VOTE_CONTINUE ? "○ CONTINUĂ" : "✕ STOP"}</span>
+                {r.auto && <span style={s.autoTagSmall}>automat</span>}
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+
+      {fullVerdict && (
+        <div className="pg-full" style={{ ...s.fullVerdict, background: decisionContinue ? "radial-gradient(circle, rgba(47,191,154,0.35), rgba(0,0,0,0.85) 70%)" : "radial-gradient(circle, rgba(255,64,83,0.35), rgba(0,0,0,0.85) 70%)" }} onClick={() => setFullVerdict(false)}>
+          <div className="pg-stamp" style={{ ...s.fullSym, color: decisionContinue ? C.mint : C.red }}>{decisionContinue ? "○" : "✕"}</div>
+          <div style={{ ...s.fullTitle, color: decisionContinue ? C.mint : C.red }}>{decisionContinue ? "JOCUL CONTINUĂ" : "STOP"}</div>
+          <div style={s.fullSub}>{contCount} CONTINUĂ · {stopCount} STOP</div>
         </div>
       )}
 
-      {done && (
-        <div style={s.board}>
-          <div style={s.boardHead}><span style={s.boardTitle}>Cine ce a votat</span></div>
-          {order.map((r) => (
-            <div key={r.uid} style={s.rowSmall}>
-              <Avatar uid={r.uid} who={who} size={26} />
-              <span style={s.rowName}>{who.name(r.uid)}</span>
-              <span style={{ color: r.vote === VOTE_CONTINUE ? C.mint : C.red, fontWeight: 800 }}>{r.vote === VOTE_CONTINUE ? "○ CONTINUĂ" : "✕ STOP"}</span>
-              {r.auto && <span style={s.autoTagSmall}>automat</span>}
-            </div>
-          ))}
+      {flyer && (
+        <div style={{
+          ...s.flyer,
+          transform: flyer.go ? `translate(${flyer.to.x - 30}px, ${flyer.to.y - 30}px) scale(0.5)` : `translate(${flyer.from.x - 30}px, ${flyer.from.y - 30}px) scale(1.4)`,
+          transition: flyer.go ? `transform ${VOTE_TIMING.fly - 60}ms cubic-bezier(.4,0,.2,1)` : "none",
+          filter: `drop-shadow(0 0 14px ${flyer && order.find((r) => r.uid === flyer.uid)?.vote === VOTE_CONTINUE ? C.mint : C.red})`,
+        }}>
+          <Avatar uid={flyer.uid} who={who} size={60} />
         </div>
       )}
     </section>
@@ -680,7 +791,23 @@ const CSS = `
 .pg-rise { animation: pgRise 600ms ease-out both; }
 .pg-sway { animation: pgSway 6s ease-in-out infinite; transform-origin: 50% -40px; }
 .pg-press:active { transform: scale(0.96); }
+@keyframes pgEnter { 0% { transform: translateY(70px) scale(0.55); opacity: 0; filter: blur(6px); } 70% { opacity: 1; filter: blur(0); } 100% { transform: none; } }
+@keyframes pgLeave { to { opacity: 0; transform: scale(0.6); } }
+@keyframes pgPulse { 0% { transform: scale(0.9); opacity: 0.9; } 100% { transform: scale(1.8); opacity: 0; } }
+@keyframes pgStamp { 0% { transform: scale(3) rotate(-14deg); opacity: 0; } 55% { transform: scale(0.92) rotate(2deg); opacity: 1; } 100% { transform: scale(1) rotate(0); opacity: 0.9; } }
+@keyframes pgRoll { from { transform: translateY(100%); opacity: 0; } to { transform: none; opacity: 1; } }
+@keyframes pgLand { 0% { transform: scale(0.2); opacity: 0; } 70% { transform: scale(1.2); opacity: 1; } 100% { transform: none; } }
+@keyframes pgFull { 0% { opacity: 0; } 12% { opacity: 1; } 85% { opacity: 1; } 100% { opacity: 0; } }
+.pg-full { animation: pgFull 2600ms ease-out both; }
+@keyframes pgBeam { 0%,100% { opacity: 0.55; } 50% { opacity: 0.85; } }
+.pg-enter { animation: pgEnter 650ms cubic-bezier(.2,.8,.2,1) both; }
+.pg-leave { animation: pgLeave 300ms ease-in both; }
+.pg-pulse { animation: pgPulse 900ms ease-out infinite; }
+.pg-stamp { animation: pgStamp 520ms cubic-bezier(.2,.8,.2,1) both; }
+.pg-roll { display: inline-block; animation: pgRoll 380ms cubic-bezier(.2,.8,.2,1) both; }
+.pg-land { display: inline-flex; animation: pgLand 420ms ease-out both; }
 @media (prefers-reduced-motion: reduce) {
+  .pg-enter, .pg-leave, .pg-pulse, .pg-stamp, .pg-roll, .pg-land,
   .pg-fall, .pg-out, .pg-stand, .pg-slide-l, .pg-slide-r, .pg-verdict, .pg-rise, .pg-sway { animation: none !important; }
 }
 `;
@@ -781,13 +908,31 @@ const s = {
   voterName: { fontSize: 12, fontWeight: 700, maxWidth: "100%", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
   voterState: { fontSize: 10.5, color: C.dim },
 
-  hall: { display: "grid", gridTemplateColumns: "1fr 1.25fr 1fr", gap: 8, alignItems: "stretch", minHeight: 260 },
+  hall: { display: "grid", gridTemplateColumns: "1fr 1.3fr 1fr", gap: 8, alignItems: "stretch", minHeight: 300, position: "relative" },
+  stage: { position: "relative", background: "radial-gradient(90% 70% at 50% 0%, rgba(245,196,81,0.10), rgba(0,0,0,0) 60%), rgba(0,0,0,0.35)", borderRadius: 18, padding: "12px 8px 10px", overflow: "hidden" },
+  stageBeam: { position: "absolute", top: -40, left: "50%", width: 220, height: 380, transform: "translateX(-50%)", background: "linear-gradient(180deg, rgba(255,220,140,0.22), rgba(255,220,140,0) 75%)", clipPath: "polygon(42% 0, 58% 0, 100% 100%, 0 100%)", pointerEvents: "none", animation: "pgBeam 3.5s ease-in-out infinite" },
+  camp: { border: "1.5px solid", borderRadius: 14, padding: "8px 4px", display: "flex", flexDirection: "column", alignItems: "center", background: "rgba(0,0,0,0.3)", transition: "box-shadow 300ms" },
+  campLabel: { fontSize: 11, fontWeight: 800, letterSpacing: 0.5, color: C.dim, marginBottom: 2 },
+  rollBox: { display: "inline-block", overflow: "hidden", height: 38, fontFamily: font.display, fontSize: 32, fontWeight: 700, lineHeight: "38px", fontVariantNumeric: "tabular-nums" },
+  rollNum: { display: "inline-block" },
+  bigStamp: { position: "absolute", top: -34, left: "50%", marginLeft: -100, width: 200, height: 200, textAlign: "center", fontSize: 200, lineHeight: "200px", fontWeight: 200, pointerEvents: "none", zIndex: 0 },
+  pulseRing: { position: "absolute", inset: -4, borderRadius: "50%", border: `2px solid ${C.gold}`, pointerEvents: "none" },
+  tension: { marginTop: 4, fontSize: 12, fontWeight: 800, color: "#041614", background: C.gold, borderRadius: 999, padding: "3px 10px" },
+  meter: { position: "relative", height: 8, borderRadius: 999, background: "rgba(255,64,83,0.25)", marginTop: 12, overflow: "visible" },
+  meterFill: { position: "absolute", left: 0, top: 0, bottom: 0, borderRadius: 999, background: C.mint, transition: "width 500ms cubic-bezier(.2,.8,.2,1)" },
+  meterNeed: { position: "absolute", top: -5, width: 2, height: 18, background: C.gold, boxShadow: `0 0 8px ${C.gold}` },
+  meterText: { fontSize: 12, color: C.dim, textAlign: "center", marginTop: 8 },
+  fullVerdict: { position: "fixed", inset: 0, zIndex: 25000, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 6, cursor: "pointer" },
+  fullSym: { fontSize: 180, lineHeight: 1, fontWeight: 200 },
+  fullTitle: { fontFamily: font.display, fontSize: 44, fontWeight: 700, letterSpacing: 1, textAlign: "center", padding: "0 16px" },
+  fullSub: { fontSize: 15, color: "#EAF6F2", fontWeight: 700 },
+  verdictWait: { textAlign: "center", color: C.gold, fontSize: 28, letterSpacing: 6, margin: "14px 0" },
   hallCol: { border: "1.5px solid", borderRadius: 14, padding: "8px 4px", display: "flex", flexDirection: "column", alignItems: "center", background: "rgba(0,0,0,0.25)" },
   hallSym: { fontSize: 38, lineHeight: 1, fontWeight: 300 },
   hallCount: { fontFamily: font.display, fontSize: 30, fontWeight: 700, fontVariantNumeric: "tabular-nums" },
   hallStack: { display: "flex", flexWrap: "wrap", gap: 4, justifyContent: "center", marginTop: 6 },
   hallCenter: { display: "flex", alignItems: "center", justifyContent: "center", background: "radial-gradient(closest-side, rgba(245,196,81,0.12), rgba(0,0,0,0))", borderRadius: 14 },
-  standing: { display: "flex", flexDirection: "column", alignItems: "center", gap: 6, textAlign: "center" },
+  standing: { position: "relative", display: "flex", flexDirection: "column", alignItems: "center", gap: 6, textAlign: "center", paddingTop: 18 },
   standName: { fontWeight: 800, fontSize: 15 },
   standVote: { fontFamily: font.display, fontSize: 18, fontWeight: 700 },
   standEmpty: { color: C.faint, fontSize: 13, textAlign: "center", padding: 10 },

@@ -115,6 +115,8 @@ export function subscribeToLiveSnapshot(gameweekId, callback) {
             updatedAt: snap.data().liveSnapshotUpdatedAt || null,
             snapshotVersion: snap.data().liveSnapshotResultsVersion ?? null,
             resultsVersion: snap.data().resultsVersion || 0,
+            // 🐷 Pușculița: punctele pe rundă (doar meciuri validate), scrise de Admin în același snapshot.
+            pusculita: snap.data().liveSnapshotPusculita || null,
             // "estimate": pe dispozitivul Adminului, timestamp-ul încă nescris pe server nu e null.
             resultsVersionAtMs: (() => { const t = snap.data({ serverTimestamps: "estimate" }).resultsVersionAt; return t?.toMillis ? t.toMillis() : null; })(),
           }

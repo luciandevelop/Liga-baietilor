@@ -1,6 +1,8 @@
 import { collection, doc, getDoc, getDocs, setDoc, query, where, runTransaction, serverTimestamp, deleteField } from "firebase/firestore";
 import { db } from "../firebase";
-import { listActiveUserIds, listGameweeks, getLiveGameweekPoints, isGameweekReadyToResolve, getLastCompletedGameweek, listGameweekScores, listMatches } from "./adminService";
+import { listActiveUserIds, listGameweeks, getLiveGameweekPoints, isGameweekReadyToResolve, getLastCompletedGameweek, listGameweekScores, listMatches, previewGameweekResults } from "./adminService";
+import { PUSCULITA_TYPE_ID, computePusculita } from "./pusculitaService";
+import { getPusculita, buildPusculitaInput, buildRoundSnapshot } from "./pusculitaGame";
 import { teamScore } from "./scoringEngine";
 import {
   BURSA_TYPE_ID, BURSA_PUBLIC_NAME, BURSA_ENABLED, computeBursaResults, normalizePortfolio, rankingUidsFor, summarizeBursaResult,
@@ -29,6 +31,8 @@ export const MAIN_CATALOG = [
   // Prinț sau Broscoi? — id intern „bursa-prietenilor”. Rămâne „în curând” (neselectabil de Admin) cât timp
   // BURSA_ENABLED (bursaService.js) e false, adică până când regulile Firestore sunt verificate și publicate.
   { id: BURSA_TYPE_ID, label: BURSA_PUBLIC_NAME, active: BURSA_ENABLED },
+  // 🐷 Pușculița — se configurează și se publică din panoul ei (Admin → Surprize), ÎNAINTE de Dezvăluire.
+  { id: PUSCULITA_TYPE_ID, label: "🐷 Pușculița", active: true },
 ];
 
 export const BONUS_CATALOG = [
@@ -274,6 +278,11 @@ export async function revealMain(gameweekId) {
   let bursaLockAt = null;
   {
     const preSecret = await getDoc(secretRef);
+    // 🐷 Pușculița: nu se dezvăluie fără configurația publicată (runde, praguri, termene).
+    if (preSecret.exists() && preSecret.data().type === PUSCULITA_TYPE_ID) {
+      const game = await getPusculita(gameweekId);
+      if (!game?.published) throw new Error("Pușculița nu e publicată: configureaz-o și apasă „Publică și blochează” înainte de Dezvăluire.");
+    }
     if (preSecret.exists() && preSecret.data().type === BURSA_TYPE_ID) {
       const ms = await listMatches(gameweekId);
       const first = ms.find((m) => m.kickoffAt && typeof m.kickoffAt.toMillis === "function");
@@ -759,6 +768,25 @@ export async function resolveMain(gameweekId) {
     bursaActiveSet = await listActiveUserIds();
   }
 
+  // 🐷 Pușculița: premiile se calculează ÎNAINTE de tranzacție, cu motorul unic
+  // (pusculitaService), din punctele OFICIALE pe rundă (aceleași rezultate ca la
+  // finalizare) și voturile dezvăluite. Dacă jocul nu e încheiat (un vot
+  // nedezvăluit), Rezolvarea REFUZĂ — nu marchează rezolvat cu 0 puncte.
+  let pusculitaPrizes = null;
+  if (preType === PUSCULITA_TYPE_ID) {
+    const game = await getPusculita(gameweekId);
+    if (!game?.published) throw new Error("Pușculița nu e publicată.");
+    const gwRes = await previewGameweekResults(gameweekId);
+    const roundsMap = {}; (game.rounds || []).forEach((r, i) => { roundsMap[`r${i}`] = r.matchIds || []; });
+    const live = buildRoundSnapshot(roundsMap, gwRes.rows, gwRes.matches, new Set(game.participants || []));
+    const res = computePusculita(buildPusculitaInput(game, live));
+    if (res.outcome.status !== "ended") {
+      const why = res.outcome.reason === "vote_open" ? `dezvăluie mai întâi votul de după runda ${(res.outcome.currentRound ?? 0) + 1}` : "nu toate rundele sunt încheiate";
+      throw new Error(`Pușculița nu s-a încheiat: ${why}.`);
+    }
+    pusculitaPrizes = res.prizesByUid;
+  }
+
   let triviaBaseByUid = {};
   if (preType === "trivia") {
     const questions = preSecretSnap.data().config?.questions || [];
@@ -975,6 +1003,11 @@ export async function resolveMain(gameweekId) {
       Object.values(res.byUid).forEach((r) => {
         const opp = r.opponentUid ? res.byUid[r.opponentUid] : null;
         toWrite.push({ uid: r.uid, points: r.total, matchScore: r.raw, opponentMatchScore: opp ? opp.raw : null, bursa: summarizeBursaResult(r) });
+      });
+    } else if (mainType === PUSCULITA_TYPE_ID) {
+      if (!pusculitaPrizes) throw new Error("Pușculița: calculul premiilor lipsește — reîncearcă.");
+      Object.entries(pusculitaPrizes).forEach(([uid, points]) => {
+        toWrite.push({ uid, points, matchScore: null, opponentMatchScore: null });
       });
     } else if (mainType === "sabotaj") {
       // Transferurile au fost DEJA calculate mai sus (sabotajResultByUid),

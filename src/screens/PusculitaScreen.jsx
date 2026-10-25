@@ -13,7 +13,7 @@ import { getAvatarUrl } from "../assets/avatars";
 import {
   isSoundOn, setSoundOn, onSoundChange, unlockAudio, startAmbience, stopAmbience, stopHeartbeat, startHeartbeat,
   playClick, playStamp, playWhoosh, playCoinImpact, playCoinSettle, playStopVerdict, playContinueVerdict,
-  playPodiumHit, playVictory,
+  playPodiumHit, playVictory, playEliminated,
 } from "../services/pusculitaAudio";
 
 // Pușculița 3D (Three.js) se încarcă DOAR aici, la nevoie — restul aplicației
@@ -265,9 +265,10 @@ function Arena({ view, who }) {
     }
     const to = pig ? { x: pig.left + pig.width * 0.49, y: pig.top + pig.height * 0.16 } : { x: vw / 2, y: 120 };
     setInstant(false);
+    playEliminated(who.number(uid)); // gongul + „Player 456. Eliminated.”
     playWhoosh();
     setFlyer({ uid, from, to, go: false });
-  }, [busy, step, current]);
+  }, [busy, step, current, who]);
 
   useEffect(() => {
     if (!flyer || flyer.go) return undefined;

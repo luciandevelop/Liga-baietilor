@@ -27,6 +27,8 @@ import RouletteExperience from "../components/RouletteExperience";
 import MysteryBoxExperience from "../components/MysteryBoxExperience";
 import PenaltyExperience from "../components/PenaltyExperience";
 import TreasureHuntScreen from "./TreasureHuntScreen";
+import BridgeScreen from "./BridgeScreen";
+import { BRIDGE_TYPE_ID } from "../services/bridgeLogic";
 import { color, font, radius } from "../matchdayTheme";
 
 function catalogLabel(list, id) {
@@ -440,6 +442,11 @@ export default function SurprisesScreen({ user, onBack }) {
                       myResult={myResult}
                       results={resultsByUid}
                     />
+                  )}
+
+                  {/* 🌉 Podul de Sticlă */}
+                  {secretBonus?.type === BRIDGE_TYPE_ID && (
+                    <BridgeScreen gameweekId={gameweek.id} uid={user.uid} />
                   )}
 
                   {/* Comoara Blestemată — montat doar când tipul e "treasure-hunt" (încă NU e în BONUS_CATALOG). */}

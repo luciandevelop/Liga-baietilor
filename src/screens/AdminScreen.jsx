@@ -80,6 +80,8 @@ import PusculitaScreen from "./PusculitaScreen";
 // 🔢 Numerele Sezonului 3 („Player 001”…), salvate separat de profiluri.
 import SeasonNumbersPanel from "../components/SeasonNumbersPanel";
 import PusculitaAdminPanel from "../components/PusculitaAdminPanel";
+import BridgeAdminPanel from "../components/BridgeAdminPanel";
+import { BRIDGE_TYPE_ID } from "../services/bridgeLogic";
 import { buildRoundSnapshot, autoAdvancePusculita } from "../services/pusculitaGame";
 import { PUSCULITA_TYPE_ID } from "../services/pusculitaService";
 import BursaAdminPanel from "../components/BursaAdminPanel";
@@ -3505,6 +3507,10 @@ export default function AdminScreen({ onBack }) {
 
                       {bonusType === "treasure-hunt" && bonusRevealed && (
                         <TreasureRunsAdminPanel gameweekId={gw.id} />
+                      )}
+
+                      {bonusType === BRIDGE_TYPE_ID && (
+                        <BridgeAdminPanel gameweekId={gw.id} />
                       )}
 
                       {bonusType === "mystery-box" && bonusRevealed && (

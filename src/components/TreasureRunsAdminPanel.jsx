@@ -7,7 +7,7 @@ import { color, font, radius } from "../theme";
 
 // Admin → Surprize → Comoara Blestemată (după „Dezvăluie”): cine a început, cine e în progres, cine a făcut cash-out,
 // cine a pierdut viețile, cine a găsit comoara, cine a ajuns la 100 PCT + punctajele. DOAR la apăsare (o citire pe
-// jucător activ + porecle), fără listener, fără polling. Singura acțiune: „↺ Reset” pentru jocurile în progres. Adminul vede și progresul în curs
+// jucător activ + porecle), fără listener, fără polling. Singura acțiune: „↺ Reset” pentru UN jucător ales. Adminul vede și progresul în curs
 // (pas, vieți, puncte acumulate) — jucătorii NU (ei văd doar rezultatele încheiate, în Clasamentul Piraților).
 const GROUPS = [
   { id: "treasure", label: "🏆 Comoară găsită" },
@@ -17,21 +17,21 @@ const GROUPS = [
   { id: "not-played", label: "⚓ Nu au început" },
 ];
 
-// ↺ Reset DOAR pentru jocurile ÎN PROGRES (neterminate, cu cel puțin o viață): șterge jocul privat al
-// jucătorului, care poate începe din nou de la pasul 1, cu 2 vieți și 0 PCT. Verificat în tranzacție:
-// dacă între timp jocul s-a terminat (comoară, cash-out, vieți pierdute) sau are deja rezultat public,
-// resetarea e REFUZATĂ. Regulile Firestore permit deja ștergerea doar Adminului.
-async function resetUnfinishedRun(gameweekId, uid) {
+// ↺ Reset pentru UN SINGUR jucător, ales de Admin: șterge jocul lui privat ȘI rezultatul lui public (dacă
+// există), atomic. Jucătorul o ia de la pasul 1, cu 2 vieți și 0 PCT. Refuzat dacă Surpriza e deja rezolvată.
+// Regulile Firestore permit deja ștergerea acestor documente doar Adminului.
+async function resetPlayerRun(gameweekId, uid) {
+  const pubRef = doc(db, "weeklySurprises", gameweekId);
   const runRef = doc(db, "weeklySurprises", gameweekId, "treasureRuns", uid);
   const resRef = doc(db, "weeklySurprises", gameweekId, "treasureResults", uid);
   await runTransaction(db, async (tx) => {
+    const pub = await tx.get(pubRef);
     const run = await tx.get(runRef);
     const res = await tx.get(resRef);
-    if (!run.exists()) throw new Error("jocul nu mai există");
-    const r = run.data();
-    if (r.finished || ["treasure", "cashedout", "gameover"].includes(r.phase) || Number(r.lives) <= 0) throw new Error("jocul s-a terminat între timp — nu se resetează");
-    if (res.exists()) throw new Error("are deja rezultat public — nu se resetează");
-    tx.delete(runRef);
+    if (pub.exists() && pub.data().bonusResolved) throw new Error("Surpriza e deja rezolvată — resetarea nu mai are efect");
+    if (!run.exists() && !res.exists()) throw new Error("nu are niciun joc de resetat");
+    if (res.exists()) tx.delete(resRef);
+    if (run.exists()) tx.delete(runRef);
   });
 }
 
@@ -44,9 +44,11 @@ export default function TreasureRunsAdminPanel({ gameweekId }) {
   const [msg, setMsg] = useState("");
 
   async function doReset(r) {
-    if (!window.confirm(`Resetezi jocul lui ${r.nickname}? Pierde progresul actual (pas ${r.step}/7, ${r.points} PCT) și începe de la zero, cu 2 vieți.`)) return;
+    const label = { treasure: "a găsit comoara", cashedout: "a făcut cash-out", gameover: "a pierdut viețile", unfinished: `e în progres (pas ${r.step}/7)` }[r.status] || r.status;
+    if (!window.confirm(`Resetezi DOAR jocul lui ${r.nickname}? Acum ${label}, cu ${r.points} PCT. Pierde tot și începe de la zero, cu 2 vieți.`)) return;
+    if (r.status !== "unfinished" && !window.confirm(`Sigur? Jocul lui ${r.nickname} e TERMINAT. Rezultatul lui din Clasamentul Piraților se șterge.`)) return;
     setBusyUid(r.uid); setMsg("");
-    try { await resetUnfinishedRun(gameweekId, r.uid); setMsg(`✓ ${r.nickname} poate relua jocul de la început.`); await load(); }
+    try { await resetPlayerRun(gameweekId, r.uid); setMsg(`✓ ${r.nickname} poate relua jocul de la început (spune-i să redeschidă pagina).`); await load(); }
     catch (err) { setMsg(`${r.nickname}: ${err.message || err.code}`); }
     finally { setBusyUid(""); }
   }
@@ -100,7 +102,7 @@ export default function TreasureRunsAdminPanel({ gameweekId }) {
                         <span>{r.nickname}{r.at100 ? " 🌟 100 PCT" : ""}</span>
                         <span style={st.val}>
                           {g.id === "unfinished" ? `pas ${r.step}/7 · ${"❤️".repeat(Math.max(0, r.lives))}${"🖤".repeat(Math.max(0, 2 - r.lives))} · ${r.points} PCT acum` : g.id === "not-played" ? "—" : `${r.points} PCT`}
-                          {g.id === "unfinished" && (
+                          {g.id !== "not-played" && (
                             <button type="button" style={st.reset} onClick={() => doReset(r)} disabled={!!busyUid}>{busyUid === r.uid ? "…" : "↺ Reset"}</button>
                           )}
                         </span>

@@ -9,6 +9,7 @@
 //   POST /api/bridge  { action:"setup",   gameweekId, deadlineMs }   (doar Admin)
 //   POST /api/bridge  { action:"jump",    gameweekId, row, side }
 //   POST /api/bridge  { action:"cashout", gameweekId }
+//   POST /api/bridge  { action:"reset",   gameweekId:"test-…" }        (doar Admin, doar poduri de test)
 // Autentificare: header „Authorization: Bearer <ID token Firebase>”.
 //
 // Date:
@@ -73,6 +74,20 @@ export default async function handler(req, res) {
         return { already: false, pairs: pairs.length };
       });
       return send(res, 200, { ok: true, ...result });
+    }
+
+    // Doar pentru TESTE: un Pod cu id „test-…” poate fi șters de Admin și repornit.
+    // Podurile reale (id-ul etapei) NU pot fi resetate niciodată.
+    if (action === "reset") {
+      const isAdmin = (await db.doc(`admins/${uid}`).get()).exists;
+      if (!isAdmin) return send(res, 403, { ok: false, error: "admin_only" });
+      if (!String(gameweekId).startsWith("test-")) return send(res, 400, { ok: false, error: "not_test" });
+      const ps = await db.collection(`bridge/${gameweekId}/players`).get();
+      const batch = db.batch();
+      ps.docs.forEach((d) => batch.delete(d.ref));
+      batch.delete(pubRef); batch.delete(secRef);
+      await batch.commit();
+      return send(res, 200, { ok: true, reset: true });
     }
 
     if (action === "jump" || action === "cashout") {

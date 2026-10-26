@@ -24,6 +24,7 @@ export const BRIDGE_ERRORS = {
   admin_only: "Doar Adminul poate porni Podul.",
   deadline: "Termenul ales nu e valid.",
   no_players: "Nu există jucători activi.",
+  not_test: "Doar Podul de test poate fi resetat.",
   server: "Eroare pe server. Încearcă din nou.",
   network: "Nu există conexiune. Încearcă din nou.",
 };
@@ -52,6 +53,9 @@ export function startBridge(gameweekId, deadlineMs) { return call("setup", { gam
 export function jumpBridge(gameweekId, row, side) { return call("jump", { gameweekId, row, side }); }
 // Jucător: încasează punctele treptei curente (de la treapta 5).
 export function cashoutBridge(gameweekId) { return call("cashout", { gameweekId }); }
+
+// Admin, DOAR pentru Podul de test (id „test-…”): șterge tot ca să poată fi repornit.
+export function resetTestBridge(gameweekId) { return call("reset", { gameweekId }); }
 
 // Starea publică: perechile + termenul.
 export async function getBridge(gameweekId) {

@@ -3,6 +3,7 @@ import { db } from "../firebase";
 import { listActiveUserIds, listGameweeks, getLiveGameweekPoints, isGameweekReadyToResolve, getLastCompletedGameweek, listGameweekScores, listMatches, previewGameweekResults } from "./adminService";
 import { PUSCULITA_TYPE_ID, computePusculita } from "./pusculitaService";
 import { getPusculita, buildPusculitaInput, buildRoundSnapshot } from "./pusculitaGame";
+import { BRIDGE_TYPE_ID, finalPoints as bridgeFinalPoints } from "./bridgeLogic";
 import { teamScore } from "./scoringEngine";
 import {
   BURSA_TYPE_ID, BURSA_PUBLIC_NAME, BURSA_ENABLED, computeBursaResults, normalizePortfolio, rankingUidsFor, summarizeBursaResult,
@@ -40,6 +41,8 @@ export const BONUS_CATALOG = [
   { id: "mystery-box", label: "Mystery Box", active: true },
   { id: "penalty-pvp", label: "Penalty PvP", active: true },
   { id: "treasure-hunt", label: "Comoara Blestemată", active: true },
+  // 🌉 Podul de Sticlă — se PORNEȘTE din panoul lui (Admin → Surprize), înainte de Dezvăluire.
+  { id: BRIDGE_TYPE_ID, label: "🌉 Podul de Sticlă", active: true },
 ];
 
 // 16 segmente, distribuția aprobată. Ordinea de-aici NU e ordinea vizuală
@@ -456,6 +459,14 @@ export async function revealBonus(gameweekId) {
   // simultan) să nu coreleze vizibil.
   const activeUidsForPenalty = await listActiveUserIds();
   const shuffledForPenalty = shuffleDeterministic([...activeUidsForPenalty], gameweekId + "_bonus_penalty");
+  // 🌉 Podul de Sticlă: nu se dezvăluie până nu e pornit (perechi + trasee generate pe server).
+  {
+    const pre = await getDoc(secretRef);
+    if (pre.exists() && pre.data().type === BRIDGE_TYPE_ID) {
+      const b = await getDoc(doc(db, "bridge", gameweekId));
+      if (!b.exists()) throw new Error("Podul de Sticlă nu e pornit: apasă întâi „Pornește Podul” din panoul lui.");
+    }
+  }
 
   await runTransaction(db, async (tx) => {
     const pubSnap = await tx.get(publicRef);
@@ -1114,6 +1125,12 @@ export async function resolveBonus(gameweekId) {
       }
     });
     if (byePlayer) resultsPerUser.push({ uid: byePlayer, points: 50 });
+  } else if (bonusType === BRIDGE_TYPE_ID) {
+    // 🌉 Podul de Sticlă: punctele din STAREA scrisă de server (nu de client). Doar cine a încasat
+    // sau a traversat primește puncte; neîncasat la termen sau eliminat → 0. Fără joc → 0.
+    const ps = await getDocs(collection(db, "bridge", gameweekId, "players"));
+    const byUid = {}; ps.docs.forEach((d) => { byUid[d.id] = d.data(); });
+    resultsPerUser = activeUids.map((uid) => ({ uid, points: bridgeFinalPoints(byUid[uid]) }));
   } else if (bonusType === "treasure-hunt") {
     // Comoara Blestemată: fiecare jucător are cel mult un document de joc. Punctajul se
     // calculează DIN STAREA SALVATĂ (nu dintr-un câmp scris de client): terminat → punctele

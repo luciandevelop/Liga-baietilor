@@ -1,11 +1,13 @@
 import { useState } from "react";
+import { doc, runTransaction } from "firebase/firestore";
+import { db } from "../firebase";
 import { getTreasureRunStatus } from "../services/surprisesService";
 import { getUserNicknames } from "../services/adminService";
 import { color, font, radius } from "../theme";
 
 // Admin → Surprize → Comoara Blestemată (după „Dezvăluie”): cine a început, cine e în progres, cine a făcut cash-out,
 // cine a pierdut viețile, cine a găsit comoara, cine a ajuns la 100 PCT + punctajele. DOAR la apăsare (o citire pe
-// jucător activ + porecle), fără listener, fără polling, fără butoane de resetare. Adminul vede și progresul în curs
+// jucător activ + porecle), fără listener, fără polling. Singura acțiune: „↺ Reset” pentru jocurile în progres. Adminul vede și progresul în curs
 // (pas, vieți, puncte acumulate) — jucătorii NU (ei văd doar rezultatele încheiate, în Clasamentul Piraților).
 const GROUPS = [
   { id: "treasure", label: "🏆 Comoară găsită" },
@@ -15,11 +17,39 @@ const GROUPS = [
   { id: "not-played", label: "⚓ Nu au început" },
 ];
 
+// ↺ Reset DOAR pentru jocurile ÎN PROGRES (neterminate, cu cel puțin o viață): șterge jocul privat al
+// jucătorului, care poate începe din nou de la pasul 1, cu 2 vieți și 0 PCT. Verificat în tranzacție:
+// dacă între timp jocul s-a terminat (comoară, cash-out, vieți pierdute) sau are deja rezultat public,
+// resetarea e REFUZATĂ. Regulile Firestore permit deja ștergerea doar Adminului.
+async function resetUnfinishedRun(gameweekId, uid) {
+  const runRef = doc(db, "weeklySurprises", gameweekId, "treasureRuns", uid);
+  const resRef = doc(db, "weeklySurprises", gameweekId, "treasureResults", uid);
+  await runTransaction(db, async (tx) => {
+    const run = await tx.get(runRef);
+    const res = await tx.get(resRef);
+    if (!run.exists()) throw new Error("jocul nu mai există");
+    const r = run.data();
+    if (r.finished || ["treasure", "cashedout", "gameover"].includes(r.phase) || Number(r.lives) <= 0) throw new Error("jocul s-a terminat între timp — nu se resetează");
+    if (res.exists()) throw new Error("are deja rezultat public — nu se resetează");
+    tx.delete(runRef);
+  });
+}
+
 export default function TreasureRunsAdminPanel({ gameweekId }) {
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [rows, setRows] = useState(null);
+  const [busyUid, setBusyUid] = useState("");
+  const [msg, setMsg] = useState("");
+
+  async function doReset(r) {
+    if (!window.confirm(`Resetezi jocul lui ${r.nickname}? Pierde progresul actual (pas ${r.step}/7, ${r.points} PCT) și începe de la zero, cu 2 vieți.`)) return;
+    setBusyUid(r.uid); setMsg("");
+    try { await resetUnfinishedRun(gameweekId, r.uid); setMsg(`✓ ${r.nickname} poate relua jocul de la început.`); await load(); }
+    catch (err) { setMsg(`${r.nickname}: ${err.message || err.code}`); }
+    finally { setBusyUid(""); }
+  }
 
   async function load() {
     setLoading(true);
@@ -70,12 +100,16 @@ export default function TreasureRunsAdminPanel({ gameweekId }) {
                         <span>{r.nickname}{r.at100 ? " 🌟 100 PCT" : ""}</span>
                         <span style={st.val}>
                           {g.id === "unfinished" ? `pas ${r.step}/7 · ${"❤️".repeat(Math.max(0, r.lives))}${"🖤".repeat(Math.max(0, 2 - r.lives))} · ${r.points} PCT acum` : g.id === "not-played" ? "—" : `${r.points} PCT`}
+                          {g.id === "unfinished" && (
+                            <button type="button" style={st.reset} onClick={() => doReset(r)} disabled={!!busyUid}>{busyUid === r.uid ? "…" : "↺ Reset"}</button>
+                          )}
                         </span>
                       </div>
                     ))}
                   </div>
                 );
               })}
+              {msg && <div style={{ ...st.hint, color: "#C9A227" }}>{msg}</div>}
               <button type="button" style={st.refresh} onClick={load} disabled={loading}>↻ Actualizează</button>
             </>
           )}
@@ -98,5 +132,6 @@ const st = {
   groupTitle: { fontSize: 11, fontWeight: 800, letterSpacing: "0.04em", color: "rgba(255,255,255,0.75)", marginBottom: 4 },
   row: { display: "flex", justifyContent: "space-between", gap: 10, fontSize: 12, color: "#fff", padding: "3px 0", fontFamily: font.body },
   val: { fontWeight: 700, color: "rgba(255,255,255,0.85)", textAlign: "right" },
+  reset: { marginLeft: 8, background: "rgba(240,169,78,0.15)", border: "1px solid #F0A94E", borderRadius: 6, color: "#F0A94E", fontSize: 10.5, fontWeight: 800, padding: "2px 7px", cursor: "pointer" },
   refresh: { alignSelf: "flex-start", background: "none", border: "none", color: "#C9A227", fontSize: 11, fontWeight: 800, cursor: "pointer", padding: 0 },
 };

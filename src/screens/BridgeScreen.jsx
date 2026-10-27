@@ -111,12 +111,22 @@ export default function BridgeScreen({ gameweekId, uid }) {
       {assets ? (
         <Suspense fallback={<div style={st.loading}>Se pregătește podul…</div>}>
           <GlassBridge3D assets={assets} me={meInfo} partner={partnerInfo} state={mine} onPick={onPick}
-            onBusy={setBusy} onState={() => {}} soundOn={sound} height={Math.min(620, Math.round(window.innerHeight * 0.66))} />
+            onBusy={setBusy} onState={(x) => { if (x) setMine((m) => ({ ...(m || {}), ...x })); }} soundOn={sound} height={Math.min(620, Math.round(window.innerHeight * 0.66))} />
         </Suspense>
       ) : <div style={st.loading}>Se încarcă podul…</div>}
 
       {msg && <p style={{ ...st.note, color: C.gold }}>{msg}</p>}
       {status === "active" && !closed && <p style={st.hint}>{busy ? "" : step === 0 ? "Atinge panoul pe care vrei să sari" : "Alege următorul panou"}</p>}
+      {status === "active" && !closed && (
+        <div style={st.ladder} aria-label="Punctele pe trepte">
+          {[5, 6, 7, 8, 9].map((t) => (
+            <span key={t} style={{ ...st.rung, ...(step >= t ? st.rungOn : {}), ...(step + 1 === t ? st.rungNext : {}) }}>
+              <b>{t}</b><small>{cashoutValue(t)}</small>
+            </span>
+          ))}
+        </div>
+      )}
+      {status === "active" && !closed && step < BRIDGE_MIN_CASHOUT_STEP && <p style={st.hint}>Poți încasa de la treapta {BRIDGE_MIN_CASHOUT_STEP} (20 PCT).</p>}
       {canCash && <button type="button" style={st.cash} onClick={() => setConfirmCash(true)}>ÎNCASEAZĂ {avail} PCT</button>}
 
       {status !== "active" && (
@@ -159,6 +169,10 @@ const st = {
   loading: { height: 420, display: "flex", alignItems: "center", justifyContent: "center", color: C.dim, fontSize: 13 },
   note: { fontSize: 13, color: C.dim, lineHeight: 1.45, margin: "8px 0" },
   hint: { textAlign: "center", fontSize: 13, color: C.dim, margin: "8px 0" },
+  ladder: { display: "flex", gap: 6, justifyContent: "center", margin: "6px 0" },
+  rung: { display: "flex", flexDirection: "column", alignItems: "center", minWidth: 48, padding: "4px 6px", borderRadius: 10, border: `1px solid ${C.line}`, color: C.dim, fontSize: 12 },
+  rungOn: { borderColor: C.gold, color: C.gold, background: "rgba(245,196,81,.12)" },
+  rungNext: { borderStyle: "dashed", borderColor: C.ink, color: C.ink },
   cash: { width: "100%", minHeight: 50, borderRadius: 14, border: "none", background: "linear-gradient(180deg,#ffd978,#e7a92e)", color: "#2a1a00", font: "800 16px Inter, sans-serif", marginTop: 6 },
   end: { textAlign: "center", fontSize: 16, marginTop: 10, padding: 10, borderRadius: 12, background: "rgba(0,0,0,.35)", border: `1px solid ${C.line}` },
   sheetBack: { position: "fixed", inset: 0, background: "rgba(0,0,0,.6)", zIndex: 3000, display: "flex", alignItems: "flex-end", justifyContent: "center", padding: "0 14px 18px" },

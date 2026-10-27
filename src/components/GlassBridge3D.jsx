@@ -267,8 +267,11 @@ const myPath=[];
 let partnerState=opts.partner?{step:opts.partner.step||0,status:opts.partner.status||'active'}:null;
 buildPartner(opts.partner);
 // Partenerul stă pe grinda centrală a rândului lui — NU pe un panou (nu dezvăluie partea).
-function placePartner(){if(!partner||!partnerState)return;const z=partnerState.step===0?START_Z:rowZ(Math.min(ROWS,partnerState.step)-1);
- partner.root.position.set(0,-0.02,z+0.2);partner.root.rotation.y=0;partner.root.visible=partnerState.status!=='eliminated';applyPose(partner,POSES.balance);}
+function placePartner(){if(!partner||!partnerState)return;
+ // La start, partenerul așteaptă LÂNGĂ tine (în dreapta platformei), nu în același loc.
+ // Pe pod stă pe grinda centrală a treptei lui — nu pe un panou, ca să nu dezvăluie partea.
+ if(partnerState.step===0){partner.root.position.set(1.55,-0.02,START_Z+0.6);}
+ else{partner.root.position.set(0,-0.02,rowZ(Math.min(ROWS,partnerState.step)-1)+0.2);}partner.root.rotation.y=0;partner.root.visible=partnerState.status!=='eliminated';applyPose(partner,POSES.balance);}
 placePartner();
 // ── Mesaje și efecte ──
 const overlay=document.createElement('div');overlay.style.cssText='position:absolute;inset:0;pointer-events:none;display:flex;flex-direction:column;align-items:center;justify-content:center;opacity:0;transition:opacity .35s;text-align:center;padding:0 16px';

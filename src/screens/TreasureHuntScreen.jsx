@@ -545,8 +545,15 @@ function ChapterIntroCard({ zone, step }) {
 // POSIBILITĂȚI — reveal secvențial, moment separat, FĂRĂ asociere
 // spațială cu ușile (care nici nu sunt randate în această fază).
 // ══════════════════════════════════════════════════════════════════
+// Ordine FIXĂ, independentă de ordinea ușilor (puncte descrescător, viața la final) —
+// altfel poziția valorii ar trăda drumul corespunzător.
+function canonicalLabels(doors) {
+  const rank = (o) => (o.type === "life" ? -1000 : o.value);
+  return [...doors].map((d) => d.outcome).sort((a, b) => rank(b) - rank(a)).map(outcomeLabel);
+}
+
 function PossibilitiesRevealCard({ doors, zone }) {
-  const labels = useMemo(() => doors.map((d) => outcomeLabel(d.outcome)), [doors]);
+  const labels = useMemo(() => canonicalLabels(doors), [doors]);
   const line = zone === "safe" ? POSSIBILITIES_SAFE_LINE : zone === "danger" ? POSSIBILITIES_RISK_LINE : POSSIBILITIES_CURSED_LINE;
   return (
     <div className="th-pop" style={s.miniCard}>
@@ -568,11 +575,7 @@ function PossibilitiesRevealCard({ doors, zone }) {
 // derivă/recalculează nimic din motor. Nu acoperă HUD-ul principal
 // (care e DEASUPRA hărții) și nu se suprapune cu corabia (colț, mic). ──
 function PreyMiniHud({ doors }) {
-  const labels = useMemo(() => {
-    const l = doors.map((d) => outcomeLabel(d.outcome));
-    for (let i = l.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [l[i], l[j]] = [l[j], l[i]]; }
-    return l;
-  }, [doors]);
+  const labels = useMemo(() => canonicalLabels(doors), [doors]);
   return (
     <div style={s.preyHud}>
       <div style={s.preyHudTitle}>PRADĂ</div>

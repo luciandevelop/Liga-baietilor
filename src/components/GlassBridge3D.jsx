@@ -32,6 +32,7 @@ const camera=new T.PerspectiveCamera(58,1,0.05,400);
  const pm=new T.PMREMGenerator(renderer);scene.environment=pm.fromScene(env,0.04).texture;pm.dispose();})();
 
 // ── Geometria podului ──
+const SCALP_TILT=-0.35; // înclină calota: ceafa tunsă scurt (nu „bob” până la gât)
 const ROWS=9, ROW_GAP=2.6, PANEL=1.25, SIDE_X=0.95, START_Z=2.5;
 const rowZ=(i)=>-i*ROW_GAP-ROW_GAP; // rândul i
 const steel=new T.MeshStandardMaterial({color:0x2b3438,metalness:0.85,roughness:0.42});
@@ -200,8 +201,8 @@ function makeHuman({num,name,ghost=false,showLabel=true,role='player',hair='part
  const hairMesh=new T.Group();
  // scalpul: calotă în culoarea părului care acoperă creștetul și ceafa (modelul original o avea pictată în textură)
  const hq0=new T.Quaternion();B.Head.getWorldQuaternion(hq0);hq0.invert();
- const scalp=new T.Mesh(new T.SphereGeometry(0.112,28,20,0,Math.PI*2,0,Math.PI*0.6),hairMat);scalp.quaternion.copy(hq0);
- scalp.position.copy(B.Head.worldToLocal(new T.Vector3(0,1.676,0.016)));scalp.scale.set(1.02,1.3,1.07);hairMesh.add(scalp);
+ const scalp=new T.Mesh(new T.SphereGeometry(0.112,28,20,0,Math.PI*2,0,Math.PI*0.5),hairMat);scalp.quaternion.copy(hq0);
+ scalp.position.copy(B.Head.worldToLocal(new T.Vector3(0,1.69,0.014)));scalp.scale.set(1.04,1.18,1.08);scalp.rotateX(SCALP_TILT);hairMesh.add(scalp);
  const style=new T.Mesh(HAIR_GEOS[hair]||HAIR_GEOS.parted,hairMat);style.scale.setScalar(1.03);hairMesh.add(style);
  if(hair==='bald')hairMesh.visible=false; // chel: fără păr
  B.Head.add(hairMesh);

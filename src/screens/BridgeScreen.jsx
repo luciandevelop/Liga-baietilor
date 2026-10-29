@@ -3,7 +3,7 @@ import { doc, onSnapshot } from "firebase/firestore";
 import { db } from "../firebase";
 import useNow from "../hooks/useNow";
 import { getUserPublicProfiles } from "../services/profilesService";
-import { getSeasonNumbers, formatPlayerNumber } from "../services/seasonNumbersService";
+import { getSeasonNumbers, formatPlayerNumber, getPlayerLooks } from "../services/seasonNumbersService";
 import { BRIDGE_ERRORS, cashoutBridge, getBridge, jumpBridge, loadBridgeAssets } from "../services/bridgeService";
 import { BRIDGE_MIN_CASHOUT_STEP, BRIDGE_ROWS, cashoutValue } from "../services/bridgeLogic";
 
@@ -44,6 +44,8 @@ export default function BridgeScreen({ gameweekId, uid }) {
   useEffect(() => { getBridge(gameweekId).then(setBridge).catch(() => setBridge(null)); }, [gameweekId]);
   useEffect(() => { loadBridgeAssets().then(setAssets).catch((e) => setAssetErr(e.message)); }, []);
   useEffect(() => { getSeasonNumbers().then((d) => setNumbers(d?.numbers || {})).catch(() => {}); }, []);
+  const [bald, setBald] = useState({});
+  useEffect(() => { getPlayerLooks().then((d) => setBald(d?.bald || {})).catch(() => {}); }, []);
 
   const pair = useMemo(() => (bridge?.pairs || []).find((p) => p.members.includes(uid)) || null, [bridge, uid]);
   const partnerUid = pair && !pair.solo ? pair.members.find((m) => m !== uid) : null;
@@ -63,11 +65,11 @@ export default function BridgeScreen({ gameweekId, uid }) {
 
   useEffect(() => { try { localStorage.setItem(SOUND_KEY, sound ? "on" : "off"); } catch { /* fără stocare */ } }, [sound]);
 
-  const meInfo = useMemo(() => ({ num: formatPlayerNumber(numbers[uid]), role: roleForNumber(Number(numbers[uid])), hair: "parted", hairColor: "negru" }), [numbers, uid]);
+  const meInfo = useMemo(() => ({ num: formatPlayerNumber(numbers[uid]), role: roleForNumber(Number(numbers[uid])), hair: bald[uid] ? "bald" : "buzzed", hairColor: "negru" }), [numbers, uid, bald]);
   const partnerInfo = useMemo(() => (partnerUid && partnerState ? {
     num: formatPlayerNumber(numbers[partnerUid]), name: profiles[partnerUid]?.nickname || "Partener",
-    role: roleForNumber(Number(numbers[partnerUid])), hair: "parted", hairColor: "negru", step: partnerState.step, status: partnerState.status,
-  } : null), [partnerUid, partnerState, numbers, profiles]);
+    role: roleForNumber(Number(numbers[partnerUid])), hair: bald[partnerUid] ? "bald" : "buzzed", hairColor: "negru", step: partnerState.step, status: partnerState.status,
+  } : null), [partnerUid, partnerState, numbers, profiles, bald]);
 
   if (bridge === undefined) return <Box><p style={st.note}>Se încarcă Podul…</p></Box>;
   if (!bridge) return <Box><p style={st.note}>Podul nu a fost pornit încă pentru această etapă.</p></Box>;

@@ -29,9 +29,18 @@ function randomRoundPoints(uids, matches) {
 
 export default function PusculitaTestLab() {
   const [game, setGame] = useState(undefined);
-  const [matches, setMatches] = useState([5, 5, 5, 5]);
-  const [perMatch, setPerMatch] = useState([...PUSCULITA_DEFAULT_THRESHOLD_PER_MATCH]);
-  const [voteMin, setVoteMin] = useState(15);
+  // Valorile se țin ca TEXT, ca să poți șterge câmpul și scrie liber; se validează la pornire.
+  const [matchesTxt, setMatchesTxt] = useState(["5", "5", "5", "5"]);
+  const [perMatchTxt, setPerMatchTxt] = useState(PUSCULITA_DEFAULT_THRESHOLD_PER_MATCH.map(String));
+  const [voteMinTxt, setVoteMinTxt] = useState("15");
+  const num = (t) => (/^\d+$/.test(String(t).trim()) ? parseInt(t, 10) : NaN);
+  const matches = matchesTxt.map(num), perMatch = perMatchTxt.map(num), voteMin = num(voteMinTxt);
+  const totalMatches = matches.reduce((a, b) => a + (Number.isFinite(b) ? b : 0), 0);
+  const MAX_TOTAL = 20; // meciurile unei etape
+  const configErr = matches.some((m) => !Number.isFinite(m) || m < 1) ? "Fiecare rundă trebuie să aibă cel puțin 1 meci."
+    : totalMatches > MAX_TOTAL ? `Maximum ${MAX_TOTAL} meciuri în total (câte are etapa). Acum: ${totalMatches}.`
+    : perMatch.some((p) => !Number.isFinite(p)) ? "Completează pragul pe meci la fiecare rundă."
+    : !Number.isFinite(voteMin) || voteMin < 2 ? "Durata votului: minimum 2 minute." : "";
   const [simOthers, setSimOthers] = useState(true);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState("");
@@ -120,13 +129,15 @@ export default function PusculitaTestLab() {
           {[0, 1, 2, 3].map((k) => (
             <div key={k} style={st.row}>
               <span style={st.lbl}>Runda {k + 1}</span>
-              <label style={st.lbl}>meciuri <input type="number" min={1} max={10} style={st.in} value={matches[k]} onChange={(e) => setMatches((m) => m.map((x, i) => (i === k ? Math.max(1, Math.min(10, +e.target.value || 1)) : x)))} /></label>
-              <label style={st.lbl}>prag/meci <input type="number" min={0} max={200} style={st.in} value={perMatch[k]} onChange={(e) => setPerMatch((m) => m.map((x, i) => (i === k ? Math.max(0, +e.target.value || 0) : x)))} /></label>
-              <span style={st.lbl}>= {matches[k] * perMatch[k]} p</span>
+              <label style={st.lbl}>meciuri <input type="text" inputMode="numeric" style={st.in} value={matchesTxt[k]} onChange={(e) => setMatchesTxt((m) => m.map((x, i) => (i === k ? e.target.value.replace(/\D/g, "").slice(0, 2) : x)))} /></label>
+              <label style={st.lbl}>prag/meci <input type="text" inputMode="numeric" style={st.in} value={perMatchTxt[k]} onChange={(e) => setPerMatchTxt((m) => m.map((x, i) => (i === k ? e.target.value.replace(/\D/g, "").slice(0, 3) : x)))} /></label>
+              <span style={st.lbl}>= {Number.isFinite(matches[k] * perMatch[k]) ? matches[k] * perMatch[k] : "—"} p</span>
             </div>
           ))}
-          <div style={st.row}><label style={st.lbl}>Durata votului (minute) <input type="number" min={2} max={120} style={st.in} value={voteMin} onChange={(e) => setVoteMin(Math.max(2, +e.target.value || 2))} /></label></div>
-          <button type="button" style={st.gold} onClick={start} disabled={busy}>Pornește testul</button>
+          <div style={st.row}><label style={st.lbl}>Durata votului (minute) <input type="text" inputMode="numeric" style={st.in} value={voteMinTxt} onChange={(e) => setVoteMinTxt(e.target.value.replace(/\D/g, "").slice(0, 3))} /></label></div>
+          <p style={{ ...st.note, color: totalMatches > MAX_TOTAL ? "#ff6b6b" : "#8DB3AA" }}>Total meciuri: {totalMatches} / {MAX_TOTAL}</p>
+          {configErr && <p style={{ ...st.note, color: "#ff6b6b" }}>{configErr}</p>}
+          <button type="button" style={{ ...st.gold, opacity: configErr ? 0.5 : 1 }} onClick={start} disabled={busy || !!configErr}>Pornește testul</button>
         </div>
       ) : (
         <div style={st.box}>

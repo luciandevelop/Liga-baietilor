@@ -104,10 +104,11 @@ export default function PusculitaTestLab() {
 
   const reset = () => wrap(async () => {
     if (!window.confirm("Ștergi testul Pușculiței? (Nu atinge nimic real.)")) return;
-    for (const sub of ["votes", "voted"]) {
-      const snap = await getDocs(collection(db, "pusculita", TEST_ID, sub));
-      await Promise.all(snap.docs.map((d) => deleteDoc(d.ref)));
-    }
+    // Voturile secrete nu se pot LISTA (regula le ascunde până la dezvăluire), dar fiecare
+    // vot are un marcaj public „voted” cu ACELAȘI id → ștergem voturile după aceste id-uri.
+    const voted = await getDocs(collection(db, "pusculita", TEST_ID, "voted"));
+    await Promise.all(voted.docs.map((d) => deleteDoc(doc(db, "pusculita", TEST_ID, "votes", d.id)).catch(() => {})));
+    await Promise.all(voted.docs.map((d) => deleteDoc(d.ref)));
     await deleteDoc(doc(db, "pusculita", TEST_ID));
     setMsg("Testul a fost șters.");
   });

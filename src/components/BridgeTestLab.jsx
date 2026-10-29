@@ -36,6 +36,7 @@ function LocalDemo() {
   const [sound, setSound] = useState(false);
   const [run, setRun] = useState(0);
   const [role, setRole] = useState("player");
+  const [isBald, setIsBald] = useState(false);
   const sim = useRef(null);
   const [state, setState] = useState(null);
   const forceRef = useRef(force); forceRef.current = force;
@@ -68,7 +69,7 @@ function LocalDemo() {
       </div>
       {assets ? (
         <Suspense fallback={<p style={st.note}>Se încarcă…</p>}>
-          <GlassBridge3D key={run} assets={assets} me={{ num: "456", role }} partner={{ num: "067", name: "Partener", step: 3, status: "active" }}
+          <GlassBridge3D key={run} assets={assets} me={{ num: "456", role, hair: isBald ? "bald" : "buzzed" }} partner={{ num: "067", name: "Partener", step: 3, status: "active" }}
             state={state} onPick={onPick} onState={(x) => x && setState(x)} soundOn={sound} height={Math.min(560, Math.round(window.innerHeight * 0.6))} />
         </Suspense>
       ) : <p style={st.note}>Se încarcă resursele…</p>}
@@ -82,6 +83,7 @@ function LocalDemo() {
           <option value="vip4">Pretender 004</option>
           <option value="boss">Leader 001 (negru)</option>
         </select>
+        <button type="button" style={{ ...st.small, ...(isBald ? st.on : {}) }} onClick={() => setIsBald((v) => !v)}>{isBald ? "👨‍🦲 Chel" : "🧑 Păr"}</button>
       </div>
       <div style={st.row}>
         <span style={st.lbl}>TEST</span>

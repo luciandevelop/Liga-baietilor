@@ -203,6 +203,7 @@ function makeHuman({num,name,ghost=false,showLabel=true,role='player',hair='part
  const scalp=new T.Mesh(new T.SphereGeometry(0.112,28,20,0,Math.PI*2,0,Math.PI*0.6),hairMat);scalp.quaternion.copy(hq0);
  scalp.position.copy(B.Head.worldToLocal(new T.Vector3(0,1.676,0.016)));scalp.scale.set(1.02,1.3,1.07);hairMesh.add(scalp);
  const style=new T.Mesh(HAIR_GEOS[hair]||HAIR_GEOS.parted,hairMat);style.scale.setScalar(1.03);hairMesh.add(style);
+ if(hair==='bald')hairMesh.visible=false; // chel: fără păr
  B.Head.add(hairMesh);
  // glugă (paznic, șef): calotă care acoperă capul
  const hoodC=(ROLES[role]||{}).hood;let hood=null;if(hoodC!=null){hood=new T.Mesh(new T.SphereGeometry(0.125,28,20,0,Math.PI*2,0,Math.PI*0.62),new T.MeshStandardMaterial({color:hoodC,roughness:0.8,transparent:ghost,opacity:op}));
@@ -259,10 +260,10 @@ function applyPose(h,p,ph=0,walk=0){
  const drop=(L1+L2)-Math.max(hgt(thL,knL),hgt(thR,knR));
  h.inner.position.y=-drop*(1-p.air);
  h.inner.position.z=-(L1*Math.sin(thL*D2R)*0.0);}
-let me=makeHuman({num:opts.me?.num||'',name:'Tu',showLabel:false,role:opts.me?.role||'player',hair:opts.me?.hair||'parted',hairColor:opts.me?.hairColor||'negru'});scene.add(me.root);
+let me=makeHuman({num:opts.me?.num||'',name:'Tu',showLabel:false,role:opts.me?.role||'player',hair:opts.me?.hair||'buzzed',hairColor:opts.me?.hairColor||'negru'});scene.add(me.root);
 let partner=null;
 function buildPartner(p){if(partner){scene.remove(partner.root);partner=null;}if(!p)return;
- partner=makeHuman({num:p.num||'',name:p.name||'Partener',ghost:true,role:p.role||'player',hair:p.hair||'parted',hairColor:p.hairColor||'negru'});scene.add(partner.root);}
+ partner=makeHuman({num:p.num||'',name:p.name||'Partener',ghost:true,role:p.role||'player',hair:p.hair||'buzzed',hairColor:p.hairColor||'negru'});partner.hairKey=p.hair||'buzzed';scene.add(partner.root);}
 // ── Stare: vine DE LA SERVER. Aplicația nu cunoaște traseul; ține minte doar
 // pe ce parte a sărit jucătorul în tura curentă (ca să-l așeze pe panoul lui).
 let step=opts.state?.step||0,lives=opts.state?.lives??3,status=opts.state?.status||'active',busy=false,curPose=POSES.idle;
@@ -474,7 +475,7 @@ const A=(()=>{let ctx=null,bus=null,on=false,buf={},loading=null,ambNodes=[],mus
  };})();
 // ── API pentru ecranul React ──
 return {
-  setPartner(p){partnerState=p?{step:p.step||0,status:p.status||'active'}:null;if(p&&(!partner||partner.role!==(p.role||'player')))buildPartner(p);if(!p&&partner){scene.remove(partner.root);partner=null;}placePartner();},
+  setPartner(p){partnerState=p?{step:p.step||0,status:p.status||'active'}:null;if(p&&(!partner||partner.role!==(p.role||'player')||partner.hairKey!==(p.hair||'buzzed')))buildPartner(p);if(!p&&partner){scene.remove(partner.root);partner=null;}placePartner();},
   setState(s){if(busy||!s)return;const prevStep=step;applyServerState(s);if(step!==prevStep){if(step<prevStep)myPath.length=0;placeMe();}},
   setSound(v){A.setOn(v);},
   cashFx(){A.cash();},
@@ -503,7 +504,7 @@ export default function GlassBridge3D({ assets, me, partner, state, onPick, onSt
     return () => { s?.dispose(); api.current = null; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [assets, me?.num, me?.role, me?.hair, me?.hairColor]);
-  useEffect(() => { api.current?.setPartner(partner || null); }, [partner?.step, partner?.status, partner?.num, partner?.role]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { api.current?.setPartner(partner || null); }, [partner?.step, partner?.status, partner?.num, partner?.role, partner?.hair]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { api.current?.setState(state); }, [state?.step, state?.lives, state?.status]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { api.current?.setSound(!!soundOn); }, [soundOn]);
   return <div ref={ref} style={{ position: "relative", width: "100%", height, overflow: "hidden", borderRadius: 14, background: "#03080a", touchAction: "none" }} />;

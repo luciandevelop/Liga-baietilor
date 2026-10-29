@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { getPlayerLooks, setPlayerBald } from "../services/seasonNumbersService";
 import { color } from "../theme";
 import { computeNumberOrder, freezeSeasonNumbers, formatPlayerNumber, getSeasonNumbers } from "../services/seasonNumbersService";
 
@@ -12,7 +13,7 @@ import { computeNumberOrder, freezeSeasonNumbers, formatPlayerNumber, getSeasonN
 // players: lista din tab-ul Jucători ({ uid, nickname, status }).
 // seasons: lista sezoanelor (cel mai nou primul).
 // ══════════════════════════════════════════════════════════════════
-export default function SeasonNumbersPanel({ players = [], seasons = [] }) {
+function SeasonNumbersCore({ players = [], seasons = [] }) {
   const [data, setData] = useState(undefined);   // undefined = se încarcă, null = neînghețat
   const [tieSeasonId, setTieSeasonId] = useState(seasons[0]?.id || "");
   const [preview, setPreview] = useState(null);
@@ -114,3 +115,45 @@ const st = {
   tag: { fontSize: 10.5, color: color.textMuted, border: `1px solid ${color.border}`, borderRadius: 4, padding: "1px 5px" },
   msg: { fontSize: 12, color: color.goldLight, marginTop: 8 },
 };
+
+
+// ── 👨‍🦲 Aspectul pe Pod: chel / cu păr, setat de Admin pe fiecare jucător ──
+function LooksSection({ players = [] }) {
+  const [bald, setBald] = useState(null);
+  const [busyUid, setBusyUid] = useState("");
+  useEffect(() => { getPlayerLooks().then((d) => setBald(d?.bald || {})).catch(() => setBald({})); }, []);
+  const active = players.filter((p) => p.status === "active");
+  async function toggle(uid) {
+    const next = !bald?.[uid];
+    setBusyUid(uid);
+    try { await setPlayerBald(uid, next); setBald((b) => ({ ...b, [uid]: next })); } catch (e) { window.alert(`Nu s-a salvat: ${e.code || e.message}`); }
+    setBusyUid("");
+  }
+  if (!bald) return null;
+  return (
+    <div style={{ marginTop: 14, paddingTop: 10, borderTop: "1px solid rgba(255,255,255,.1)" }}>
+      <div style={{ fontWeight: 800, fontSize: 13, marginBottom: 4 }}>👨‍🦲 Aspectul pe Podul de Sticlă</div>
+      <p style={{ fontSize: 11.5, opacity: 0.7, margin: "0 0 8px" }}>Implicit toți au păr scurt. Apasă pe cei care trebuie să apară cheli.</p>
+      {active.map((p) => (
+        <div key={p.uid} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "4px 0", fontSize: 12.5 }}>
+          <span>{p.nickname || p.uid}</span>
+          <button type="button" onClick={() => toggle(p.uid)} disabled={busyUid === p.uid}
+            style={{ minWidth: 92, padding: "5px 8px", borderRadius: 8, fontWeight: 800, fontSize: 12, cursor: "pointer",
+              border: bald[p.uid] ? "1px solid #F5C451" : "1px solid rgba(255,255,255,.2)",
+              background: bald[p.uid] ? "rgba(245,196,81,.15)" : "transparent", color: bald[p.uid] ? "#F5C451" : "#fff" }}>
+            {busyUid === p.uid ? "…" : bald[p.uid] ? "👨‍🦲 Chel" : "🧑 Păr"}
+          </button>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+export default function SeasonNumbersPanel(props) {
+  return (
+    <div>
+      <SeasonNumbersCore {...props} />
+      <LooksSection players={props.players} />
+    </div>
+  );
+}

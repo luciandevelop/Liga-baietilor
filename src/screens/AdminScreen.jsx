@@ -84,6 +84,7 @@ import PlayerSpecialsPanel from "../components/PlayerSpecialsPanel";
 import PusculitaAdminPanel from "../components/PusculitaAdminPanel";
 import BridgeAdminPanel from "../components/BridgeAdminPanel";
 import BridgeTestLab from "../components/BridgeTestLab";
+import PusculitaTestLab from "../components/PusculitaTestLab";
 import { BRIDGE_TYPE_ID } from "../services/bridgeLogic";
 import { buildRoundSnapshot, autoAdvancePusculita } from "../services/pusculitaGame";
 import { PUSCULITA_TYPE_ID } from "../services/pusculitaService";
@@ -399,6 +400,7 @@ export default function AdminScreen({ onBack }) {
   const [bursaPreviewState, setBursaPreviewState] = useState("A");
   const [pusculitaPreviewOpen, setPusculitaPreviewOpen] = useState(false);
   const [bridgeLabOpen, setBridgeLabOpen] = useState(false);
+  const [pusculitaLabOpen, setPusculitaLabOpen] = useState(false);
   const [pusculitaPreviewState, setPusculitaPreviewState] = useState("A");
   const [higherLowerPreviewState, setHigherLowerPreviewState] = useState("A");
   // ── 🏴‍☠️ Comoara Blestemată — PREVIEW MOCK ONLY, runda asta. Nicio
@@ -3613,6 +3615,15 @@ export default function AdminScreen({ onBack }) {
                 </button>
               </SectionCard>
 
+              <SectionCard title="🐷 Test PUȘCULIȚA pe server — fără etapă de test">
+                <p style={s.hint}>
+                  Pușculița reală (server, reguli, vot), pe jocul separat „test-pusculita”, invizibil pentru jucători. Meciurile și punctele sunt simulate.
+                </p>
+                <button type="button" style={s.smallBtn} onClick={() => setPusculitaLabOpen(true)}>
+                  🧪 Testează Pușculița
+                </button>
+              </SectionCard>
+
               <SectionCard title="🌉 Test PODUL DE STICLĂ — fără etapă de test">
                 <p style={s.hint}>
                   A · DEMO local: totul pe telefonul tău, fără server. B · Test pe server: podul real, pe un id separat („test-bridge”), invizibil pentru jucători.
@@ -4315,6 +4326,18 @@ export default function AdminScreen({ onBack }) {
           </div>
           <div style={s.bbPreviewBody}>
             <HigherLowerScreen previewMode previewState={higherLowerPreviewState} embedded />
+          </div>
+        </div>
+      )}
+
+      {pusculitaLabOpen && (
+        <div style={s.bbPreviewOverlay}>
+          <div style={s.bbPreviewBar}>
+            <span style={s.bbPreviewLabel}>🐷 TEST PUȘCULIȚA (server real)</span>
+            <button type="button" style={s.bbPreviewCloseBtn} onClick={() => setPusculitaLabOpen(false)}>✕ Închide</button>
+          </div>
+          <div style={s.bbPreviewBody}>
+            <PusculitaTestLab />
           </div>
         </div>
       )}

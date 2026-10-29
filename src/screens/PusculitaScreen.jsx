@@ -67,9 +67,9 @@ const SHIRT_NUMBERS = ["001", "067", "101", "199", "456", "218", "240", "322", "
 
 const STATE_TAB = { C: "arena", F: "arena", H: "arena", D: "vote", E: "vote", G: "vote", I: "vote", J: "podium", M: "podium" };
 
-export default function PusculitaScreen({ previewMode, previewState = "A", gameweekId, uid }) {
+export default function PusculitaScreen({ previewMode, previewState = "A", gameweekId, uid, refreshKey }) {
   if (previewMode) return <PusculitaPreview stateId={previewState} />;
-  if (gameweekId && uid) return <PusculitaLive gameweekId={gameweekId} uid={uid} />;
+  if (gameweekId && uid) return <PusculitaLive gameweekId={gameweekId} uid={uid} refreshKey={refreshKey} />;
   return <div style={{ ...s.page, padding: 20 }}><p style={s.note}>Pușculița nu este încă activă.</p></div>;
 }
 
@@ -83,7 +83,7 @@ function PusculitaPreview({ stateId }) {
 // JOCUL REAL — documentul jocului + punctele pe rundă din snapshot-ul LIVE
 // (listener-ul existent, partajat). Doar meciuri validate de Admin.
 // ══════════════════════════════════════════════════════════════════
-function PusculitaLive({ gameweekId, uid }) {
+function PusculitaLive({ gameweekId, uid, refreshKey }) {
   const [game, setGame] = useState(undefined);
   const [live, setLive] = useState(null);
   const [profiles, setProfiles] = useState({});
@@ -95,14 +95,16 @@ function PusculitaLive({ gameweekId, uid }) {
 
   const reload = useCallback(() => setTick((x) => x + 1), []);
   useEffect(() => subscribeToLiveSnapshot(gameweekId, (d) => { setLive(d?.pusculita || null); setTick((x) => x + 1); }), [gameweekId]);
-  useEffect(() => { getPusculita(gameweekId).then(setGame).catch(() => setGame(null)); }, [gameweekId, tick]);
+  useEffect(() => { getPusculita(gameweekId).then(setGame).catch(() => setGame(null)); }, [gameweekId, tick, refreshKey]);
   useEffect(() => { getSeasonNumbers().then((d) => setNumbers(d?.numbers || {})).catch(() => {}); }, []);
   useEffect(() => {
     if (!game?.participants?.length) return;
     getUserPublicProfiles(game.participants).then(setProfiles).catch(() => {});
   }, [game?.participants?.length]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const input = useMemo(() => (game ? buildPusculitaInput(game, live) : null), [game, live]);
+  // Testul din Admin („test-pusculita”) nu are etapă reală: punctele simulate stau în documentul jocului.
+  const effLive = game?.testLive || live;
+  const input = useMemo(() => (game ? buildPusculitaInput(game, effLive) : null), [game, effLive]);
   const result = useMemo(() => (input ? computePusculita(input) : null), [input]);
   const voteEntry = result ? [...result.timeline].reverse().find((t) => t.vote) : null;
   const openRound = voteEntry && !voteEntry.vote.closed ? voteEntry.index : null;
@@ -125,7 +127,7 @@ function PusculitaLive({ gameweekId, uid }) {
   if (!game?.published || !result) return <div style={{ ...s.page, padding: 20 }}><p style={s.note}>Pușculița nu a fost încă publicată pentru această etapă.</p></div>;
 
   const cur = result.timeline[result.timeline.length - 1];
-  const view = { input: { ...input, validatedInRound: live?.validated?.[`r${cur?.index ?? 0}`] ?? 0 }, result, me: uid };
+  const view = { input: { ...input, validatedInRound: effLive?.validated?.[`r${cur?.index ?? 0}`] ?? 0 }, result, me: uid };
   const deadline = openRound !== null ? game.rounds?.[openRound]?.voteDeadline : null;
   const deadlineMs = deadline?.toMillis ? deadline.toMillis() : null;
   const initialTab = result.outcome.reason === "final" ? "podium" : voteEntry ? "vote" : "arena";

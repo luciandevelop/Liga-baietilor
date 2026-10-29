@@ -1,10 +1,10 @@
-import { lazy, Suspense, useEffect, useMemo, useState } from "react";
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { doc, onSnapshot } from "firebase/firestore";
 import { db } from "../firebase";
 import useNow from "../hooks/useNow";
 import { getUserPublicProfiles } from "../services/profilesService";
 import { getSeasonNumbers, formatPlayerNumber, getPlayerLooks } from "../services/seasonNumbersService";
-import { BRIDGE_ERRORS, cashoutBridge, getBridge, jumpBridge, loadBridgeAssets } from "../services/bridgeService";
+import { BRIDGE_ERRORS, cashoutBridge, getBridge, jumpBridge, listBridgePlayers, loadBridgeAssets } from "../services/bridgeService";
 import { BRIDGE_MIN_CASHOUT_STEP, BRIDGE_ROWS, cashoutValue } from "../services/bridgeLogic";
 
 // Scena 3D (Three.js) se încarcă doar aici — restul aplicației nu o descarcă.
@@ -40,6 +40,13 @@ export default function BridgeScreen({ gameweekId, uid }) {
   const [msg, setMsg] = useState("");
   const [sound, setSound] = useState(() => { try { return localStorage.getItem(SOUND_KEY) === "on"; } catch { return false; } });
   const now = useNow(1000);
+  const sceneApi = useRef(null);
+  const [apiReady, setApiReady] = useState(0);
+  const introKey = `bridge-intro-${gameweekId}-${uid}`;
+  const [introDone, setIntroDone] = useState(() => { try { return localStorage.getItem(introKey) === "1"; } catch { return true; } });
+  const [allPlayers, setAllPlayers] = useState([]);
+  // Toți jucătorii Podului (pentru panoul „SUPRAVIEȚUITORI” și anunțurile vocale): o citire la deschidere.
+  useEffect(() => { listBridgePlayers(gameweekId).then(setAllPlayers).catch(() => {}); }, [gameweekId, mine?.status]);
 
   useEffect(() => { getBridge(gameweekId).then(setBridge).catch(() => setBridge(null)); }, [gameweekId]);
   useEffect(() => { loadBridgeAssets().then(setAssets).catch((e) => setAssetErr(e.message)); }, []);
@@ -71,6 +78,23 @@ export default function BridgeScreen({ gameweekId, uid }) {
     role: roleForNumber(Number(numbers[partnerUid])), hair: bald[partnerUid] ? "bald" : "buzzed", hairColor: "negru", step: partnerState.step, status: partnerState.status,
   } : null), [partnerUid, partnerState, numbers, profiles, bald]);
 
+  // Panoul „SUPRAVIEȚUITORI” + anunțul vocal al eliminărilor noi (de la ultima vizită, maximum 3).
+  useEffect(() => {
+    const api = sceneApi.current; if (!api || !allPlayers.length) return;
+    const alive = allPlayers.filter((p) => p.status !== "eliminated").length;
+    api.setSurvivors(alive, allPlayers.length);
+    if (!sound) return;
+    const key = `bridge-elim-${gameweekId}-${uid}`;
+    let seen = []; try { seen = JSON.parse(localStorage.getItem(key) || "[]"); } catch { /* */ }
+    const fresh = allPlayers.filter((p) => p.status === "eliminated" && p.uid !== uid && !seen.includes(p.uid));
+    const dig = ["zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine"];
+    fresh.slice(0, 3).forEach((p, i) => {
+      const n = formatPlayerNumber(numbers[p.uid]); if (!n) return;
+      api.say(`Player ${n.split("").map((d) => dig[+d]).join(" ")}. Eliminated.`, 1200 + i * 2600);
+    });
+    try { localStorage.setItem(key, JSON.stringify([...seen, ...fresh.map((p) => p.uid)])); } catch { /* */ }
+  }, [allPlayers, numbers, sound, gameweekId, uid, apiReady]);
+
   if (bridge === undefined) return <Box><p style={st.note}>Se încarcă Podul…</p></Box>;
   if (!bridge) return <Box><p style={st.note}>Podul nu a fost pornit încă pentru această etapă.</p></Box>;
   if (!pair) return <Box><p style={st.note}>Nu ești înscris în Podul acestei etape.</p></Box>;
@@ -97,6 +121,13 @@ export default function BridgeScreen({ gameweekId, uid }) {
     const r = await cashoutBridge(gameweekId);
     setBusy(false);
     if (!r.ok) setMsg(BRIDGE_ERRORS[r.error] || BRIDGE_ERRORS.server);
+    else sceneApi.current?.cashOut(r.points ?? r.state?.points ?? avail);
+  }
+  function startIntro() {
+    setSound(true); sceneApi.current?.setSound(true);
+    try { localStorage.setItem(introKey, "1"); } catch { /* fără stocare */ }
+    setIntroDone(true);
+    setTimeout(() => sceneApi.current?.playIntro(), 150);
   }
 
   const h = Math.floor(left / 3600e3), m = Math.floor((left % 3600e3) / 60e3);
@@ -121,10 +152,13 @@ export default function BridgeScreen({ gameweekId, uid }) {
       {assets ? (
         <Suspense fallback={<div style={st.loading}>Se pregătește podul…</div>}>
           <GlassBridge3D assets={assets} me={meInfo} partner={partnerInfo} state={mine} onPick={onPick}
-            onBusy={setBusy} onState={(x) => { if (x) setMine((m) => ({ ...(m || {}), ...x })); }} soundOn={sound} height={Math.min(620, Math.round(window.innerHeight * 0.66))} />
+            onReady={(api) => { sceneApi.current = api; setApiReady((x) => x + 1); }} onBusy={setBusy} onState={(x) => { if (x) setMine((m) => ({ ...(m || {}), ...x })); }} soundOn={sound} height={Math.min(620, Math.round(window.innerHeight * 0.66))} />
         </Suspense>
       ) : <div style={st.loading}>Se încarcă podul…</div>}
 
+      {!introDone && status === "active" && step === 0 && assets && (
+        <button type="button" style={st.intro} onClick={startIntro}>▶ INTRĂ ÎN PROBĂ</button>
+      )}
       {msg && <p style={{ ...st.note, color: C.gold }}>{msg}</p>}
       {status === "active" && !closed && <p style={st.hint}>{busy ? "" : step === 0 ? "Atinge panoul pe care vrei să sari" : "Alege următorul panou"}</p>}
       {status === "active" && !closed && (
@@ -183,6 +217,7 @@ const st = {
   rung: { display: "flex", flexDirection: "column", alignItems: "center", minWidth: 48, padding: "4px 6px", borderRadius: 10, border: `1px solid ${C.line}`, color: C.dim, fontSize: 12 },
   rungOn: { borderColor: C.gold, color: C.gold, background: "rgba(245,196,81,.12)" },
   rungNext: { borderStyle: "dashed", borderColor: C.ink, color: C.ink },
+  intro: { width: "100%", minHeight: 54, marginTop: 8, borderRadius: 14, border: "1px solid #ff2d7a", background: "rgba(255,45,122,.15)", color: "#fff", font: "800 17px Oswald, 'Arial Narrow', sans-serif", letterSpacing: 2 },
   cash: { width: "100%", minHeight: 50, borderRadius: 14, border: "none", background: "linear-gradient(180deg,#ffd978,#e7a92e)", color: "#2a1a00", font: "800 16px Inter, sans-serif", marginTop: 6 },
   end: { textAlign: "center", fontSize: 16, marginTop: 10, padding: 10, borderRadius: 12, background: "rgba(0,0,0,.35)", border: `1px solid ${C.line}` },
   sheetBack: { position: "fixed", inset: 0, background: "rgba(0,0,0,.6)", zIndex: 3000, display: "flex", alignItems: "flex-end", justifyContent: "center", padding: "0 14px 18px" },

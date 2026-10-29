@@ -37,6 +37,7 @@ function LocalDemo() {
   const [run, setRun] = useState(0);
   const [role, setRole] = useState("player");
   const [isBald, setIsBald] = useState(false);
+  const api = useRef(null);
   const sim = useRef(null);
   const [state, setState] = useState(null);
   const forceRef = useRef(force); forceRef.current = force;
@@ -70,7 +71,7 @@ function LocalDemo() {
       {assets ? (
         <Suspense fallback={<p style={st.note}>Se încarcă…</p>}>
           <GlassBridge3D key={run} assets={assets} me={{ num: "456", role, hair: isBald ? "bald" : "buzzed" }} partner={{ num: "067", name: "Partener", step: 3, status: "active" }}
-            state={state} onPick={onPick} onState={(x) => x && setState(x)} soundOn={sound} height={Math.min(560, Math.round(window.innerHeight * 0.6))} />
+            onReady={(a) => { api.current = a; a.setSurvivors(11, 18); }} state={state} onPick={onPick} onState={(x) => x && setState(x)} soundOn={sound} height={Math.min(560, Math.round(window.innerHeight * 0.6))} />
         </Suspense>
       ) : <p style={st.note}>Se încarcă resursele…</p>}
       <div style={st.row}>
@@ -94,6 +95,7 @@ function LocalDemo() {
       <div style={st.row}>
         {s.status === "active" && (s.step || 0) >= 5 && <button type="button" style={st.gold} onClick={cash}>Încasează {cashoutValue(s.step)} PCT</button>}
         <button type="button" style={st.small} onClick={() => setRun((x) => x + 1)}>↺ Joc nou</button>
+        <button type="button" style={st.small} onClick={() => { setSound(true); api.current?.setSound(true); setTimeout(() => api.current?.playIntro(), 150); }}>🎬 Intro</button>
       </div>
     </div>
   );

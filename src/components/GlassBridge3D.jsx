@@ -262,6 +262,21 @@ function applyPose(h,p,ph=0,walk=0){
  h.inner.position.z=-(L1*Math.sin(thL*D2R)*0.0);}
 let me=makeHuman({num:opts.me?.num||'',name:'Tu',showLabel:false,role:opts.me?.role||'player',hair:opts.me?.hair||'buzzed',hairColor:opts.me?.hairColor||'negru'});scene.add(me.root);
 let partner=null;
+// Gardieni nemișcați: doi la start (lateral, privind spre centru), doi la capăt (privind spre tine).
+function maskTex(sym){const c=document.createElement('canvas');c.width=c.height=128;const g=c.getContext('2d');g.fillStyle='#050505';g.fillRect(0,0,128,128);
+ g.strokeStyle='#f4f4f4';g.lineWidth=10;g.beginPath();if(sym===0)g.arc(64,64,30,0,Math.PI*2);else if(sym===1){g.moveTo(64,30);g.lineTo(98,92);g.lineTo(30,92);g.closePath();}else g.rect(34,34,60,60);g.stroke();
+ const t=new T.CanvasTexture(c);t.encoding=T.sRGBEncoding;return t;}
+const GUARD_SPOTS=[[-1.95,START_Z+0.6,Math.PI/2,0],[1.95,START_Z+0.6,-Math.PI/2,1],[-1.2,rowZ(ROWS)-3.2,Math.PI,2],[1.2,rowZ(ROWS)-3.2,Math.PI,1]];
+const guards=GUARD_SPOTS.map(([x,z,ry,sym])=>{const g=makeHuman({num:'',name:'',showLabel:false,role:'guard',hair:'buzzed'});g.root.position.set(x,0,z);g.root.rotation.y=ry;
+ const face=new T.Mesh(new T.CircleGeometry(0.105,24),new T.MeshBasicMaterial({map:maskTex(sym)}));const hq=new T.Quaternion();g.B.Head.getWorldQuaternion(hq);
+ face.quaternion.copy(hq.invert());face.position.copy(g.B.Head.worldToLocal(new T.Vector3(0,1.64,-0.115)));face.rotateY(Math.PI);g.B.Head.add(face);applyPose(g,POSES.idle);scene.add(g.root);return g;});
+// Panoul luminos din hală: „SUPRAVIEȚUITORI X / N”
+const boardC=document.createElement('canvas');boardC.width=512;boardC.height=128;const boardTex=new T.CanvasTexture(boardC);boardTex.encoding=T.sRGBEncoding;
+const board=new T.Mesh(new T.PlaneGeometry(5.2,1.3),new T.MeshBasicMaterial({map:boardTex,transparent:true}));board.position.set(0,5.4,rowZ(ROWS)-5.5);scene.add(board);
+function drawBoard(alive,total){const g=boardC.getContext('2d');g.clearRect(0,0,512,128);g.fillStyle='rgba(5,5,8,.85)';g.fillRect(0,0,512,128);g.strokeStyle='#ff2d7a';g.lineWidth=4;g.strokeRect(4,4,504,120);
+ g.fillStyle='#ff2d7a';g.font='700 26px Oswald, Arial Narrow, sans-serif';g.textAlign='center';g.fillText('SUPRAVIEȚUITORI',256,46);
+ g.fillStyle='#ffffff';g.font='700 54px Oswald, Arial Narrow, sans-serif';g.fillText(total?`${alive} / ${total}`:'—',256,104);boardTex.needsUpdate=true;}
+drawBoard(0,0);
 function buildPartner(p){if(partner){scene.remove(partner.root);partner=null;}if(!p)return;
  partner=makeHuman({num:p.num||'',name:p.name||'Partener',ghost:true,role:p.role||'player',hair:p.hair||'buzzed',hairColor:p.hairColor||'negru'});partner.hairKey=p.hair||'buzzed';scene.add(partner.root);}
 // ── Stare: vine DE LA SERVER. Aplicația nu cunoaște traseul; ține minte doar
@@ -289,20 +304,22 @@ const wait=(ms)=>new Promise(r=>setTimeout(r,ms));
 // ── Animații (timeline simplu cu promisiuni) ──
 const anims=[];
 function tween(dur,fn){return new Promise(res=>anims.push({t:0,dur,fn,res}));}
-let camTarget=new T.Vector3(),camPos=new T.Vector3(),shake=0,fallCam=false,timeScale=1,craneFrom=null;
+let camTarget=new T.Vector3(),camPos=new T.Vector3(),shake=0,fallCam=false,timeScale=1,craneFrom=null,introCam=null;
 function standPos(){if(step===0)return new T.Vector3(0,0,START_Z);const sd=myPath[step-1];
  return sd===0||sd===1?panels[step-1][sd].g.position.clone().setY(0.04):new T.Vector3(0,0.02,rowZ(step-1)); // după refresh: pe grinda dintre panouri
 }
 function placeMe(){const p=standPos();me.root.position.copy(p);me.root.rotation.set(0,0,0);applyPose(me,POSES.idle);curPose=POSES.idle;}
 placeMe();
 
+const DIG=['zero','one','two','three','four','five','six','seven','eight','nine'];
+const spoken=(n)=>String(n||'').replace(/\D/g,'').split('').map(d=>DIG[+d]).join(' ');
 function applyServerState(s){if(!s)return;step=s.step|0;lives=s.lives|0;status=s.status||'active';}
 const BRIDGE_MSG=(e)=>({closed:'Termenul Podului a expirat.',stale:'Săritura era deja înregistrată.',network:'Fără conexiune. Încearcă din nou.',finished:'Jocul tău s-a încheiat.'}[e]||'Încearcă din nou.');
 async function jump(side){
  if(busy||status!=='active'||step>=ROWS)return;busy=true;opts.onBusy?.(true);A.unlock();
  const row=step;const target=panels[row][side];
  // Cererea pleacă IMEDIAT; animația săriturii acoperă timpul de răspuns al serverului.
- const reply=Promise.resolve(opts.onPick(row,side)).catch(()=>({ok:false,error:'network'}));
+ const reply=Promise.resolve(opts.onPick(row,side)).catch(()=>({ok:false,error:'network'}));A.tension(true);
  // 1. confirmare vizuală
  target.rim.material.uniforms.c.value.set(0xffd27a);target.rim.material.uniforms.a.value=1;A.step();
  const from=me.root.position.clone();const to=target.g.position.clone().setY(0.04);
@@ -317,7 +334,7 @@ async function jump(side){
  await tween(300,(t)=>{curPose=mixPose(POSES.land,POSES.balance,ease(t));target.g.position.y=-0.03*(1-t);});
  const res=await reply;
  if(!res||!res.ok){ // eroare (rețea, termen expirat, cerere veche): săritura nu contează, revii unde erai
-  resetRim(target);await showMsg('ÎNCERCAREA NU A CONTAT',BRIDGE_MSG(res&&res.error),'#F5C451',1800);
+  A.tension(false);resetRim(target);await showMsg('ÎNCERCAREA NU A CONTAT',BRIDGE_MSG(res&&res.error),'#F5C451',1800);
   if(res&&res.state)applyServerState(res.state);placeMe();busy=false;opts.onBusy?.(false);opts.onState?.(res&&res.state);return;}
  const ok=res.result==='safe'||res.result==='won';
  // 5. suspans: sticla scârțâie, personajul își caută echilibrul
@@ -328,8 +345,8 @@ async function jump(side){
   // 6a. rezistă
   A.relief();await tween(800,(t)=>{curPose=mixPose(POSES.balance,POSES.relief,ease(t));});
   resetRim(target);
-  myPath[row]=side;applyServerState(res.state);
-  if(status==='won'){await walkToEnd();A.victory();await showMsg('POD TRAVERSAT','100 PCT','#F5C451',2600);busy=false;opts.onBusy?.(false);opts.onState?.(res.state);return;}
+  A.tension(false);myPath[row]=side;applyServerState(res.state);
+  if(status==='won'){await walkToEnd();A.victory();A.say(`Player ${spoken(opts.me?.num)}. Has crossed the bridge.`,300);await showMsg('POD TRAVERSAT','100 PCT','#F5C451',2600);busy=false;opts.onBusy?.(false);opts.onState?.(res.state);return;}
   await showMsg('AI SUPRAVIEȚUIT','',  '#2FBF9A',1100);
   await tween(500,(t)=>{curPose=mixPose(POSES.relief,POSES.idle,t);});
   busy=false;opts.onBusy?.(false);opts.onState?.(res.state);return;
@@ -337,7 +354,7 @@ async function jump(side){
  // 6b. pare în regulă… apoi crapă
  target.crack.visible=true;buildCracks(target.ct,256+(Math.random()-.5)*60,256+(Math.random()-.5)*60);A.crack();
  await tween(900,(t)=>{drawCracks(target.ct,Math.pow(t,0.7));me.roll=Math.sin(t*30)*8;curPose=mixPose(POSES.balance,POSES.flail,t*0.4);});
- await wait(420);A.shatter();A.scream();shatter(target);shake=0.22;
+ await wait(420);A.tension(false);A.cut();A.shatter();A.scream();shatter(target);shake=0.22;
  // încetinitor dramatic la spargere, iar camera urcă deasupra golului
  timeScale=0.3;craneFrom=target.g.position.clone();setTimeout(()=>{timeScale=0.6;},1300);setTimeout(()=>{timeScale=1;},2600);
  // 7. căderea, urmărită de cameră
@@ -345,7 +362,7 @@ async function jump(side){
  await tween(2600,(t)=>{me.root.position.y=fallStart.y+(-4.9*Math.pow(t*2.2,2));me.root.rotation.x=-t*1.6;me.root.rotation.z=Math.sin(t*5)*0.4;curPose=mixPose(POSES.flail,POSES.air,Math.min(1,t*1.5)*0.3);});
  fade.style.opacity=1;await wait(700);
  fallCam=false;craneFrom=null;timeScale=1;myPath.length=0;applyServerState(res.state);
- if(status==='eliminated'){fade.style.opacity=0;placeMe();resetPanelsVisual();camPos.set(0,2.55,START_Z+4.6);camTarget.set(0,0.1,rowZ(0)-0.6);await showMsg('ELIMINAT','0 PCT','#FF4053',2600);busy=false;opts.onBusy?.(false);opts.onState?.(res.state);return;}
+ if(status==='eliminated'){A.say(`Player ${spoken(opts.me?.num)}. Eliminated.`,200);fade.style.opacity=0;placeMe();resetPanelsVisual();camPos.set(0,2.55,START_Z+4.6);camTarget.set(0,0.1,rowZ(0)-0.6);await showMsg('ELIMINAT','0 PCT','#FF4053',2600);busy=false;opts.onBusy?.(false);opts.onState?.(res.state);return;}
  await showMsg(lives===1?'ULTIMA VIAȚĂ':'AI PIERDUT O VIAȚĂ',`Mai ai ${lives} ${lives===1?'viață':'vieți'}. Înapoi la început.`,'#FF4053',2000);
  placeMe();resetPanelsVisual();camPos.set(0,2.55,START_Z+4.6);camTarget.set(0,0.1,rowZ(0)-0.6);fade.style.opacity=0;busy=false;opts.onBusy?.(false);opts.onState?.(res.state);
 }
@@ -392,7 +409,8 @@ function frame(dt){
  for(let i=glitter.length-1;i>=0;i--){const g=glitter[i];const pa=g.pts.geometry.attributes.position.array;g.vel.forEach((v,k)=>{v.y-=6*dt;pa[k*3]+=v.x*dt;pa[k*3+1]+=v.y*dt;pa[k*3+2]+=v.z*dt;});g.pts.geometry.attributes.position.needsUpdate=true;g.life-=dt;g.pts.material.opacity=Math.max(0,g.life/2.2);if(g.life<=0){scene.remove(g.pts);g.pts.geometry.dispose();glitter.splice(i,1);}}
  // camera: în spate și jos, privind spre rândul următor
  const p=me.root.position;
- if(fallCam&&craneFrom){ // cadru de macara: sus, deasupra găurii din pod, privind în gol după personaj
+ if(introCam){camPos.copy(introCam.pos);camTarget.copy(introCam.target);}
+ else if(fallCam&&craneFrom){ // cadru de macara: sus, deasupra găurii din pod, privind în gol după personaj
   camTarget.lerp(new T.Vector3(p.x,p.y,p.z),0.08);camPos.lerp(new T.Vector3(craneFrom.x*0.6+1.2,7.5,craneFrom.z+2.8),0.03);}
  else if(fallCam){camTarget.lerp(new T.Vector3(p.x,p.y,p.z),0.12);camPos.lerp(new T.Vector3(p.x+0.4,1.8,p.z+2.2),0.06);}
  else{const nextZ=status==='active'&&step<ROWS?rowZ(step):p.z-3;camTarget.lerp(new T.Vector3(0,0.1,nextZ-0.6),0.06);camPos.lerp(new T.Vector3(p.x*0.35,2.55,p.z+4.6),0.05);}
@@ -407,7 +425,15 @@ loop();
 // ══ SUNET — ÎNREGISTRĂRI REALE (CC0): Meta Open Sound + Kenney Impact Sounds ══
 // Sticla, pașii pe metal, ambianța halei, șuierăturile, efortul și țipătul sunt
 // înregistrări reale. Web Audio doar le mixează (volum, ecoul halei, ordinea).
-const A=(()=>{let ctx=null,bus=null,on=false,buf={},loading=null,ambNodes=[],music=null,sched=null,nextBeat=0,beat=0,level=0;
+const A=(()=>{let ctx=null,bus=null,on=false,buf={},loading=null,ambNodes=[],music=null,sched=null,nextBeat=0,beat=0,level=0,pad=null,heart=null;
+ // Pad cinematic: acorduri grave de „coarde” (la minor ↔ fa major), cu filtru care respiră lent. Fără melodie.
+ function padOn(){if(!ctx||pad)return;const g=ctx.createGain();g.gain.value=0.0001;const lp=ctx.createBiquadFilter();lp.type='lowpass';lp.frequency.value=600;lp.Q.value=0.7;lp.connect(g);g.connect(bus);
+  const lfo=ctx.createOscillator();lfo.frequency.value=0.07;const lg=ctx.createGain();lg.gain.value=320;lfo.connect(lg);lg.connect(lp.frequency);lfo.start();
+  const CH=[[45,52,57,60],[41,48,53,57]];const oscs=[];CH[0].forEach((n,i)=>{[-6,6].forEach((d)=>{const o=ctx.createOscillator();o.type='sawtooth';o.frequency.value=440*Math.pow(2,(n-69)/12);o.detune.value=d;const og=ctx.createGain();og.gain.value=0.05;o.connect(og);og.connect(lp);o.start();oscs.push({o,i});});});
+  let k=0;const swap=setInterval(()=>{if(!pad)return;k=1-k;const t=ctx.currentTime;oscs.forEach(({o,i})=>o.frequency.setTargetAtTime(440*Math.pow(2,(CH[k][i]-69)/12),t,2.2));},16000);
+  g.gain.setTargetAtTime(0.32,ctx.currentTime,3);pad={g,oscs,lfo,swap};}
+ function padOff(){if(!pad)return;const p=pad;pad=null;clearInterval(p.swap);p.g.gain.setTargetAtTime(0.0001,ctx.currentTime,0.5);setTimeout(()=>{p.oscs.forEach(({o})=>{try{o.stop();}catch(e){}});try{p.lfo.stop();}catch(e){}},2500);}
+ function thump(t,vol){const o=ctx.createOscillator();o.type='sine';o.frequency.setValueAtTime(95,t);o.frequency.exponentialRampToValueAtTime(42,t+0.16);const g=ctx.createGain();g.gain.setValueAtTime(0.0001,t);g.gain.exponentialRampToValueAtTime(vol,t+0.01);g.gain.exponentialRampToValueAtTime(0.0001,t+0.3);o.connect(g);g.connect(bus);o.start(t);o.stop(t+0.35);}
  const N=(n)=>440*Math.pow(2,(n-69)/12);
  const env=(t,a,p,d)=>{const g=ctx.createGain();g.gain.setValueAtTime(0.0001,t);g.gain.exponentialRampToValueAtTime(p,t+a);g.gain.exponentialRampToValueAtTime(0.0001,t+a+d);return g;};
  let nb=null;const noise=()=>{if(nb)return nb;nb=ctx.createBuffer(1,ctx.sampleRate,ctx.sampleRate);const d=nb.getChannelData(0);for(let i=0;i<d.length;i++)d[i]=Math.random()*2-1;return nb;};
@@ -447,7 +473,14 @@ const A=(()=>{let ctx=null,bus=null,on=false,buf={},loading=null,ambNodes=[],mus
  function ambOff(){ambNodes.splice(0).forEach(n=>{n.g.gain.setTargetAtTime(0.0001,ctx.currentTime,0.3);setTimeout(()=>{try{n.s.stop();}catch(e){}},1500);});}
  return {
   unlock(){init();if(ctx&&ctx.state==='suspended')ctx.resume();},
-  setOn(v){init();on=!!v;if(on){this.unlock();(loading||Promise.resolve()).then(()=>{if(on)ambOn();});}else{ambOff();this.musicOff();}return on;},
+  setOn(v){init();on=!!v;if(on){this.unlock();(loading||Promise.resolve()).then(()=>{if(on){ambOn();padOn();}});}else{ambOff();padOff();this.musicOff();try{speechSynthesis.cancel();}catch(e){}}return on;},
+  // tensiune: muzica se retrage, se aud bătăi de inimă; la sfârșit revine
+  tension(v){if(!ctx||!pad)return;pad.g.gain.setTargetAtTime(v?0.05:0.32,ctx.currentTime,0.6);if(v&&!heart){const beat=()=>{if(!on)return;const t=ctx.currentTime;thump(t,0.5);thump(t+0.22,0.32);heart=setTimeout(beat,820);};beat();}if(!v&&heart){clearTimeout(heart);heart=null;}},
+  cut(){if(!ctx||!pad)return;if(heart){clearTimeout(heart);heart=null;}pad.g.gain.cancelScheduledValues(ctx.currentTime);pad.g.gain.setValueAtTime(0.0001,ctx.currentTime);setTimeout(()=>{if(pad&&on)pad.g.gain.setTargetAtTime(0.32,ctx.currentTime,2.5);},4500);},
+  // vocea din difuzoare (engleză, gravă, ca în serial)
+  say(text,delay=0){try{if(!on||!window.speechSynthesis)return;setTimeout(()=>{if(!on)return;const u=new SpeechSynthesisUtterance(text);u.lang='en-US';u.rate=0.78;u.pitch=0.4;u.volume=1;
+   const vs=speechSynthesis.getVoices();const v=vs.find(x=>/^en(-|_)(US|GB)/i.test(x.lang)&&/male|david|daniel|guy|george/i.test(x.name))||vs.find(x=>/^en/i.test(x.lang));if(v)u.voice=v;speechSynthesis.speak(u);},delay);}catch(e){}},
+  boom(){if(!ctx)return;const t=ctx.currentTime;thump(t,1.2);const o=ctx.createOscillator();o.type='sine';o.frequency.setValueAtTime(70,t);o.frequency.exponentialRampToValueAtTime(30,t+2.5);const g=ctx.createGain();g.gain.setValueAtTime(0.5,t);g.gain.exponentialRampToValueAtTime(0.0001,t+3);o.connect(g);g.connect(bus);o.start(t);o.stop(t+3.1);},
   step(){play(pick(['FEETHmn_ShoeMetalWalk_OS_01','FEETHmn_ShoeMetalWalk_OS_02']),{vol:0.7});},
   breath(){play('FEETHmn_ShoeMetalWalk_OS_02',{vol:0.35,rate:0.9});},
   whoosh(){play('VOXEfrt_Male01Effort_OS_01',{vol:0.55});play('WHSH_WhooshMedium_OS_01',{vol:0.6,delay:0.05});},
@@ -478,6 +511,17 @@ return {
   setPartner(p){partnerState=p?{step:p.step||0,status:p.status||'active'}:null;if(p&&(!partner||partner.role!==(p.role||'player')||partner.hairKey!==(p.hair||'buzzed')))buildPartner(p);if(!p&&partner){scene.remove(partner.root);partner=null;}placePartner();},
   setState(s){if(busy||!s)return;const prevStep=step;applyServerState(s);if(step!==prevStep){if(step<prevStep)myPath.length=0;placeMe();}},
   setSound(v){A.setOn(v);},
+  say(t,d){A.say(t,d);},
+  setSurvivors(alive,total){drawBoard(alive,total);},
+  cashOut(points){A.cash();A.say(`Player ${spoken(opts.me?.num)}. Has left the game. ${points} points.`,400);},
+  // Intro cinematic: zbor de la capătul podului spre start, cu voce. Atingerea ecranului îl sare.
+  async playIntro(){if(busy)return;busy=true;opts.onBusy?.(true);const endZ=rowZ(ROWS)-6,startZ=START_Z+4.6;let skip=false;const sk=()=>{skip=true;};canvas.addEventListener('pointerdown',sk,{once:true});
+   introCam={pos:new T.Vector3(0,7,endZ),target:new T.Vector3(0,0,endZ-6)};A.boom();A.say('The glass bridge.',600);A.say('Cooperate. Or die.',2600);
+   msub.textContent='';mt.style.color='#ff2d7a';mt.textContent='PODUL DE STICLĂ';msg.style.opacity=1;
+   const p0=new T.Vector3(0,7,endZ),p1=new T.Vector3(0,3.2,startZ+2),t0=new T.Vector3(0,0,endZ-6),t1=new T.Vector3(0,0.2,START_Z-4);
+   await tween(7500,(t)=>{if(skip)return;const e=t<.5?2*t*t:1-Math.pow(-2*t+2,2)/2;introCam.pos.lerpVectors(p0,p1,e);introCam.target.lerpVectors(t0,t1,e);
+    if(t>0.35&&t<0.38){mt.textContent='COOPEREAZĂ';mt.style.color='#fff';}if(t>0.55&&t<0.58){mt.textContent='… SAU MORI';mt.style.color='#FF4053';}});
+   canvas.removeEventListener('pointerdown',sk);msg.style.opacity=0;camPos.set(0,2.55,START_Z+4.6);camTarget.set(0,0.1,rowZ(0)-0.6);introCam=null;busy=false;opts.onBusy?.(false);},
   cashFx(){A.cash();},
   isBusy(){return busy;},
   dispose(){running=false;cancelAnimationFrame(raf);ro.disconnect();document.removeEventListener('visibilitychange',onVis);
@@ -487,11 +531,11 @@ return {
 };
 }
 
-export default function GlassBridge3D({ assets, me, partner, state, onPick, onState, onBusy, soundOn, height = 520 }) {
+export default function GlassBridge3D({ assets, me, partner, state, onPick, onState, onBusy, onReady, soundOn, height = 520 }) {
   const ref = useRef(null);
   const api = useRef(null);
   const cb = useRef({});
-  cb.current = { onPick, onState, onBusy };
+  cb.current = { onPick, onState, onBusy, onReady };
   useEffect(() => {
     if (!ref.current || !assets) return undefined;
     const s = createBridgeScene(ref.current, assets, {
@@ -501,6 +545,7 @@ export default function GlassBridge3D({ assets, me, partner, state, onPick, onSt
       onBusy: (b) => cb.current.onBusy?.(b),
     });
     api.current = s;
+    cb.current.onReady?.(s);
     return () => { s?.dispose(); api.current = null; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [assets, me?.num, me?.role, me?.hair, me?.hairColor]);

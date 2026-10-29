@@ -1,4 +1,4 @@
-import { doc, getDoc, runTransaction, serverTimestamp } from "firebase/firestore";
+import { doc, getDoc, runTransaction, serverTimestamp, setDoc } from "firebase/firestore";
 import { db } from "../firebase";
 import { listGeneralLeaderboard, listSeasonLeaderboard } from "./adminService";
 
@@ -72,4 +72,16 @@ export async function transferNumber(fromUid, toUid) {
     const transfers = [...(data.transfers || []), { number, fromUid, toUid, at: Date.now() }];
     tx.set(numbersRef(), { ...data, numbers, transfers });
   });
+}
+
+// ── Aspectul personajelor (Pod etc.): seasonNumbers/looks = { bald: { uid: true } } ──
+// Document SEPARAT de numere (altfel ar bloca „Îngheață numerele”, care cere ca
+// documentul numerelor să nu existe). Aceleași reguli: citit de toți, scris de Admin.
+const looksRef = () => doc(db, "seasonNumbers", "looks");
+export async function getPlayerLooks() {
+  const snap = await getDoc(looksRef());
+  return snap.exists() ? snap.data() : { bald: {} };
+}
+export async function setPlayerBald(uid, bald) {
+  await setDoc(looksRef(), { bald: { [uid]: !!bald } }, { merge: true });
 }

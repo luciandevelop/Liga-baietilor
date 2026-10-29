@@ -17,6 +17,14 @@ const GlassBridge3D = lazy(() => import("../components/GlassBridge3D"));
 // încasarea trec EXCLUSIV prin serverul /api/bridge.
 // ══════════════════════════════════════════════════════════════════
 const SOUND_KEY = "bridge-sound";
+// Costumul pe pod, după numărul înghețat (clasamentul general dinaintea sezonului):
+// 001 The Leader (negru, glugă) · 002–004 The Pretenders (costume colorate) · 005–010 The Guards (roșu, glugă) · restul verde.
+function roleForNumber(n) {
+  if (n === 1) return "boss";
+  if (n >= 2 && n <= 4) return `vip${n}`;
+  if (n >= 5 && n <= 10) return "guard";
+  return "player";
+}
 const C = { gold: "#F5C451", red: "#FF4053", mint: "#2FBF9A", dim: "#8DB3AA", ink: "#EAF6F2", line: "rgba(173,255,230,.16)" };
 
 export default function BridgeScreen({ gameweekId, uid }) {
@@ -55,10 +63,10 @@ export default function BridgeScreen({ gameweekId, uid }) {
 
   useEffect(() => { try { localStorage.setItem(SOUND_KEY, sound ? "on" : "off"); } catch { /* fără stocare */ } }, [sound]);
 
-  const meInfo = useMemo(() => ({ num: formatPlayerNumber(numbers[uid]), hair: "parted", hairColor: "negru" }), [numbers, uid]);
+  const meInfo = useMemo(() => ({ num: formatPlayerNumber(numbers[uid]), role: roleForNumber(Number(numbers[uid])), hair: "parted", hairColor: "negru" }), [numbers, uid]);
   const partnerInfo = useMemo(() => (partnerUid && partnerState ? {
     num: formatPlayerNumber(numbers[partnerUid]), name: profiles[partnerUid]?.nickname || "Partener",
-    hair: "parted", hairColor: "negru", step: partnerState.step, status: partnerState.status,
+    role: roleForNumber(Number(numbers[partnerUid])), hair: "parted", hairColor: "negru", step: partnerState.step, status: partnerState.status,
   } : null), [partnerUid, partnerState, numbers, profiles]);
 
   if (bridge === undefined) return <Box><p style={st.note}>Se încarcă Podul…</p></Box>;

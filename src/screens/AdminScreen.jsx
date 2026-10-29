@@ -80,6 +80,7 @@ import PusculitaScreen from "./PusculitaScreen";
 // 🔢 Numerele Sezonului 3 („Player 001”…), salvate separat de profiluri.
 import SeasonNumbersPanel from "../components/SeasonNumbersPanel";
 import SeasonCheckPanel from "../components/SeasonCheckPanel";
+import PlayerSpecialsPanel from "../components/PlayerSpecialsPanel";
 import PusculitaAdminPanel from "../components/PusculitaAdminPanel";
 import BridgeAdminPanel from "../components/BridgeAdminPanel";
 import BridgeTestLab from "../components/BridgeTestLab";
@@ -2807,6 +2808,10 @@ export default function AdminScreen({ onBack }) {
 
                       <SectionCard title="🔍 Verifică clasamentul">
                         <SeasonCheckPanel players={players} seasons={seasons} />
+                      </SectionCard>
+
+                      <SectionCard title="⭐ Specialele unui jucător">
+                        <PlayerSpecialsPanel players={players} />
                       </SectionCard>
 
                       {disabled.length > 0 && (

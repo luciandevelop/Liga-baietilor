@@ -22,7 +22,7 @@ renderer.setPixelRatio(Math.min(window.devicePixelRatio||1,LOW?1.25:1.75));
 renderer.outputEncoding=T.sRGBEncoding;renderer.toneMapping=T.ACESFilmicToneMapping;renderer.toneMappingExposure=1.0;
 renderer.physicallyCorrectLights=true;renderer.shadowMap.enabled=!LOW;renderer.shadowMap.type=T.PCFSoftShadowMap;
 
-const scene=new T.Scene();scene.background=new T.Color(0x03080a);scene.fog=new T.FogExp2(0x041012,0.028);
+const scene=new T.Scene();scene.background=new T.Color(0x060208);scene.fog=new T.FogExp2(0x0a0310,0.02);
 const camera=new T.PerspectiveCamera(58,1,0.05,400);
 
 // ── Mediu pentru reflexii ──
@@ -46,34 +46,63 @@ const pinkL=new T.PointLight(0xff2d7a,60,40,2);pinkL.position.set(-9,6,-12);scen
 const tealL=new T.PointLight(0x2fbf9a,60,40,2);tealL.position.set(9,5,-16);scene.add(tealL);
 const endL=new T.PointLight(0xffd27a,40,18,2);endL.position.set(0,3,rowZ(ROWS)-2);scene.add(endL);
 
-// Hala: coloane, grinzi, pasarele (instanțiate — ieftin pe telefon)
+// ══ HALA DE CIRC (ca în serial): cortine de catifea roșie și albastră, ghirlande de becuri colorate,
+// grinzi roz luminoase, reflectoare colorate care mătură sala și un reflector care urmărește jucătorul.
+const circus={sweeps:[],follow:null,cone:null};
 (function(){
- const colGeo=new T.BoxGeometry(0.8,60,0.8);const cols=new T.InstancedMesh(colGeo,steelDark,16);let k=0;
- for(let i=0;i<8;i++)for(const x of[-11,11]){const m=new T.Matrix4().makeTranslation(x,-12,8-i*7);cols.setMatrixAt(k++,m);}scene.add(cols);
- const beamGeo=new T.BoxGeometry(23,0.6,0.6);const beams=new T.InstancedMesh(beamGeo,steel,8);for(let i=0;i<8;i++)beams.setMatrixAt(i,new T.Matrix4().makeTranslation(0,15,8-i*7));scene.add(beams);
- const diagGeo=new T.BoxGeometry(0.18,9,0.18);const diag=new T.InstancedMesh(diagGeo,steel,28);k=0;
- for(let i=0;i<7;i++)for(const x of[-11,11])for(const s of[1,-1]){if(k>=28)break;const m=new T.Matrix4().compose(new T.Vector3(x,6,4.5-i*7),new T.Quaternion().setFromEuler(new T.Euler(s*0.6,0,0)),new T.Vector3(1,1,1));diag.setMatrixAt(k++,m);}scene.add(diag);
- // lămpi industriale suspendate
- const lampGeo=new T.ConeGeometry(0.7,0.6,24,1,true);const lampMat=new T.MeshStandardMaterial({color:0x111111,metalness:.7,roughness:.4,side:T.DoubleSide});
- const bulbMat=new T.MeshBasicMaterial({color:0xfff2cc});
- for(let i=0;i<5;i++){const g=new T.Group();const l=new T.Mesh(lampGeo,lampMat);const b=new T.Mesh(new T.SphereGeometry(0.22,12,8),bulbMat);b.position.y=-0.2;g.add(l,b);g.position.set(i%2?3.5:-3.5,9,1-i*6);scene.add(g);}
- // conuri de lumină (aditive)
- const beamMat=new T.ShaderMaterial({transparent:true,depthWrite:false,blending:T.AdditiveBlending,side:T.DoubleSide,uniforms:{c:{value:new T.Color(0xfff0c8)}},
-  vertexShader:'varying float vY;void main(){vY=position.y;gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.);}',
-  fragmentShader:'uniform vec3 c;varying float vY;void main(){float a=smoothstep(-6.,6.,vY)*0.06;gl_FragColor=vec4(c,a);}'});
- for(let i=0;i<5;i++){const c=new T.Mesh(new T.CylinderGeometry(0.4,3.2,12,32,1,true),beamMat);c.position.set(i%2?3.5:-3.5,3,1-i*6);scene.add(c);}
- // benzi de neon în depărtare
- const neon=(col,x,y,z,w)=>{const m=new T.Mesh(new T.BoxGeometry(w,0.12,0.12),new T.MeshBasicMaterial({color:col}));m.position.set(x,y,z);scene.add(m);};
- neon(0xff2d7a,-10.5,3,-30,0.2);for(let i=0;i<6;i++){neon(i%2?0x2fbf9a:0xff2d7a,i%2?10.6:-10.6,8,4-i*7,0.15);}
- // golul: podeaua foarte jos, cu o strălucire slabă
- const abyss=new T.Mesh(new T.PlaneGeometry(200,200),new T.MeshBasicMaterial({color:0x020405}));abyss.rotation.x=-Math.PI/2;abyss.position.y=-45;scene.add(abyss);
- const glow=new T.Mesh(new T.CircleGeometry(14,48),new T.MeshBasicMaterial({color:0x0b3a33,transparent:true,opacity:.35,blending:T.AdditiveBlending,depthWrite:false}));glow.rotation.x=-Math.PI/2;glow.position.set(0,-44.8,-12);scene.add(glow);
+ const L=ROWS*ROW_GAP+18,zMid=-L/2+7;
+ // cortine cu falduri (catifea)
+ const curtainGeo=(w,h,folds)=>{const g=new T.PlaneGeometry(w,h,folds*6,1);const p=g.attributes.position;for(let i=0;i<p.count;i++)p.setZ(i,Math.sin(p.getX(i)/w*folds*Math.PI*2)*0.32);g.computeVertexNormals();return g;};
+ const red=new T.MeshStandardMaterial({color:0x7a0816,roughness:0.88,side:T.DoubleSide});
+ const blue=new T.MeshStandardMaterial({color:0x16248a,roughness:0.85,side:T.DoubleSide});
+ for(const sx of[-1,1]){const c=new T.Mesh(curtainGeo(L,26,Math.round(L/1.1)),red);c.rotation.y=-sx*Math.PI/2;c.position.set(sx*7.6,3,zMid);scene.add(c);
+  for(let k=0;k<4;k++){const b2=new T.Mesh(curtainGeo(2.6,26,3),blue);b2.rotation.y=-sx*Math.PI/2;b2.position.set(sx*7.35,3,2-k*9);scene.add(b2);}}
+ const back=new T.Mesh(curtainGeo(18,26,16),red);back.position.set(0,3,rowZ(ROWS)-8);scene.add(back);
+ // lumină caldă pe cortine
+ for(const sx of[-1,1])for(let k=0;k<3;k++){const l=new T.PointLight(0xff3a4a,26,14,2);l.position.set(sx*5.5,4,-k*9);scene.add(l);}
+ // ── becuri: o singură plasă instanțiată + un halou aditiv (ieftin pe telefon) ──
+ const P=[],C=[],S=[];const add=(x,y,z,col,sz=1)=>{P.push(x,y,z);const c=new T.Color(col);C.push(c.r,c.g,c.b);S.push(sz);};
+ const MULTI=[0xffd23d,0x3dff6a,0xff3d5a,0x3da8ff,0xff8a2d];
+ const z0=rowZ(0)+ROW_GAP/2+0.2,z1=rowZ(ROWS-1)-ROW_GAP/2; // doar pe pod, nu pe platforme
+ for(let z=z0;z>z1;z-=0.72)for(const x of[-2.1,2.1])add(x,0.05,z,0xfff1c8,1.7);             // becuri mari, albe, pe marginile podului
+ for(let z=z0;z>z1;z-=0.42)for(const x of[-0.12,0.12])add(x,-0.02,z,MULTI[Math.abs(Math.round(z/0.42))%3],0.8); // „scara” colorată din mijloc
+ for(let z=z0;z>z1;z-=1.3)for(const x of[-0.06,0,0.06])add(x,-0.02,z,0xffd23d,0.8);
+ for(let z=6;z>zMid-L/2;z-=5)for(const sx of[-1,1])for(let y=-7;y<11;y+=0.55)add(sx*7.1,y,z,MULTI[(Math.round(y/0.55)+(z|0))%5],0.9); // ghirlande verticale pe cortine
+ for(let z=8;z>zMid-L/2;z-=0.6)for(const sx of[-1,1])add(sx*7.0,11,z,MULTI[Math.abs(Math.round(z/0.6))%5],0.9);           // bordura de sus
+ const gz=rowZ(ROWS)-3.9;for(let k=0;k<=26;k++){const a=Math.PI*k/26;add(Math.cos(a)*1.9,Math.sin(a)*1.9+0.2,gz,MULTI[k%5],1.1);} // arcada de final
+ for(let x=-2.2;x<=2.21;x+=0.4){add(x,0.02,START_Z+1.55,0xfff1c8,1.2);add(x,0.02,rowZ(ROWS)-0.45,0xfff1c8,1.2);}
+ const n=P.length/3;const bulb=new T.InstancedMesh(new T.SphereGeometry(0.045,8,6),new T.MeshBasicMaterial({toneMapped:false}),n);
+ const m4=new T.Matrix4(),q=new T.Quaternion(),v=new T.Vector3(),sc=new T.Vector3();
+ for(let i=0;i<n;i++){v.set(P[i*3],P[i*3+1],P[i*3+2]);sc.setScalar(S[i]);m4.compose(v,q,sc);bulb.setMatrixAt(i,m4);bulb.setColorAt(i,new T.Color(C[i*3],C[i*3+1],C[i*3+2]));}
+ scene.add(bulb);
+ const gc=document.createElement('canvas');gc.width=gc.height=64;const gx=gc.getContext('2d');const gr=gx.createRadialGradient(32,32,0,32,32,32);
+ gr.addColorStop(0,'rgba(255,255,255,1)');gr.addColorStop(0.25,'rgba(255,255,255,.45)');gr.addColorStop(1,'rgba(255,255,255,0)');gx.fillStyle=gr;gx.fillRect(0,0,64,64);
+ const halo=new T.BufferGeometry();halo.setAttribute('position',new T.Float32BufferAttribute(P,3));halo.setAttribute('color',new T.Float32BufferAttribute(C,3));
+ scene.add(new T.Points(halo,new T.PointsMaterial({size:0.42,map:new T.CanvasTexture(gc),vertexColors:true,transparent:true,depthWrite:false,blending:T.AdditiveBlending,sizeAttenuation:true,toneMapped:false})));
+ // ── reflectoare colorate care mătură sala ──
+ const beamMat=(col)=>new T.ShaderMaterial({transparent:true,depthWrite:false,blending:T.AdditiveBlending,side:T.DoubleSide,uniforms:{c:{value:new T.Color(col)}},
+  vertexShader:'varying float vY;void main(){vY=uv.y;gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.);}',
+  fragmentShader:'uniform vec3 c;varying float vY;void main(){gl_FragColor=vec4(c,pow(vY,1.6)*0.11);}'});
+ [[-5,0xffffff,2],[5,0xff4fb8,-4],[-4,0x4fc3ff,-12],[4.5,0xffffff,-18]].forEach(([x,col,z])=>{const g=new T.Group();g.position.set(x,11.5,z);
+  const cone=new T.Mesh(new T.CylinderGeometry(0.25,2.4,17,28,1,true),beamMat(col));cone.position.y=-8.5;g.add(cone);
+  const lamp=new T.Mesh(new T.SphereGeometry(0.28,12,8),new T.MeshBasicMaterial({color:col,toneMapped:false}));g.add(lamp);scene.add(g);circus.sweeps.push(g);});
+ // ── reflectorul care urmărește jucătorul (alb, puternic) ──
+ const fs=new T.SpotLight(0xffffff,170,40,0.13,0.35,1.4);fs.position.set(0,13,START_Z+7);scene.add(fs);scene.add(fs.target);circus.follow=fs;
+ const cg=new T.CylinderGeometry(0.12,1.0,1,28,1,true);cg.translate(0,-0.5,0);cg.rotateX(-Math.PI/2);
+ const fcone=new T.Mesh(cg,beamMat(0xfff6e6));fcone.position.copy(fs.position);scene.add(fcone);circus.cone=fcone;
+ // golul de dedesubt
+ const abyss=new T.Mesh(new T.PlaneGeometry(200,200),new T.MeshBasicMaterial({color:0x040104}));abyss.rotation.x=-Math.PI/2;abyss.position.y=-45;scene.add(abyss);
 })();
+function updateCircus(now,target){
+ circus.sweeps.forEach((g,i)=>{g.rotation.z=Math.sin(now*0.45+i*1.3)*0.55;g.rotation.x=Math.cos(now*0.35+i*2.1)*0.4;});
+ if(target){circus.follow.target.position.copy(target);const d=circus.cone.position.distanceTo(target)+0.4;circus.cone.lookAt(target);circus.cone.scale.set(1,1,d);}
+}
 
 // Structura podului: grinzi laterale, traverse, platforme
 (function(){
  const L=ROWS*ROW_GAP+4;
- for(const x of[-2.0,0,2.0]){const r=new T.Mesh(new T.BoxGeometry(x===0?0.14:0.22,0.28,L),steel);r.position.set(x,-0.2,-L/2+1);r.castShadow=!LOW;scene.add(r);}
+ const neonPink=new T.MeshStandardMaterial({color:0xff4fb8,emissive:0xff2a9e,emissiveIntensity:1.1,metalness:0.3,roughness:0.3});
+ for(const x of[-2.0,-0.3,0.3,2.0]){const r=new T.Mesh(new T.BoxGeometry(Math.abs(x)<1?0.1:0.2,0.24,L),neonPink);r.position.set(x,-0.2,-L/2+1);r.castShadow=!LOW;scene.add(r);}
  for(let i=0;i<=ROWS;i++){const z=rowZ(i)+ROW_GAP/2;const t=new T.Mesh(new T.BoxGeometry(4.3,0.18,0.22),steel);t.position.set(0,-0.22,z);scene.add(t);
   // cabluri spre tavan
   for(const x of[-2.05,2.05]){const c=new T.Mesh(new T.CylinderGeometry(0.02,0.02,16,6),steel);c.position.set(x,7.8,z);scene.add(c);}}
@@ -81,11 +110,18 @@ const endL=new T.PointLight(0xffd27a,40,18,2);endL.position.set(0,3,rowZ(ROWS)-2
   for(const x of[-2.2,2.2]){const rail=new T.Mesh(new T.BoxGeometry(0.06,1,d),steel);rail.position.set(x,0.5,z);scene.add(rail);}};
  plate(START_Z-0.5,4);plate(rowZ(ROWS)-2.4,4.2);
  // poarta finală luminoasă
- const gate=new T.Mesh(new T.TorusGeometry(1.6,0.08,8,48,Math.PI),new T.MeshBasicMaterial({color:0xffd27a}));gate.position.set(0,0,rowZ(ROWS)-3.8);scene.add(gate);
+ const gate=new T.Mesh(new T.TorusGeometry(1.6,0.1,8,48,Math.PI),new T.MeshBasicMaterial({color:0xff3fae,toneMapped:false}));gate.position.set(0,0,rowZ(ROWS)-3.8);scene.add(gate);
 })();
 
 // ── Sticla ──
-const glassMat=()=>new T.MeshPhysicalMaterial({color:0xcff7ee,metalness:0,roughness:0.04,transparent:true,opacity:0.22,clearcoat:1,clearcoatRoughness:0.03,envMapIntensity:2.4,depthWrite:false});
+// Reflexe reale pe sticlă: o „hartă de mediu” făcută dintr-o mini-scenă cu lămpile halei (doar pentru sticlă și cioburi,
+// ca restul scenei să rămână întunecat).
+const ENV=(()=>{const es=new T.Scene();es.background=new T.Color(0x020405);const lm=new T.MeshBasicMaterial({color:0xfff2dc});
+ for(let k=0;k<5;k++){const q=new T.Mesh(new T.PlaneGeometry(1.4,0.35),lm);q.position.set((k-2)*2.2,6,-2-k);q.lookAt(0,0,0);es.add(q);}
+ const pk=new T.Mesh(new T.PlaneGeometry(3,0.5),new T.MeshBasicMaterial({color:0xff2d7a}));pk.position.set(-6,2,0);pk.lookAt(0,0,0);es.add(pk);
+ const tq=new T.Mesh(new T.PlaneGeometry(3,0.5),new T.MeshBasicMaterial({color:0x22d3c5}));tq.position.set(6,2,0);tq.lookAt(0,0,0);es.add(tq);
+ const pm=new T.PMREMGenerator(renderer);const tex=pm.fromScene(es,0.02).texture;pm.dispose();return tex;})();
+const glassMat=()=>new T.MeshPhysicalMaterial({color:0xcff7ee,metalness:0,roughness:0.04,transparent:true,opacity:0.22,clearcoat:1,clearcoatRoughness:0.03,envMap:ENV,envMapIntensity:2.4,depthWrite:false});
 const frameMat=new T.MeshStandardMaterial({color:0x8fa3a6,metalness:1,roughness:0.25});
 const rimMat=()=>new T.ShaderMaterial({transparent:true,depthWrite:false,blending:T.AdditiveBlending,uniforms:{c:{value:new T.Color(0x9ff5df)},a:{value:0.35}},
   vertexShader:'varying vec2 vU;void main(){vU=uv;gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.);}',
@@ -109,7 +145,7 @@ for(let i=0;i<ROWS;i++){panels[i]=[];for(const side of[0,1]){
  panels[i][side]={g,gl,rim,crack,ct,broken:false};}}
 
 // Cioburi: triunghiuri dintr-o subdivizare aleatoare a pătratului
-const shardMat=new T.MeshPhysicalMaterial({color:0xe9fffa,roughness:0.03,transparent:true,opacity:0.8,clearcoat:1,envMapIntensity:3.2,emissive:0x3a6f66,emissiveIntensity:0.35,side:T.DoubleSide,depthWrite:false});
+const shardMat=new T.MeshPhysicalMaterial({color:0xe9fffa,roughness:0.03,transparent:true,opacity:0.8,clearcoat:1,envMap:ENV,envMapIntensity:3.2,emissive:0x3a6f66,emissiveIntensity:0.35,side:T.DoubleSide,depthWrite:false});
 const shards=[];
 const sparkTex=(()=>{const c=document.createElement('canvas');c.width=c.height=64;const g=c.getContext('2d');const r=g.createRadialGradient(32,32,0,32,32,32);r.addColorStop(0,'rgba(255,255,255,1)');r.addColorStop(.35,'rgba(200,255,245,.7)');r.addColorStop(1,'rgba(150,255,230,0)');g.fillStyle=r;g.fillRect(0,0,64,64);return new T.CanvasTexture(c);})();
 const glitter=[];
@@ -129,8 +165,8 @@ function shatter(p){
 }
 
 // ── Personajul (articulat, construit în cod) ──
-function numberTex(num,name){const c=document.createElement('canvas');c.width=256;c.height=256;const g=c.getContext('2d');
- g.fillStyle='#15624b';g.fillRect(0,0,256,256);g.fillStyle='#fff';g.font='800 120px Oswald,Arial';g.textAlign='center';g.textBaseline='middle';g.fillText(num,128,138);
+function numberTex(num,name,role){const c=document.createElement('canvas');c.width=256;c.height=256;const g=c.getContext('2d');
+ const r=ROLES[role]||ROLES.player;g.fillStyle='#'+new T.Color(role&&role!=='player'?r.suit:0x15624b).getHexString();g.fillRect(0,0,256,256);g.fillStyle='#fff';g.font='800 120px Oswald,Arial';g.textAlign='center';g.textBaseline='middle';g.fillText(num,128,138);
  const t=new T.CanvasTexture(c);t.encoding=T.sRGBEncoding;return t;}
 function badgeTex(src){const c=document.createElement('canvas');c.width=c.height=128;const g=c.getContext('2d');const t=new T.CanvasTexture(c);t.encoding=T.sRGBEncoding;
  const im=new Image();im.onload=()=>{g.clearRect(0,0,128,128);g.save();g.beginPath();g.arc(64,64,58,0,Math.PI*2);g.clip();g.drawImage(im,0,0,128,128);g.restore();g.strokeStyle='#fff';g.lineWidth=8;g.beginPath();g.arc(64,64,58,0,Math.PI*2);g.stroke();t.needsUpdate=true;};im.src=src;return t;}
@@ -148,7 +184,7 @@ const HD={pos:b64(HUMAN.pos,Float32Array),si:b64(HUMAN.si,Uint8Array),sw:b64(HUM
 // Roluri Sezonul 3: aceeași anatomie, costume diferite (culori + glugă).
 const ROLES={
  player:{suit:0x1b6b52,dark:0x14503e,stripe:0xf4f4f0,shoe:0xf2f2ee,hood:null},
- guard:{suit:0xd8336f,dark:0xa8204f,stripe:0xd8336f,shoe:0x151515,hood:0x0b0b0b},      // paznic: salopetă roz, glugă/mască neagră
+ guard:{suit:0xb0163c,dark:0x7e0f2b,stripe:0xb0163c,shoe:0x151515,hood:0xb0163c},      // paznic: salopetă roșie, glugă roșie, mască neagră pe față
  vip:{suit:0x1a1a1e,dark:0xb8902e,stripe:0x1a1a1e,shoe:0x0d0d0d,hood:null},             // sponsor: costum închis, accente aurii
  vip2:{suit:0x4a1f17,dark:0x8c1d24,stripe:0x4a1f17,shoe:0x0d0d0d,hood:null},           // 002: costum maro-vișiniu
  vip3:{suit:0x14203f,dark:0xc9a227,stripe:0x14203f,shoe:0x0d0d0d,hood:null},           // 003: bleumarin cu auriu
@@ -186,6 +222,34 @@ function geoForRole(role){if(ROLE_GEO[role])return ROLE_GEO[role];const r=ROLES[
 const HAIR_GEOS=Object.fromEntries(Object.entries(HAIRS).map(([k,v])=>{const g=new T.BufferGeometry();g.setAttribute('position',new T.BufferAttribute(b64(v.p,Float32Array),3));g.setIndex(new T.BufferAttribute(b64(v.i,Uint16Array),1));g.computeVertexNormals();return [k,g];}));
 const HAIR_COLORS={negru:0x120d0a,castaniu:0x3b2416,blond:0x9c7a45,grizonat:0x6f6a64};
 const HAIR_GEO=(()=>{const g=new T.BufferGeometry();g.setAttribute('position',new T.BufferAttribute(HD.hp,3));g.setIndex(new T.BufferAttribute(HD.hi,1));g.computeVertexNormals();return g;})();
+// ── Cojile capului (păr periuță, glugă, mască) — din triunghiurile capului, în poziția de repaus ──
+const HEAD_IDX=HUMAN.names.indexOf('Head');
+const HEAD_M=(()=>{const P=HD.pos;let x0=1e9,x1=-1e9,y0=1e9,y1=-1e9,z0=1e9,z1=-1e9;const cnt=P.length/3;
+ for(let i=0;i<cnt;i++){if(HUMAN.names[HD.si[i*4]]!=='Head')continue;const x=P[i*3],y=P[i*3+1],z=P[i*3+2];x0=Math.min(x0,x);x1=Math.max(x1,x);y0=Math.min(y0,y);y1=Math.max(y1,y);z0=Math.min(z0,z);z1=Math.max(z1,z);}
+ return {x0,x1,y0,y1,z0,z1,cx:(x0+x1)/2,cz:(z0+z1)/2,hx:(x1-x0)/2,hz:(z1-z0)/2,h:y1-y0,zFront:z0,faceY:y0+(y1-y0)*0.58};})();
+// fața privește spre -z (numărul e pe spate, la +z)
+function headRegion(kind,x,y,z){const M=HEAD_M;const u=(y-M.y0)/M.h,fz=(z-M.cz)/M.hz,ax=Math.abs(x-M.cx)/M.hx;
+ const isFace=fz<-0.25&&u>0.16&&u<0.8&&ax<0.66;
+ if(kind==='face')return isFace;
+ if(kind==='hood')return !isFace&&u>0.1;
+ // păr: linia părului mai sus în față, mai jos la ceafă; urechile rămân libere
+ const thr=0.62-0.22*fz;if(ax>0.8&&u<0.72&&fz<0.35)return false;return u>thr;}
+const SHELL_CACHE={};
+function headShell(kind,off){const key=kind+off;if(SHELL_CACHE[key])return SHELL_CACHE[key];
+ const base=new T.BufferGeometry();base.setAttribute('position',new T.BufferAttribute(new Float32Array(HD.pos),3));base.setIndex(new T.BufferAttribute(HD.idx,1));base.computeVertexNormals();
+ const P=base.attributes.position.array,N=base.attributes.normal.array,I=HD.idx;const pos=[];
+ for(let t=0;t<I.length;t+=3){const a=I[t],b=I[t+1],c=I[t+2];let ok=true;
+  for(const v of [a,b,c]){const bn=HUMAN.names[HD.si[v*4]];
+   // gluga acoperă și gâtul (ca o cagulă); părul și masca doar capul
+   const inBone=bn==='Head'||(kind==='hood'&&bn==='neck_01'&&P[v*3+1]>1.52);
+   if(!inBone||!(bn==='neck_01'||headRegion(kind,P[v*3],P[v*3+1],P[v*3+2]))){ok=false;break;}}
+  if(!ok)continue;for(const v of [a,b,c])pos.push(P[v*3]+N[v*3]*off,P[v*3+1]+N[v*3+1]*off,P[v*3+2]+N[v*3+2]*off);}
+ const g=new T.BufferGeometry();g.setAttribute('position',new T.Float32BufferAttribute(pos,3));g.computeVertexNormals();
+ g.applyMatrix4(new T.Matrix4().fromArray(HUMAN.inv,HEAD_IDX*16)); // din poziția de repaus în spațiul osului capului
+ SHELL_CACHE[key]=g;return g;}
+function symbolTex(k){const c=document.createElement('canvas');c.width=c.height=128;const g=c.getContext('2d');g.strokeStyle='#f4f4f4';g.lineWidth=12;g.beginPath();
+ if(k===0)g.arc(64,64,40,0,Math.PI*2);else if(k===1){g.moveTo(64,20);g.lineTo(108,100);g.lineTo(20,100);g.closePath();}else g.rect(24,24,80,80);g.stroke();
+ const t=new T.CanvasTexture(c);t.encoding=T.sRGBEncoding;return t;}
 function makeHuman({num,name,ghost=false,showLabel=true,role='player',hair='parted',hairColor='negru'}){
  const op=ghost?0.5:1;
  const bones=HUMAN.names.map(n=>{const b=new T.Bone();b.name=n;return b;});
@@ -196,26 +260,32 @@ function makeHuman({num,name,ghost=false,showLabel=true,role='player',hair='part
  const mesh=new T.SkinnedMesh(geoForRole(role),mat);mesh.add(bones[0]);mesh.bind(skel);mesh.castShadow=!ghost;mesh.frustumCulled=false;
  const root=new T.Group(),inner=new T.Group();root.add(inner);inner.add(mesh);
  const B={};bones.forEach(b=>B[b.name]=b);
+ if(B.pelvis&&B.spine_01){B.pelvis.scale.set(0.9,1,0.94);B.spine_01.scale.set(1/0.9,1,1/0.94);}
+ if(B.spine_03&&B.neck_01){B.spine_03.scale.set(1.08,1,1.05);B.neck_01.scale.set(1/1.08,1,1/1.05);}
  const hairMat=new T.MeshStandardMaterial({color:HAIR_COLORS[hairColor]||0x120d0a,roughness:0.9,side:T.DoubleSide,transparent:ghost,opacity:op,depthWrite:!ghost});
  // stratul de bază (scalpul tuns scurt) e mereu pus, ca să nu se vadă pielea prin coafură
+ // PĂR TUNS PERIUȚĂ: o „coajă” luată chiar din forma capului, umflată cu 4 mm — urmează perfect craniul,
+ // nu are șuvițe și nu poate arăta a păr lung. Chel = fără coajă.
  const hairMesh=new T.Group();
- // scalpul: calotă în culoarea părului care acoperă creștetul și ceafa (modelul original o avea pictată în textură)
- const hq0=new T.Quaternion();B.Head.getWorldQuaternion(hq0);hq0.invert();
- const scalp=new T.Mesh(new T.SphereGeometry(0.112,28,20,0,Math.PI*2,0,Math.PI*0.5),hairMat);scalp.quaternion.copy(hq0);
- scalp.position.copy(B.Head.worldToLocal(new T.Vector3(0,1.69,0.014)));scalp.scale.set(1.04,1.18,1.08);scalp.rotateX(SCALP_TILT);hairMesh.add(scalp);
- const style=new T.Mesh(HAIR_GEOS[hair]||HAIR_GEOS.parted,hairMat);style.scale.setScalar(1.03);hairMesh.add(style);
- if(hair==='bald')hairMesh.visible=false; // chel: fără păr
+ if(hair!=='bald'){const hm=new T.Mesh(headShell('hair',0.0045),new T.MeshLambertMaterial({color:new T.Color(HAIR_COLORS[hairColor]||0x120d0a).multiplyScalar(0.35),side:T.DoubleSide,transparent:ghost,opacity:op}));hairMesh.add(hm);}
+ B.Head.add(hairMesh);
  B.Head.add(hairMesh);
  // glugă (paznic, șef): calotă care acoperă capul
- const hoodC=(ROLES[role]||{}).hood;let hood=null;if(hoodC!=null){hood=new T.Mesh(new T.SphereGeometry(0.125,28,20,0,Math.PI*2,0,Math.PI*0.62),new T.MeshStandardMaterial({color:hoodC,roughness:0.8,transparent:ghost,opacity:op}));
-  const hq=new T.Quaternion();B.Head.getWorldQuaternion(hq);hood.quaternion.copy(hq.invert());hood.position.copy(B.Head.worldToLocal(new T.Vector3(0,1.66,0.012)));hood.scale.set(1.08,1.3,1.12);B.Head.add(hood);hairMesh.visible=false;}
+ // GLUGĂ (gardian, Leader): coajă de material pe tot capul, mai puțin fața; pe față, masca (neagră) cu simbol.
+ const hoodC=(ROLES[role]||{}).hood;let hood=null;if(hoodC!=null){
+  hood=new T.Mesh(headShell('hood',0.014),new T.MeshLambertMaterial({color:new T.Color(hoodC).multiplyScalar(role==='boss'?0.4:0.75),side:T.DoubleSide,transparent:ghost,opacity:op}));B.Head.add(hood);
+  const mask=new T.Mesh(headShell('face',0.008),new T.MeshStandardMaterial({color:0x060606,roughness:0.28,metalness:0.25,side:T.DoubleSide,transparent:ghost,opacity:op}));B.Head.add(mask);
+  if(role==='guard'){const sym=new T.Mesh(new T.CircleGeometry(0.03,24),new T.MeshBasicMaterial({map:symbolTex((num||'').length%3),transparent:true,toneMapped:false}));
+   sym.position.copy(B.Head.worldToLocal(new T.Vector3(0,HEAD_M.faceY,HEAD_M.zFront-0.012)));const hq=new T.Quaternion();B.Head.getWorldQuaternion(hq);sym.quaternion.copy(hq.invert());sym.rotateY(Math.PI);B.Head.add(sym);}
+  hairMesh.visible=false;}
  mesh.updateMatrixWorld(true);
  // numărul pe spate, lipit de vertebra de sus
  const nt=numberTex(num,null,role);const deco=new T.Mesh(new T.PlaneGeometry(0.24,0.24),new T.MeshStandardMaterial({map:nt,roughness:.85,transparent:true,opacity:op,polygonOffset:true,polygonOffsetFactor:-2}));
  let maxZ=0;const P=BASE_GEO.attributes.position.array;for(let i=0;i<P.length;i+=3){if(Math.abs(P[i])<0.07&&P[i+1]>1.25&&P[i+1]<1.36)maxZ=Math.max(maxZ,P[i+2]);}
+ if(!num)deco.visible=false;
  const sp=B.spine_03;const wq=new T.Quaternion();sp.getWorldQuaternion(wq);deco.position.copy(sp.worldToLocal(new T.Vector3(0,1.3,maxZ+0.006)));deco.quaternion.copy(wq.invert());sp.add(deco);
  const restL={},restW={};bones.forEach(b=>{restL[b.name]=b.quaternion.clone();const q=new T.Quaternion();b.getWorldQuaternion(q);restW[b.name]=q;});
- const label=labelSprite(`${num} · ${name}`,ghost?'#9ff5df':'#ffffff');label.position.y=2.12;label.visible=showLabel;root.add(label);
+ const label=labelSprite(`${num} · ${name}`,ghost?'#9ff5df':'#ffffff');label.position.y=2.12;label.visible=false;root.add(label); // fără nume plutitoare (încurcau vederea)
  // numărul pe spate: la TOȚI (Leader, Pretenders, Guards, Nobodies)
  return {root,inner,mesh,B,restL,restW,roll:0,hairMesh,role};
 }
@@ -234,6 +304,7 @@ const POSES={
  land:PZ({sp:28,hd:-6,aD:56,aF:26,el:30,th:46,kn:82,fi:18}),
  balance:PZ({sp:10,hd:6,aD:38,aF:14,el:26,th:10,kn:18,fi:10}),
  relief:PZ({sp:20,hd:26,aD:86,aF:4,el:8,th:4,kn:8,fi:24,cl:-6}),
+ cheer:PZ({sp:-6,hd:-14,aD:-58,aF:18,el:16,th:2,kn:4,fi:6}),
  flail:PZ({sp:-16,hd:-22,aD:-12,aF:38,el:48,th:30,kn:52,thL:12,knL:22,thR:-34,knR:-40,fi:4,air:1}),
 };
 const mixPose=(a,b,t)=>{const o={};for(const k in a)o[k]=a[k]+(b[k]-a[k])*t;return o;};
@@ -262,14 +333,19 @@ function applyPose(h,p,ph=0,walk=0){
  h.inner.position.y=-drop*(1-p.air);
  h.inner.position.z=-(L1*Math.sin(thL*D2R)*0.0);}
 let me=makeHuman({num:opts.me?.num||'',name:'Tu',showLabel:false,role:opts.me?.role||'player',hair:opts.me?.hair||'buzzed',hairColor:opts.me?.hairColor||'negru'});scene.add(me.root);
+let spotLevel=0;
 let partner=null;
+const meSpot=new T.SpotLight(0xfff3dc,0,14,Math.PI/9,0.45,1.2);meSpot.castShadow=false;scene.add(meSpot);scene.add(meSpot.target);
+const spotCone=new T.Mesh(new T.ConeGeometry(0.9,6.5,32,1,true),new T.ShaderMaterial({transparent:true,depthWrite:false,blending:T.AdditiveBlending,side:T.DoubleSide,uniforms:{a:{value:0}},
+ vertexShader:'varying float vY;void main(){vY=uv.y;gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.);}',
+ fragmentShader:'uniform float a;varying float vY;void main(){gl_FragColor=vec4(1.,.95,.86,pow(vY,1.8)*0.16*a);}'}));scene.add(spotCone);
 // Gardieni nemișcați: doi la start (lateral, privind spre centru), doi la capăt (privind spre tine).
 function maskTex(sym){const c=document.createElement('canvas');c.width=c.height=128;const g=c.getContext('2d');g.fillStyle='#050505';g.fillRect(0,0,128,128);
  g.strokeStyle='#f4f4f4';g.lineWidth=10;g.beginPath();if(sym===0)g.arc(64,64,30,0,Math.PI*2);else if(sym===1){g.moveTo(64,30);g.lineTo(98,92);g.lineTo(30,92);g.closePath();}else g.rect(34,34,60,60);g.stroke();
  const t=new T.CanvasTexture(c);t.encoding=T.sRGBEncoding;return t;}
-const GUARD_SPOTS=[[-1.95,START_Z+0.6,Math.PI/2,0],[1.95,START_Z+0.6,-Math.PI/2,1],[-1.2,rowZ(ROWS)-3.2,Math.PI,2],[1.2,rowZ(ROWS)-3.2,Math.PI,1]];
+const GUARD_SPOTS=[[-2.0,START_Z-0.4,-Math.PI/4,0],[2.0,START_Z-0.4,Math.PI/4,1],[-1.2,rowZ(ROWS)-3.2,Math.PI,2],[1.2,rowZ(ROWS)-3.2,Math.PI,1]];
 const guards=GUARD_SPOTS.map(([x,z,ry,sym])=>{const g=makeHuman({num:'',name:'',showLabel:false,role:'guard',hair:'buzzed'});g.root.position.set(x,0,z);g.root.rotation.y=ry;
- const face=new T.Mesh(new T.CircleGeometry(0.105,24),new T.MeshBasicMaterial({map:maskTex(sym)}));const hq=new T.Quaternion();g.B.Head.getWorldQuaternion(hq);
+ const face=new T.Mesh(new T.CircleGeometry(0.112,28),new T.MeshBasicMaterial({map:maskTex(sym)}));const hq=new T.Quaternion();g.B.Head.getWorldQuaternion(hq);
  face.quaternion.copy(hq.invert());face.position.copy(g.B.Head.worldToLocal(new T.Vector3(0,1.64,-0.115)));face.rotateY(Math.PI);g.B.Head.add(face);applyPose(g,POSES.idle);scene.add(g.root);return g;});
 // Panoul luminos din hală: „SUPRAVIEȚUITORI X / N”
 const boardC=document.createElement('canvas');boardC.width=512;boardC.height=128;const boardTex=new T.CanvasTexture(boardC);boardTex.encoding=T.sRGBEncoding;
@@ -291,7 +367,7 @@ function placePartner(){if(!partner||!partnerState)return;
  // La start, partenerul așteaptă LÂNGĂ tine (în dreapta platformei), nu în același loc.
  // Pe pod stă pe grinda centrală a treptei lui — nu pe un panou, ca să nu dezvăluie partea.
  if(partnerState.step===0){partner.root.position.set(1.55,-0.02,START_Z+0.6);}
- else{partner.root.position.set(0,-0.02,rowZ(Math.min(ROWS,partnerState.step)-1)+0.2);}partner.root.rotation.y=0;partner.root.visible=partnerState.status!=='eliminated';applyPose(partner,POSES.balance);}
+ else{partner.root.position.set(0,-0.02,rowZ(Math.min(ROWS,partnerState.step)-1)+0.2);}partner.root.rotation.y=0;partner.root.visible=partnerState.status!=='eliminated'&&!(partnerState.step>step&&step<ROWS);applyPose(partner,POSES.balance);} // dacă e înaintea ta, nu-ți acoperă panourile
 placePartner();
 // ── Mesaje și efecte ──
 const overlay=document.createElement('div');overlay.style.cssText='position:absolute;inset:0;pointer-events:none;display:flex;flex-direction:column;align-items:center;justify-content:center;opacity:0;transition:opacity .35s;text-align:center;padding:0 16px';
@@ -305,7 +381,7 @@ const wait=(ms)=>new Promise(r=>setTimeout(r,ms));
 // ── Animații (timeline simplu cu promisiuni) ──
 const anims=[];
 function tween(dur,fn){return new Promise(res=>anims.push({t:0,dur,fn,res}));}
-let camTarget=new T.Vector3(),camPos=new T.Vector3(),shake=0,fallCam=false,timeScale=1,craneFrom=null,introCam=null;
+let camTarget=new T.Vector3(),camPos=new T.Vector3(),shake=0,fallCam=false,timeScale=1,craneFrom=null,introCam=null,winCam=false;
 function standPos(){if(step===0)return new T.Vector3(0,0,START_Z);const sd=myPath[step-1];
  return sd===0||sd===1?panels[step-1][sd].g.position.clone().setY(0.04):new T.Vector3(0,0.02,rowZ(step-1)); // după refresh: pe grinda dintre panouri
 }
@@ -314,7 +390,7 @@ placeMe();
 
 const DIG=['zero','one','two','three','four','five','six','seven','eight','nine'];
 const spoken=(n)=>String(n||'').replace(/\D/g,'').split('').map(d=>DIG[+d]).join(' ');
-function applyServerState(s){if(!s)return;step=s.step|0;lives=s.lives|0;status=s.status||'active';}
+function applyServerState(s){if(!s)return;step=s.step|0;lives=s.lives|0;status=s.status||'active';placePartner();}
 const BRIDGE_MSG=(e)=>({closed:'Termenul Podului a expirat.',stale:'Săritura era deja înregistrată.',network:'Fără conexiune. Încearcă din nou.',finished:'Jocul tău s-a încheiat.'}[e]||'Încearcă din nou.');
 async function jump(side){
  if(busy||status!=='active'||step>=ROWS)return;busy=true;opts.onBusy?.(true);A.unlock();
@@ -347,7 +423,7 @@ async function jump(side){
   A.relief();await tween(800,(t)=>{curPose=mixPose(POSES.balance,POSES.relief,ease(t));});
   resetRim(target);
   A.tension(false);myPath[row]=side;applyServerState(res.state);
-  if(status==='won'){await walkToEnd();A.victory();A.say(`Player ${spoken(opts.me?.num)}. Has crossed the bridge.`,300);await showMsg('POD TRAVERSAT','100 PCT','#F5C451',2600);busy=false;opts.onBusy?.(false);opts.onState?.(res.state);return;}
+  if(status==='won'){A.tension(false);await walkToEnd();A.victory();A.say(`Congratulations. Player ${spoken(opts.me?.num)}. You have crossed the bridge.`,200);await showMsg('CONGRATULATIONS','Ai traversat podul · 100 PCT','#F5C451',3600);busy=false;opts.onBusy?.(false);opts.onState?.(res.state);return;}
   await showMsg('AI SUPRAVIEȚUIT','',  '#2FBF9A',1100);
   await tween(500,(t)=>{curPose=mixPose(POSES.relief,POSES.idle,t);});
   busy=false;opts.onBusy?.(false);opts.onState?.(res.state);return;
@@ -362,7 +438,7 @@ async function jump(side){
  fallCam=true;const fallStart=me.root.position.clone();let vy=0;
  await tween(2600,(t)=>{me.root.position.y=fallStart.y+(-4.9*Math.pow(t*2.2,2));me.root.rotation.x=-t*1.6;me.root.rotation.z=Math.sin(t*5)*0.4;curPose=mixPose(POSES.flail,POSES.air,Math.min(1,t*1.5)*0.3);});
  fade.style.opacity=1;await wait(700);
- fallCam=false;craneFrom=null;timeScale=1;myPath.length=0;applyServerState(res.state);
+ fallCam=false;craneFrom=null;timeScale=1;winCam=false;myPath.length=0;applyServerState(res.state);
  if(status==='eliminated'){A.say(`Player ${spoken(opts.me?.num)}. Eliminated.`,200);fade.style.opacity=0;placeMe();resetPanelsVisual();camPos.set(0,2.55,START_Z+4.6);camTarget.set(0,0.1,rowZ(0)-0.6);await showMsg('ELIMINAT','0 PCT','#FF4053',2600);busy=false;opts.onBusy?.(false);opts.onState?.(res.state);return;}
  await showMsg(lives===1?'ULTIMA VIAȚĂ':'AI PIERDUT O VIAȚĂ',`Mai ai ${lives} ${lives===1?'viață':'vieți'}. Înapoi la început.`,'#FF4053',2000);
  placeMe();resetPanelsVisual();camPos.set(0,2.55,START_Z+4.6);camTarget.set(0,0.1,rowZ(0)-0.6);fade.style.opacity=0;busy=false;opts.onBusy?.(false);opts.onState?.(res.state);
@@ -379,7 +455,19 @@ function resetPanelsVisual(){
  me.root.rotation.set(0,0,0);me.roll=0;
 }
 let walkPhase=0;
-async function walkToEnd(){const from=me.root.position.clone();const to=new T.Vector3(0,0,rowZ(ROWS)-2.4);await tween(1800,(t)=>{me.root.position.lerpVectors(from,to,t);curPose=POSES.idle;walkPhase=t*Math.PI*6;});walkPhase=0;curPose=POSES.idle;}
+async function walkToEnd(){
+ const from=me.root.position.clone(),land=new T.Vector3(0,0,rowZ(ROWS)-0.95),center=new T.Vector3(0,0,rowZ(ROWS)-2.3);
+ await tween(280,(t)=>{curPose=mixPose(POSES.idle,POSES.crouch,ease(t));});          // se pregătește
+ A.whoosh();
+ await tween(860,(t)=>{me.root.position.lerpVectors(from,land,t);me.root.position.y=Math.sin(Math.PI*t)*0.95;   // ultima săritură, pe platformă
+  curPose=t<0.5?mixPose(POSES.crouch,POSES.air,t*2):mixPose(POSES.air,POSES.land,(t-0.5)*2);});
+ me.root.position.y=0;A.land();shake=0.07;
+ await tween(320,(t)=>{curPose=mixPose(POSES.land,POSES.idle,ease(t));});
+ await tween(1200,(t)=>{me.root.position.lerpVectors(land,center,ease(t));curPose=POSES.idle;walkPhase=t*Math.PI*5;});walkPhase=0;
+ await tween(600,(t)=>{me.root.rotation.y=Math.PI*ease(t);});                        // se întoarce spre cameră
+ winCam=true;meSpot.intensity=0;meSpot.visible=true;
+ await tween(500,(t)=>{meSpot.intensity=t*260;curPose=mixPose(POSES.idle,POSES.cheer,ease(t));});
+ burstGlitter(new T.Vector3(center.x,2.6,center.z));burstGlitter(new T.Vector3(center.x-0.8,2.2,center.z+0.4));burstGlitter(new T.Vector3(center.x+0.8,2.2,center.z+0.4));}
 
 // ── Atingerea directă a panourilor ──
 const ray=new T.Raycaster(),ndc=new T.Vector2();let downAt=null;
@@ -402,15 +490,19 @@ function frame(dt){
  const sdt=dt*timeScale;
  for(let i=anims.length-1;i>=0;i--){const a=anims[i];a.t+=sdt*1000;const k=Math.min(1,a.t/a.dur);a.fn(k);if(k>=1){anims.splice(i,1);a.res();}}
  applyPose(me,curPose,now*2,walkPhase);
+ updateCircus(now,me.root.position);
  if(partner){partner.roll=Math.sin(now*1.3)*4;applyPose(partner,POSES.balance,now*1.5);}
  // panourile rândului curent pulsează discret (doar când poți alege)
  if(status==='active'&&!busy&&panels[step])for(const p of panels[step]){p.rim.material.uniforms.a.value=0.45+Math.sin(now*3)*0.25;}
  // cioburi
  for(let i=shards.length-1;i>=0;i--){const s=shards[i];s.v.y-=9.8*sdt;s.m.position.addScaledVector(s.v,sdt);s.m.rotation.x+=s.w.x*sdt;s.m.rotation.y+=s.w.y*sdt;s.m.rotation.z+=s.w.z*sdt;s.life-=sdt;if(s.life<=0||s.m.position.y<-40){scene.remove(s.m);s.m.geometry.dispose();shards.splice(i,1);}}
  for(let i=glitter.length-1;i>=0;i--){const g=glitter[i];const pa=g.pts.geometry.attributes.position.array;g.vel.forEach((v,k)=>{v.y-=6*dt;pa[k*3]+=v.x*dt;pa[k*3+1]+=v.y*dt;pa[k*3+2]+=v.z*dt;});g.pts.geometry.attributes.position.needsUpdate=true;g.life-=dt;g.pts.material.opacity=Math.max(0,g.life/2.2);if(g.life<=0){scene.remove(g.pts);g.pts.geometry.dispose();glitter.splice(i,1);}}
+ { const pp=me.root.position;meSpot.position.set(pp.x,7.2,pp.z+0.4);meSpot.target.position.set(pp.x,0,pp.z);spotCone.position.set(pp.x,3.6+pp.y*0.2,pp.z+0.2);
+   const want=(winCam||(step===0&&status==='active'&&!fallCam))?1:0;spotLevel+=(want-spotLevel)*Math.min(1,dt*2.5);meSpot.intensity=Math.max(meSpot.intensity*0.0,spotLevel*260);spotCone.material.uniforms.a.value=spotLevel;}
  // camera: în spate și jos, privind spre rândul următor
  const p=me.root.position;
  if(introCam){camPos.copy(introCam.pos);camTarget.copy(introCam.target);}
+ else if(winCam){camTarget.lerp(new T.Vector3(p.x,1.25,p.z),0.08);camPos.lerp(new T.Vector3(p.x+0.9,1.35,p.z+3.4),0.03);}
  else if(fallCam&&craneFrom){ // cadru de macara: sus, deasupra găurii din pod, privind în gol după personaj
   camTarget.lerp(new T.Vector3(p.x,p.y,p.z),0.08);camPos.lerp(new T.Vector3(craneFrom.x*0.6+1.2,7.5,craneFrom.z+2.8),0.03);}
  else if(fallCam){camTarget.lerp(new T.Vector3(p.x,p.y,p.z),0.12);camPos.lerp(new T.Vector3(p.x+0.4,1.8,p.z+2.2),0.06);}
@@ -426,15 +518,20 @@ loop();
 // ══ SUNET — ÎNREGISTRĂRI REALE (CC0): Meta Open Sound + Kenney Impact Sounds ══
 // Sticla, pașii pe metal, ambianța halei, șuierăturile, efortul și țipătul sunt
 // înregistrări reale. Web Audio doar le mixează (volum, ecoul halei, ordinea).
-const A=(()=>{let ctx=null,bus=null,on=false,buf={},loading=null,ambNodes=[],music=null,sched=null,nextBeat=0,beat=0,level=0,pad=null,heart=null;
+const A=(()=>{let ctx=null,bus=null,on=false,buf={},loading=null,ambNodes=[],music=null,sched=null,nextBeat=0,beat=0,level=0,pad=null,heart=null,drumT=null,trem=null;
  // Pad cinematic: acorduri grave de „coarde” (la minor ↔ fa major), cu filtru care respiră lent. Fără melodie.
  function padOn(){if(!ctx||pad)return;const g=ctx.createGain();g.gain.value=0.0001;const lp=ctx.createBiquadFilter();lp.type='lowpass';lp.frequency.value=600;lp.Q.value=0.7;lp.connect(g);g.connect(bus);
   const lfo=ctx.createOscillator();lfo.frequency.value=0.07;const lg=ctx.createGain();lg.gain.value=320;lfo.connect(lg);lg.connect(lp.frequency);lfo.start();
   const CH=[[45,52,57,60],[41,48,53,57]];const oscs=[];CH[0].forEach((n,i)=>{[-6,6].forEach((d)=>{const o=ctx.createOscillator();o.type='sawtooth';o.frequency.value=440*Math.pow(2,(n-69)/12);o.detune.value=d;const og=ctx.createGain();og.gain.value=0.05;o.connect(og);og.connect(lp);o.start();oscs.push({o,i});});});
   let k=0;const swap=setInterval(()=>{if(!pad)return;k=1-k;const t=ctx.currentTime;oscs.forEach(({o,i})=>o.frequency.setTargetAtTime(440*Math.pow(2,(CH[k][i]-69)/12),t,2.2));},16000);
-  g.gain.setTargetAtTime(0.32,ctx.currentTime,3);pad={g,oscs,lfo,swap};}
+  g.gain.setTargetAtTime(0.32,ctx.currentTime,3);pad={g,oscs,lfo,swap};
+  { const tg=ctx.createGain();tg.gain.value=0.03;const am=ctx.createGain();am.gain.value=0.5;const amL=ctx.createOscillator();amL.frequency.value=11;const amG=ctx.createGain();amG.gain.value=0.5;amL.connect(amG);amG.connect(am.gain);
+    const bp=ctx.createBiquadFilter();bp.type='bandpass';bp.frequency.value=900;bp.Q.value=0.8;[69,72,76].forEach((n)=>{const o=ctx.createOscillator();o.type='sawtooth';o.frequency.value=440*Math.pow(2,(n-69)/12);o.connect(bp);o.start();});
+    bp.connect(am);am.connect(tg);tg.connect(bus);amL.start();trem={g:tg}; }}
  function padOff(){if(!pad)return;const p=pad;pad=null;clearInterval(p.swap);p.g.gain.setTargetAtTime(0.0001,ctx.currentTime,0.5);setTimeout(()=>{p.oscs.forEach(({o})=>{try{o.stop();}catch(e){}});try{p.lfo.stop();}catch(e){}},2500);}
- function thump(t,vol){const o=ctx.createOscillator();o.type='sine';o.frequency.setValueAtTime(95,t);o.frequency.exponentialRampToValueAtTime(42,t+0.16);const g=ctx.createGain();g.gain.setValueAtTime(0.0001,t);g.gain.exponentialRampToValueAtTime(vol,t+0.01);g.gain.exponentialRampToValueAtTime(0.0001,t+0.3);o.connect(g);g.connect(bus);o.start(t);o.stop(t+0.35);}
+ function thump(t,vol){if(!ctx)return;const o=ctx.createOscillator();o.type='sine';o.frequency.setValueAtTime(150,t);o.frequency.exponentialRampToValueAtTime(58,t+0.13);
+  const g=ctx.createGain();g.gain.setValueAtTime(0.0001,t);g.gain.exponentialRampToValueAtTime(vol*1.6,t+0.008);g.gain.exponentialRampToValueAtTime(0.0001,t+0.26);o.connect(g);g.connect(bus);o.start(t);o.stop(t+0.3);
+  const o2=ctx.createOscillator();o2.type='triangle';o2.frequency.setValueAtTime(320,t);o2.frequency.exponentialRampToValueAtTime(120,t+0.05);const g2=ctx.createGain();g2.gain.setValueAtTime(vol*0.5,t);g2.gain.exponentialRampToValueAtTime(0.0001,t+0.07);o2.connect(g2);g2.connect(bus);o2.start(t);o2.stop(t+0.09);}
  const N=(n)=>440*Math.pow(2,(n-69)/12);
  const env=(t,a,p,d)=>{const g=ctx.createGain();g.gain.setValueAtTime(0.0001,t);g.gain.exponentialRampToValueAtTime(p,t+a);g.gain.exponentialRampToValueAtTime(0.0001,t+a+d);return g;};
  let nb=null;const noise=()=>{if(nb)return nb;nb=ctx.createBuffer(1,ctx.sampleRate,ctx.sampleRate);const d=nb.getChannelData(0);for(let i=0;i<d.length;i++)d[i]=Math.random()*2-1;return nb;};
@@ -474,10 +571,14 @@ const A=(()=>{let ctx=null,bus=null,on=false,buf={},loading=null,ambNodes=[],mus
  function ambOff(){ambNodes.splice(0).forEach(n=>{n.g.gain.setTargetAtTime(0.0001,ctx.currentTime,0.3);setTimeout(()=>{try{n.s.stop();}catch(e){}},1500);});}
  return {
   unlock(){init();if(ctx&&ctx.state==='suspended')ctx.resume();},
-  setOn(v){init();on=!!v;if(on){this.unlock();(loading||Promise.resolve()).then(()=>{if(on){ambOn();padOn();}});}else{ambOff();padOff();this.musicOff();try{speechSynthesis.cancel();}catch(e){}}return on;},
+  setOn(v){init();on=!!v;if(on){this.unlock();(loading||Promise.resolve()).then(()=>{if(on){ambOn();padOn();this.drums(true);}});}else{ambOff();padOff();this.drums(false);if(trem){trem.g.gain.setTargetAtTime(0.0001,ctx.currentTime,0.2);trem=null;}this.musicOff();try{speechSynthesis.cancel();}catch(e){}}return on;},
   // tensiune: muzica se retrage, se aud bătăi de inimă; la sfârșit revine
-  tension(v){if(!ctx||!pad)return;pad.g.gain.setTargetAtTime(v?0.05:0.32,ctx.currentTime,0.6);if(v&&!heart){const beat=()=>{if(!on)return;const t=ctx.currentTime;thump(t,0.5);thump(t+0.22,0.32);heart=setTimeout(beat,820);};beat();}if(!v&&heart){clearTimeout(heart);heart=null;}},
-  cut(){if(!ctx||!pad)return;if(heart){clearTimeout(heart);heart=null;}pad.g.gain.cancelScheduledValues(ctx.currentTime);pad.g.gain.setValueAtTime(0.0001,ctx.currentTime);setTimeout(()=>{if(pad&&on)pad.g.gain.setTargetAtTime(0.32,ctx.currentTime,2.5);},4500);},
+  // tobe grave (taiko) pe un ritm de marș lent; în suspans se dublează tempo-ul
+  drums(on_){if(!ctx)return;if(drumT){clearInterval(drumT);drumT=null;}if(!on_)return;let k=0;const PAT=[1,0,0,1,0,0,1,0,1,0,0,0,1,0,1,1];
+   drumT=setInterval(()=>{if(!on||!pad)return;const t=ctx.currentTime+0.02;if(PAT[k%16]){const lo=ctx.createOscillator();lo.type='sine';lo.frequency.setValueAtTime(90,t);lo.frequency.exponentialRampToValueAtTime(40,t+0.35);
+    const g=ctx.createGain();const v=(k%16===0?0.55:0.32)*(level?1.2:1);g.gain.setValueAtTime(0.0001,t);g.gain.exponentialRampToValueAtTime(v,t+0.01);g.gain.exponentialRampToValueAtTime(0.0001,t+0.5);lo.connect(g);g.connect(bus);lo.start(t);lo.stop(t+0.55);}k++;},level?160:235);},
+  tension(v){if(!ctx||!pad)return;level=v?1:0;if(trem)trem.g.gain.setTargetAtTime(v?0.12:0.03,ctx.currentTime,v?0.8:0.4);if(drumT)this.drums(true);pad.g.gain.setTargetAtTime(v?0.05:0.32,ctx.currentTime,0.6);if(v&&!heart){const beat=()=>{if(!on)return;const t=ctx.currentTime;thump(t,0.5);thump(t+0.22,0.32);heart=setTimeout(beat,820);};beat();}if(!v&&heart){clearTimeout(heart);heart=null;}},
+  cut(){if(!ctx||!pad)return;this.drums(false);if(trem)trem.g.gain.setValueAtTime(0.0001,ctx.currentTime);setTimeout(()=>{if(on&&pad){this.drums(true);if(trem)trem.g.gain.setTargetAtTime(0.03,ctx.currentTime,2);}},4800);if(heart){clearTimeout(heart);heart=null;}pad.g.gain.cancelScheduledValues(ctx.currentTime);pad.g.gain.setValueAtTime(0.0001,ctx.currentTime);setTimeout(()=>{if(pad&&on)pad.g.gain.setTargetAtTime(0.32,ctx.currentTime,2.5);},4500);},
   // vocea din difuzoare (engleză, gravă, ca în serial)
   say(text,delay=0){try{if(!on||!window.speechSynthesis)return;setTimeout(()=>{if(!on)return;const u=new SpeechSynthesisUtterance(text);u.lang='en-US';u.rate=0.78;u.pitch=0.4;u.volume=1;
    const vs=speechSynthesis.getVoices();const v=vs.find(x=>/^en(-|_)(US|GB)/i.test(x.lang)&&/male|david|daniel|guy|george/i.test(x.name))||vs.find(x=>/^en/i.test(x.lang));if(v)u.voice=v;speechSynthesis.speak(u);},delay);}catch(e){}},
@@ -512,6 +613,7 @@ return {
   setPartner(p){partnerState=p?{step:p.step||0,status:p.status||'active'}:null;if(p&&(!partner||partner.role!==(p.role||'player')||partner.hairKey!==(p.hair||'buzzed')))buildPartner(p);if(!p&&partner){scene.remove(partner.root);partner=null;}placePartner();},
   setState(s){if(busy||!s)return;const prevStep=step;applyServerState(s);if(step!==prevStep){if(step<prevStep)myPath.length=0;placeMe();}},
   setSound(v){A.setOn(v);},
+  jumpSide(side){return jump(side);},
   say(t,d){A.say(t,d);},
   setSurvivors(alive,total){drawBoard(alive,total);},
   cashOut(points){A.cash();A.say(`Player ${spoken(opts.me?.num)}. Has left the game. ${points} points.`,400);},

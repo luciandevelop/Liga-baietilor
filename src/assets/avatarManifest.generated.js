@@ -145,29 +145,6 @@ export default {
       "6": "file_00000000e3ec82468ba34d2d00e0d082.png"
     }
   },
-  "s3": {
-    "nextIndex": 21,
-    "files": {
-      "2": "001_ghioca.png",
-      "3": "002_UrsuLeo.png",
-      "4": "003_AdiReal.png",
-      "5": "004_Doctoru.png",
-      "6": "005_Luck87.png",
-      "7": "006_Bona.png",
-      "8": "007_vladinhuu.png",
-      "9": "008_Pannnnn.png",
-      "10": "009_VikiGBT.png",
-      "11": "010_Utzy.png",
-      "13": "012_Bogdan B.png",
-      "14": "013_AndreiS.png",
-      "15": "014_Sexu Ciobanu.png",
-      "16": "015_Cristian.png",
-      "17": "016_sammy20.png",
-      "18": "017_Robert.png",
-      "19": "018_RZVN.png",
-      "20": "011.png"
-    }
-  },
   "sammy20": {
     "nextIndex": 7,
     "files": {

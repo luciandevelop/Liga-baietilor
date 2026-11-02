@@ -53,8 +53,8 @@ export default function DuelExperience({ myUid, opponentUid, isBye, profiles, li
   // ACEST jucător nu are imagine (temă necompletă încă), latura lui arată
   // 100% ca înainte de Stage B (ramă rotundă, avatar normal), nu ca un
   // hibrid "avatar rotund într-o ramă dreptunghiulară de fighter".
-  const myFighterUrl = duelTheme ? getFighterUrl(duelTheme, myProfile.avatarId) : null;
-  const oppFighterUrl = duelTheme ? getFighterUrl(duelTheme, oppProfile.avatarId) : null;
+  const myFighterUrl = getFighterUrl(duelTheme, myProfile.avatarId);
+  const oppFighterUrl = getFighterUrl(duelTheme, oppProfile.avatarId);
 
   const vsEntranceStyle = reducedMotion ? {} : {
     animation: `duelVsFlash ${ENTRANCE.vs}s ${EASING.overshoot} both, duelVsFinalPulse ${ENTRANCE.vsPulseDur}s ${EASING.inOut} ${ENTRANCE.vsPulseDelay}s both`,
@@ -88,7 +88,7 @@ export default function DuelExperience({ myUid, opponentUid, isBye, profiles, li
         <div style={{ ...s.side, ...(myFighterUrl ? s.sideFighter : {}), ...(leading === "me" ? s.sideLeading : {}), ...leftEntranceStyle }}>
           {myFighterUrl ? (
             <div style={s.fighterFrame}>
-              <DuelFighterPortrait avatarId={myProfile.avatarId} nickname={myProfile.nickname} theme={duelTheme} width={104} height={148} fallbackSize={78} borderRadius={9} />
+              <DuelFighterPortrait avatarId={myProfile.avatarId} nickname={myProfile.nickname} theme={duelTheme} width={128} height={182} fallbackSize={78} borderRadius={9} />
             </div>
           ) : (
             <div style={s.avatarRing}>
@@ -110,7 +110,7 @@ export default function DuelExperience({ myUid, opponentUid, isBye, profiles, li
         <div style={{ ...s.side, ...(oppFighterUrl ? s.sideFighter : {}), ...(leading === "opp" ? s.sideLeading : {}), ...rightEntranceStyle }}>
           {oppFighterUrl ? (
             <div style={s.fighterFrame}>
-              <DuelFighterPortrait avatarId={oppProfile.avatarId} nickname={oppProfile.nickname} theme={duelTheme} width={104} height={148} fallbackSize={78} borderRadius={9} />
+              <DuelFighterPortrait avatarId={oppProfile.avatarId} nickname={oppProfile.nickname} theme={duelTheme} width={128} height={182} fallbackSize={78} borderRadius={9} />
             </div>
           ) : (
             <div style={s.avatarRing}>

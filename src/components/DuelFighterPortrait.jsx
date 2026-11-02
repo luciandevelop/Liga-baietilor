@@ -19,7 +19,7 @@ import { getFighterUrl } from "../assets/fighters";
 //
 // `loading="lazy"` — nativ, fără nicio librărie, zero cost de bundle.
 export default function DuelFighterPortrait({ avatarId, nickname, theme, width, height, fallbackSize, borderRadius = 10 }) {
-  const url = theme ? getFighterUrl(theme, avatarId) : null;
+  const url = getFighterUrl(theme, avatarId); // Sezonul 3: avatarul Squid Game merge și fără temă
   const [failed, setFailed] = useState(false);
 
   // Resetează starea de eroare dacă se schimbă URL-ul (temă schimbată

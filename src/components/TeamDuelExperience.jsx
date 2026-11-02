@@ -25,7 +25,7 @@ function TeamCol({ members, leading, score, profiles, duelTheme, entranceStyle }
           // Fallback per-membru — dacă tema e aleasă dar TOCMAI acest
           // jucător nu are imagine, latura lui de inel rămâne rotundă,
           // normală, nu un hibrid cu ramă de fighter goală pe dinafară.
-          const fighterUrl = duelTheme ? getFighterUrl(duelTheme, profiles[uid]?.avatarId) : null;
+          const fighterUrl = getFighterUrl(duelTheme, profiles[uid]?.avatarId);
           return (
             <div key={uid} style={fighterUrl ? s.fighterRingSmall : s.avatarRing}>
               {fighterUrl ? (
@@ -134,7 +134,7 @@ export default function TeamDuelExperience({ myUid, myTeam, opponentTeam, isFall
   // luptă real de arătat — nu doar pentru că Adminul a ales o temă care
   // încă n-are nicio imagine încărcată (ar arăta nepotrivit peste avatare
   // normale rotunde).
-  const hasAnyFighter = duelTheme && [...myTeam, ...opponentTeam].some((uid) => !!getFighterUrl(duelTheme, profiles[uid]?.avatarId));
+  const hasAnyFighter = [...myTeam, ...opponentTeam].some((uid) => !!getFighterUrl(duelTheme, profiles[uid]?.avatarId));
 
   const vsEntranceStyle = reducedMotion ? {} : { animation: `tduVsFlash ${ENTRANCE.vs}s ${EASING.overshoot} both, tduVsFinalPulse ${ENTRANCE.vsPulseDur}s ${EASING.inOut} ${ENTRANCE.vsPulseDelay}s both` };
   const leftEntranceStyle = reducedMotion ? {} : { animation: `tduSideLeftIntro ${ENTRANCE.leftDur}s ${EASING.out} ${ENTRANCE.leftDelay}s both` };

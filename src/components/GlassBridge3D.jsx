@@ -184,12 +184,12 @@ const HD={pos:b64(HUMAN.pos,Float32Array),si:b64(HUMAN.si,Uint8Array),sw:b64(HUM
 // Roluri Sezonul 3: aceeași anatomie, costume diferite (culori + glugă).
 const ROLES={
  player:{suit:0x1b6b52,dark:0x14503e,stripe:0xf4f4f0,shoe:0xf2f2ee,hood:null},
- guard:{suit:0xb0163c,dark:0x7e0f2b,stripe:0xb0163c,shoe:0x151515,hood:0xb0163c},      // paznic: salopetă roșie, glugă roșie, mască neagră pe față
+ guard:{suit:0xb0163c,dark:0x7e0f2b,stripe:0xb0163c,shoe:0x151515,hood:null},      // paznic: salopetă roșie, glugă roșie, mască neagră pe față
  vip:{suit:0x1a1a1e,dark:0xb8902e,stripe:0x1a1a1e,shoe:0x0d0d0d,hood:null},             // sponsor: costum închis, accente aurii
  vip2:{suit:0x4a1f17,dark:0x8c1d24,stripe:0x4a1f17,shoe:0x0d0d0d,hood:null},           // 002: costum maro-vișiniu
  vip3:{suit:0x14203f,dark:0xc9a227,stripe:0x14203f,shoe:0x0d0d0d,hood:null},           // 003: bleumarin cu auriu
  vip4:{suit:0x3a1450,dark:0xc9a227,stripe:0x3a1450,shoe:0x0d0d0d,hood:null},           // 004: violet cu auriu
- boss:{suit:0x0c0c0e,dark:0x1c1c20,stripe:0x0c0c0e,shoe:0x080808,hood:0x050505},        // șeful: negru complet, glugă neagră
+ boss:{suit:0x0c0c0e,dark:0x1c1c20,stripe:0x0c0c0e,shoe:0x080808,hood:null},        // șeful: negru complet, glugă neagră
 };
 const BASE_GEO=(()=>{
  const g=new T.BufferGeometry();const P=new Float32Array(HD.pos);g.setAttribute('position',new T.BufferAttribute(P,3));g.setIndex(new T.BufferAttribute(HD.idx,1));g.computeVertexNormals();
@@ -346,7 +346,7 @@ function maskTex(sym){const c=document.createElement('canvas');c.width=c.height=
 const GUARD_SPOTS=[[-2.0,START_Z-0.4,-Math.PI/4,0],[2.0,START_Z-0.4,Math.PI/4,1],[-1.2,rowZ(ROWS)-3.2,Math.PI,2],[1.2,rowZ(ROWS)-3.2,Math.PI,1]];
 const guards=GUARD_SPOTS.map(([x,z,ry,sym])=>{const g=makeHuman({num:'',name:'',showLabel:false,role:'guard',hair:'buzzed'});g.root.position.set(x,0,z);g.root.rotation.y=ry;
  const face=new T.Mesh(new T.CircleGeometry(0.112,28),new T.MeshBasicMaterial({map:maskTex(sym)}));const hq=new T.Quaternion();g.B.Head.getWorldQuaternion(hq);
- face.quaternion.copy(hq.invert());face.position.copy(g.B.Head.worldToLocal(new T.Vector3(0,1.64,-0.115)));face.rotateY(Math.PI);g.B.Head.add(face);applyPose(g,POSES.idle);scene.add(g.root);return g;});
+ /* fără mască pe față: personajele de pe pod nu poartă măști */applyPose(g,POSES.idle);scene.add(g.root);return g;});
 // Panoul luminos din hală: „SUPRAVIEȚUITORI X / N”
 const boardC=document.createElement('canvas');boardC.width=512;boardC.height=128;const boardTex=new T.CanvasTexture(boardC);boardTex.encoding=T.sRGBEncoding;
 const board=new T.Mesh(new T.PlaneGeometry(5.2,1.3),new T.MeshBasicMaterial({map:boardTex,transparent:true}));board.position.set(0,5.4,rowZ(ROWS)-5.5);scene.add(board);

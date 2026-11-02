@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { getAvatarUrl } from "../assets/avatars";
+import { getAvatarUrl, isS3Avatar } from "../assets/avatars";
 import { color, font } from "../theme";
 
 // Sursă unică pentru avatarul unui jucător, oriunde apare în aplicație.
@@ -36,7 +36,7 @@ export default function PlayerAvatar({ avatarId, nickname, size = 32 }) {
         <img
           src={url}
           alt={nickname || "avatar"}
-          style={{ width: "100%", height: "100%", objectFit: "cover" }}
+          style={{ width: "100%", height: "100%", objectFit: "cover", objectPosition: isS3Avatar(avatarId) ? "50% 22%" : "50% 50%" }}
           onError={() => setImgFailed(true)}
           loading="lazy"
         />

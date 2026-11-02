@@ -146,7 +146,7 @@ export default {
     }
   },
   "s3": {
-    "nextIndex": 20,
+    "nextIndex": 21,
     "files": {
       "2": "001_ghioca.png",
       "3": "002_UrsuLeo.png",
@@ -164,7 +164,8 @@ export default {
       "16": "015_Cristian.png",
       "17": "016_sammy20.png",
       "18": "017_Robert.png",
-      "19": "018_RZVN.png"
+      "19": "018_RZVN.png",
+      "20": "011.png"
     }
   },
   "sammy20": {

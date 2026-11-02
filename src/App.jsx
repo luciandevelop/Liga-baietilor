@@ -20,6 +20,7 @@ import RulesScreen from "./screens/RulesScreen";
 import NicknameScreen from "./screens/NicknameScreen";
 import PendingApprovalScreen from "./screens/PendingApprovalScreen";
 import BottomTabBar from "./components/BottomTabBar";
+import SeasonIntro from "./components/SeasonIntro";
 
 // profileState: "idle" | "checking" | "ready" | "needs-nickname" | "pending" | "disabled" | "error"
 // Stare centrală, unică — nimic altceva din aplicație nu mai apelează
@@ -369,6 +370,8 @@ export default function App() {
         onOpenProfile={() => navigateTo("profile")}
       />
       <BottomTabBar active="home" onChange={handleBottomTabGlobal} />
+      {/* 🦑 Intro Sezonul 3 — o singură dată, după ce Adminul a aplicat avatarele Squid Game */}
+      <SeasonIntro uid={user.uid} avatarId={profile?.avatarId} nickname={profile?.nickname} />
     </>
   );
 }

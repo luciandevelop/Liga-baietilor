@@ -260,9 +260,9 @@ export default function SurprisesScreen({ user, onBack }) {
                       />
 
                       {otherPairings.length > 0 && (
-                        <div style={s.otherDuelsSection}>
-                          <div style={s.otherDuelsLabel}>Celelalte dueluri</div>
-                          <div style={s.otherDuelsList}>
+                        <details style={s.otherDuelsSection}>
+                          <summary style={s.otherDuelsSummary}>Celelalte dueluri ▾</summary>
+                          <div style={{ ...s.otherDuelsList, marginTop: 10 }}>
                             {otherPairings.map((pr) => (
                               <DuelMiniCard
                                 key={`${pr.playerA}_${pr.playerB}`}
@@ -276,7 +276,7 @@ export default function SurprisesScreen({ user, onBack }) {
                               />
                             ))}
                           </div>
-                        </div>
+                        </details>
                       )}
                     </LiveScoresGate>
                   )}
@@ -298,9 +298,9 @@ export default function SurprisesScreen({ user, onBack }) {
                       />
 
                       {otherGroups.length > 0 && (
-                        <div style={s.otherDuelsSection}>
-                          <div style={s.otherDuelsLabel}>Celelalte echipe</div>
-                          <div style={s.otherDuelsList}>
+                        <details style={s.otherDuelsSection}>
+                          <summary style={s.otherDuelsSummary}>Celelalte echipe ▾</summary>
+                          <div style={{ ...s.otherDuelsList, marginTop: 10 }}>
                             {otherGroups.map((g) => (
                               <TeamDuelMiniCard
                                 key={`${g.teamA.join("_")}_${g.teamB.join("_")}`}
@@ -314,7 +314,7 @@ export default function SurprisesScreen({ user, onBack }) {
                               />
                             ))}
                           </div>
-                        </div>
+                        </details>
                       )}
                     </LiveScoresGate>
                   )}
@@ -562,6 +562,7 @@ const s = {
   fallbackNote: { fontSize: 10, color: color.textFaint, fontFamily: font.body, textAlign: "center", marginBottom: 10, fontStyle: "italic" },
 
   otherDuelsSection: { marginTop: 14 },
+  otherDuelsSummary: { cursor: "pointer", listStyle: "none", padding: "12px 14px", borderRadius: 12, border: `1px solid ${color.border}`, background: "rgba(255,255,255,0.03)", fontSize: 12.5, fontWeight: 800, letterSpacing: "0.06em", color: color.textSecondary, textTransform: "uppercase", fontFamily: font.body },
   otherDuelsLabel: { fontSize: 10, fontWeight: 800, letterSpacing: "0.05em", color: color.textFaint, fontFamily: font.body, marginBottom: 8, textTransform: "uppercase" },
   otherDuelsList: { display: "flex", flexDirection: "column", gap: 6 },
 

@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { logout } from "../services/authService";
 import { updateOwnAvatar } from "../services/profilesService";
-import { parseAvatarId, getAvatarPackVariants } from "../assets/avatars";
+import { parseAvatarId, getAvatarPackVariants, isS3Avatar } from "../assets/avatars";
 import { color, font, radius, shadow } from "../matchdayTheme";
 import PlayerAvatar from "../components/PlayerAvatar";
 
@@ -15,11 +15,14 @@ export default function ProfileScreen({ user, profile, isAdmin, onOpenAdmin, onO
   const [saving, setSaving] = useState(null); // avatarId în curs de salvare, sau null
   const [error, setError] = useState("");
 
-  const parsed = parseAvatarId(avatarId);
-  const variants = parsed ? getAvatarPackVariants(parsed.pack) : [];
+  // Sezonul 3: avatarul Squid Game e obligatoriu și blocat; pachetul personal apare decolorat, nefolosibil.
+  const locked = profile?.avatarLocked === true || isS3Avatar(avatarId);
+  const personalId = locked ? profile?.avatarBackup || null : avatarId;
+  const parsed = parseAvatarId(personalId);
+  const variants = parsed && !isS3Avatar(personalId) ? getAvatarPackVariants(parsed.pack) : [];
 
   async function handlePick(candidateId) {
-    if (candidateId === avatarId || saving) return;
+    if (locked || candidateId === avatarId || saving) return;
     const previous = avatarId;
     setAvatarId(candidateId); // optimist — apare instant peste tot, cerut explicit
     setSaving(candidateId);
@@ -49,7 +52,11 @@ export default function ProfileScreen({ user, profile, isAdmin, onOpenAdmin, onO
         </div>
 
         <div style={s.sectionLabel}>Alege avatarul</div>
+        {locked && (
+          <div style={s.lockNote}>🦑 <b>Sezonul 3 „Scapă cine poate”</b>: avatarul tău Squid Game e obligatoriu tot sezonul. Avatarele tale personale revin după sezon.</div>
+        )}
         {variants.length > 0 ? (
+          <div style={locked ? { opacity: 0.32, filter: "grayscale(1)", pointerEvents: "none" } : undefined}>
           <div style={s.grid}>
             {variants.map((v) => {
               const active = v.avatarId === avatarId;
@@ -68,7 +75,8 @@ export default function ProfileScreen({ user, profile, isAdmin, onOpenAdmin, onO
               );
             })}
           </div>
-        ) : (
+          </div>
+        ) : locked ? null : (
           <div style={s.emptyNote}>
             Nu ai încă un pachet de avataruri alocat — scrie-i lui Lu ca să ți-l seteze din Admin.
           </div>
@@ -90,6 +98,7 @@ export default function ProfileScreen({ user, profile, isAdmin, onOpenAdmin, onO
 }
 
 const s = {
+  lockNote: { fontSize: 12.5, lineHeight: 1.5, color: "#F5C451", background: "rgba(245,196,81,0.08)", border: "1px solid rgba(245,196,81,0.3)", borderRadius: 12, padding: "10px 12px", marginBottom: 10 },
   page: { minHeight: "100vh", background: color.bgBase, paddingBottom: 40 },
   wrap: { maxWidth: 480, margin: "0 auto", padding: "16px 16px 0" },
 

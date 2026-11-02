@@ -80,6 +80,8 @@ import PusculitaScreen from "./PusculitaScreen";
 // 🔢 Numerele Sezonului 3 („Player 001”…), salvate separat de profiluri.
 import SeasonNumbersPanel from "../components/SeasonNumbersPanel";
 import SeasonCheckPanel from "../components/SeasonCheckPanel";
+import SquidAvatarsPanel from "../components/SquidAvatarsPanel";
+import AccountTransferPanel from "../components/AccountTransferPanel";
 import PlayerSpecialsPanel from "../components/PlayerSpecialsPanel";
 import PusculitaAdminPanel from "../components/PusculitaAdminPanel";
 import BridgeAdminPanel from "../components/BridgeAdminPanel";
@@ -2806,6 +2808,14 @@ export default function AdminScreen({ onBack }) {
 
                       <SectionCard title="🔢 Numerele Sezonului 3">
                         <SeasonNumbersPanel players={players} seasons={seasons} />
+                      </SectionCard>
+
+                      <SectionCard title="🦑 Avatarele Squid Game (Sezonul 3)">
+                        <SquidAvatarsPanel players={players} onChanged={() => listAllUsersWithStatus().then(setPlayers).catch(() => {})} />
+                      </SectionCard>
+
+                      <SectionCard title="👤 Transfer de cont (jucător nou)">
+                        <AccountTransferPanel players={players} />
                       </SectionCard>
 
                       <SectionCard title="🔍 Verifică clasamentul">

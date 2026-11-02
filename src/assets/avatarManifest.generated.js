@@ -148,7 +148,6 @@ export default {
   "s3": {
     "nextIndex": 20,
     "files": {
-      "1": "001.png",
       "2": "001_ghioca.png",
       "3": "002_UrsuLeo.png",
       "4": "003_AdiReal.png",

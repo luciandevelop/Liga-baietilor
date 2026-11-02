@@ -158,7 +158,6 @@ export default {
       "9": "008_Pannnnn.png",
       "10": "009_VikiGBT.png",
       "11": "010_Utzy.png",
-      "12": "011_DGhioca23.png",
       "13": "012_Bogdan B.png",
       "14": "013_AndreiS.png",
       "15": "014_Sexu Ciobanu.png",

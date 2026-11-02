@@ -145,6 +145,12 @@ export default {
       "6": "file_00000000e3ec82468ba34d2d00e0d082.png"
     }
   },
+  "s3": {
+    "nextIndex": 2,
+    "files": {
+      "1": "001.png"
+    }
+  },
   "sammy20": {
     "nextIndex": 7,
     "files": {

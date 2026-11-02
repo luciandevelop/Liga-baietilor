@@ -42,6 +42,9 @@ export async function getUserPublicProfiles(uids) {
 // explicit). Scrie STRICT câmpul avatarId, deja permis de regulile reale
 // (users/{userId}.avatarId — string sau null) — nicio schemă nouă.
 export async function updateOwnAvatar(uid, avatarId) {
+  // Sezonul 3: avatarul Squid Game e blocat (și regulile Firestore refuză schimbarea).
+  const cur = await getDoc(doc(db, "users", uid));
+  if (cur.exists() && cur.data().avatarLocked === true) throw new Error("Avatarul e blocat pe durata sezonului.");
   await setDoc(doc(db, "users", uid), { avatarId }, { merge: true });
   // Invalidează cache-ul DOAR pentru userul curent — restul rămân
   // valabile, nu are rost să le aruncăm pe toate pentru o schimbare a

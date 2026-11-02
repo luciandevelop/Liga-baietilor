@@ -1,0 +1,58 @@
+// Bibliotecă SEPARATĂ de personaje de luptă pentru ecranul de Duel —
+// avatarurile normale ale jucătorilor (src/assets/avatars.js) rămân
+// complet neatinse. Aceeași arhitectură (manifest generat automat,
+// index stabil, fallback pe null dacă lipsește ceva), doar cu un nivel
+// suplimentar: temă → pachetul PERSONAL al jucătorului (același nume de
+// pachet ca la avatarul lui normal) → fișier.
+//
+// UN SINGUR personaj per jucător per temă (index "1") — nu variante
+// multiple ca la avataruri. Convenție oficială de denumire a fișierului:
+// {pachetJucător}.webp (ex: utzy/utzy.webp) — ales explicit ca fișierele
+// descărcate pe telefon să nu se suprascrie/redenumească accidental între
+// ele (toate ar fi fost "1.webp" altfel). Rezolvarea de mai jos NU
+// depinde de numele exact al fișierului — citește orice imagine găsită
+// în folder, indiferent cum se numește — dar convenția {pachet}.webp e
+// cea folosită și verificată de generator (vezi
+// scripts/generate-fighters-manifest.js).
+import manifest from "./fightersManifest.generated.js";
+import { parseAvatarId, getAvatarUrl, S3_PACK } from "./avatars.js";
+
+// Catalog FIX de teme — independent de ce imagini există deja în
+// manifest. Adminul poate alege orice temă din listă chiar înainte să
+// existe vreo imagine pentru ea; până se adaugă imagini, TOȚI jucătorii
+// cad automat pe avatarul normal (comportament corect, nu o eroare).
+export const DUEL_THEMES = [
+  { id: "kombat", label: "KOMBAT" },
+  { id: "tekken", label: "TEKKEN / FIGHTERS" },
+  { id: "gladiators", label: "GLADIATORS" },
+  { id: "samurai", label: "SAMURAI" },
+  { id: "historical", label: "HISTORICAL" },
+];
+
+// URL-ul personajului de luptă al unui jucător, pentru o temă dată.
+// null dacă tema nu există în catalog, jucătorul nu are avatarId
+// personal setat, pachetul lui nu are nicio imagine pentru tema asta,
+// sau orice altă combinație lipsă — DuelExperience/DuelMiniCard cad pe
+// PlayerAvatar (avatarul normal) exact ca înainte, prin același
+// mecanism onError deja existent.
+export function getFighterUrl(theme, avatarId) {
+  const parsed = parseAvatarId(avatarId);
+  if (!parsed) return null;
+  // Sezonul 3: avatarul Squid Game (portret 600×840) e chiar „luptătorul” din duel, cu orice temă.
+  if (parsed.pack === S3_PACK) return getAvatarUrl(avatarId);
+  if (!theme) return null;
+  const themeManifest = manifest[theme];
+  if (!themeManifest) return null;
+  const entry = themeManifest[parsed.pack];
+  if (!entry || !entry.files) return null;
+  // Indexul "1" e personajul oficial. Dacă a dispărut (poza a fost ștearsă și
+  // înlocuită cu un fișier cu alt nume → primește un index mai mare, iar "1"
+  // nu mai există), se ia imaginea cu cel mai mic index rămas — fără să mai
+  // fie nevoie de editarea manuală a manifestului la fiecare înlocuire.
+  const filename = entry.files["1"] || (() => {
+    const indexes = Object.keys(entry.files).map(Number).filter(Number.isFinite).sort((a, b) => a - b);
+    return indexes.length > 0 ? entry.files[String(indexes[0])] : null;
+  })();
+  if (!filename) return null;
+  return `/fighters/${theme}/${parsed.pack}/${encodeURIComponent(filename)}`;
+}

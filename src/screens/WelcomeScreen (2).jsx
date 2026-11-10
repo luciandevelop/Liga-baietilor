@@ -1,0 +1,1127 @@
+import { useEffect, useRef, useState } from "react";
+import { getCurrentSeason, getCurrentGameweek, loadUserPredictions, loadUserJoker, loadUserJokerExtra, isMatchLocked } from "../services/predictionsService";
+import { listGameweekScores, getLiveGameweekPointsDiagnostic, listSeasons } from "../services/adminService";
+import { subscribeToLiveSnapshot, isSnapshotStale, getOrRunFallback } from "../services/liveSnapshotStore";
+import { markGwStorySeen, markSeasonStorySeen, storyKey } from "../services/storyService";
+import { slideUrl, seasonNumberFromList } from "../storyAssets";
+import StoryViewer from "../components/StoryViewer";
+import { subscribeToGameweekMatches } from "../services/matchesStore";
+import { getUserPublicProfiles } from "../services/profilesService";
+// ⚡ Motorul de Feed (texte, citate, curiozități ~300 KB) se încarcă separat, după afișarea ecranului.
+const feedSvc = () => import("../services/feedService");
+import { doc, getDoc } from "firebase/firestore";
+import { db } from "../firebase";
+import useNow from "../hooks/useNow";
+import { usePrefersReducedMotion } from "../motion";
+import { getMatchStatus, getDisplayMatchState } from "../utils/matchStatus";
+import { color, font, radius, shadow } from "../matchdayTheme";
+import CinematicBackdrop from "../components/CinematicBackdrop";
+import AppHeader from "../components/AppHeader";
+import TopTabNav from "../components/TopTabNav";
+import PremiumButton from "../components/PremiumButton";
+import ClubLogo from "../components/ClubLogo";
+import CompetitionBadge from "../components/CompetitionBadge";
+import CompetitionHeaderStrip from "../components/CompetitionHeaderStrip";
+import { getCompetitionTheme } from "../competitionThemes";
+import SplitFlapClock from "../components/SplitFlapClock";
+import MatchRailCard from "../components/MatchRailCard";
+import Pill from "../components/Pill";
+import FeedCard from "../components/FeedCard";
+import FeedDetailModal from "../components/FeedDetailModal";
+import PredictionsRevealSheet from "../components/PredictionsRevealSheet";
+import LiveMatchDetails from "../components/LiveMatchDetails";
+import { getWeeklySurprise, getSecretMain, getSecretBonus, MAIN_CATALOG, BONUS_CATALOG } from "../services/surprisesService";
+import { loadNotifications } from "../services/notificationsService";
+import NotificationPanel from "../components/NotificationPanel";
+
+const LOCK_MS = 30 * 60 * 1000;
+
+const CTA_LABEL = {
+  scheduled: "Pune pronosticul",
+  live: "Vezi LIVE",
+  paused: "Vezi LIVE",
+  finished: "Vezi rezultate",
+  postponed: "Vezi meciul",
+  cancelled: "Vezi meciul",
+};
+
+// Home — Sprint 1 "Home Premium". Aceeași logică de date ca înainte
+// (niciun apel nou către Firestore) — doar experiența Home + navigarea
+// s-au schimbat, cum a fost cerut explicit.
+// ── FAZA 1 reads — gărzi la nivel de MODUL (supraviețuiesc Home →
+// alt ecran → Home în aceeași sesiune; useRef se golea la fiecare
+// revenire pe Home și relua scrierile). ──
+const publishedJokerKeys = new Set();       // Joker propriu deja publicat în Feed
+const staticFeedDoneForGw = new Set();      // meciuri viitoare + fapte de club, o dată/sesiune (doar Admin)
+
+// Cache la nivel de modul pentru căutarea Story-ului de sezon anterior (vezi efectul din componentă).
+const OLDER_STORY_CACHE_MS = 5 * 60 * 1000;
+let olderStoryCache = { currentId: null, at: 0, value: null };
+
+export default function WelcomeScreen({ user, profile, isAdmin, onOpenAdmin, onOpenPredictions, onOpenLeaderboard, onOpenLive, onOpenFeaturedMatch, onOpenSpecials, onOpenFeed, onOpenSurprises, onOpenProfile, onOpenStoriesArchive }) {
+  const now = useNow(1000);
+  const reduced = usePrefersReducedMotion();
+
+  const [loading, setLoading] = useState(true);
+  const [criticalError, setCriticalError] = useState("");
+  const [statsError, setStatsError] = useState("");
+  const [resultsOpen, setResultsOpen] = useState(false);
+  const [toast, setToast] = useState("");
+
+  const [gameweek, setGameweek] = useState(null);
+  // ── Story de etapă evidențiat pe Home — SEPARAT de gameweek (etapa
+  // curentă). Rezolvat mai jos din seasons/{id}.activeStoryGameweekId,
+  // ca Admin să poată publica retrospectiva unei etape trecute fără
+  // să depindă de etapa live curentă. gameweek NU se atinge — rămâne
+  // sursa pentru meciuri/pronosticuri/lock-uri, exact ca înainte. ──
+  const [storyGameweek, setStoryGameweek] = useState(null);
+  // ── Sezonul curent — folosit STRICT pentru Story de Sezon în header
+  // (storyActive/storyVersion, deja pe documentul deja preluat mai sus,
+  // zero citire nouă). ──
+  const [seasonState, setSeasonState] = useState(null);
+  // Story-ul de sezon ACTIV al unui sezon anterior (ex. „Încălzirea” după ce a început Sezonul 2).
+  const [olderStorySeason, setOlderStorySeason] = useState(null);
+  // ── PLAY LEAGUE Stories — stare minimă, doar UI (deschis/închis),
+  // nimic persistat local. "Văzut" se scrie STRICT pe users/{uid},
+  // la finalul Story-ului, nicăieri altundeva. ──
+  const [storyView, setStoryView] = useState(null); // { slideUrls, kind, id, version, isSeasonStory } | null
+  const [storyLoading, setStoryLoading] = useState(false);
+  // Suprascriere LOCALĂ, doar pentru feedback imediat în sesiunea asta —
+  // "profile" e primit ca prop (deținut de App.jsx), nu se poate scrie
+  // direct aici. Scrierea reală merge pe users/{uid}; asta doar oprește
+  // vizual pulsația instant, fără să aștepte un reload complet.
+  const [locallySeenKeys, setLocallySeenKeys] = useState({});
+  const [matches, setMatches] = useState([]);
+  const [notifItems, setNotifItems] = useState([]);
+  const [notifLoading, setNotifLoading] = useState(false);
+  const [notifOpen, setNotifOpen] = useState(false);
+  const [predictions, setPredictions] = useState({});
+  const [ownJoker, setOwnJoker] = useState(null);
+  const [ownRow, setOwnRow] = useState(null);
+  const [profiles, setProfiles] = useState({});
+
+  const [feedTop, setFeedTop] = useState([]);
+  const [selectedFeedEvent, setSelectedFeedEvent] = useState(null);
+  const [revealMatch, setRevealMatch] = useState(null); // meciul LIVE deschis cu 👁, sau null
+  const [surpriseTeaser, setSurpriseTeaser] = useState(null); // { mainLabel, bonusLabel } | null
+  const processedJokersRef = { current: publishedJokerKeys };
+  // Cache local — joker-ul/joker extra ale userului curent nu se schimbă
+  // din update-uri EXTERNE de meciuri; le citim o singură dată per
+  // montare (nu la fiecare re-fire a listenMatches), la fel ca la
+  // predicțiile proprii (predictionsLoadedRef, mai jos).
+  const jokerFetchedRef = useRef(false);
+  const cachedJokerRef = useRef(null);
+  const cachedJokerExtraRef = useRef(null);
+  // Throttle pentru refreshFeedTop — sunt peste 8 locuri diferite care
+  // pot cere o reîmprospătare aproape simultan (meci terminat, Joker,
+  // Joker Extra, clasament, surpriză, fapte de club...). Fără asta,
+  // fiecare declanșează propria citire de Feed. Cu throttle, indiferent
+  // câte cereri vin într-o fereastră scurtă, se face O SINGURĂ citire
+  // reală, cel mult o dată la FEED_THROTTLE_MS.
+  const feedThrottleRef = useRef({ pending: false, lastRun: 0 });
+  const FEED_THROTTLE_MS = 20000;
+
+  async function refreshFeedTop() {
+    const state = feedThrottleRef.current;
+    if (state.pending) return; // deja programată o reîmprospătare — nu mai adăugăm alta
+    const elapsed = Date.now() - state.lastRun;
+    if (elapsed >= FEED_THROTTLE_MS) {
+      state.lastRun = Date.now();
+      await doRefreshFeedTop();
+    } else {
+      state.pending = true;
+      setTimeout(async () => {
+        state.pending = false;
+        state.lastRun = Date.now();
+        await doRefreshFeedTop();
+      }, FEED_THROTTLE_MS - elapsed);
+    }
+  }
+
+  async function doRefreshFeedTop() {
+    try {
+      const { merged } = await (await feedSvc()).getHomeFeedTop(matches, { max: 8 });
+      setFeedTop(merged);
+    } catch (err) {
+      console.error("Eroare la reîmprospătarea Feed-ului:", err);
+    }
+  }
+
+  function load() {
+    let unsubMatches = null;
+    let unsubScores = null;
+    (async () => {
+      setLoading(true);
+      setCriticalError("");
+      setStatsError("");
+      refreshFeedTop();
+
+      let season, gw;
+      try {
+        season = await getCurrentSeason();
+        setSeasonState(season);
+        if (!season) { setGameweek(null); setLoading(false); return; }
+        gw = await getCurrentGameweek(season.id);
+        setGameweek(gw);
+        if (!gw) { setLoading(false); return; }
+      } catch (err) {
+        console.error("Eroare critică la încărcarea Home:", err);
+        setCriticalError(err.message || err.code || "Eroare necunoscută");
+        setLoading(false);
+        return;
+      }
+      setLoading(false);
+
+      // ── REALTIME pe meciuri — sursă unică cu Pronosticuri (listenMatches),
+      // ca scorul/minutul/evenimentele LIVE să nu mai poată "îngheța" la
+      // momentul deschiderii ecranului. BUG P0 reparat aici. ──
+      const predictionsLoadedRef = { current: false };
+      unsubMatches = subscribeToGameweekMatches(gw.id, (m) => {
+        setMatches(m);
+
+        // FAZA 1 reads — procesarea meciurilor Final NU mai rulează aici
+        // (pe fiecare telefon, la fiecare deschidere de Home). Rulează din
+        // Admin, după publicarea punctajelor: processPendingFinishedMatchesFeed.
+
+        // ── Joker în Feed — REPARAT. Varianta veche interoga TOATE
+        // jokerele etapei într-un singur query (where gameweekId==) —
+        // dar regula Firestore pentru /jokers/{jokerId} verifică
+        // TIPARUL ID-ului (gameweekId_uid), nu câmpul gameweekId din
+        // interogare. Exact același gen de nepotrivire găsită și
+        // reparată mai devreme la specialPicks — Firestore refuză
+        // interogări largi când regula depinde de altceva decât
+        // filtrul propriu-zis. Pentru un user normal (non-admin),
+        // interogarea probabil eșua silențios — de-asta Jokerul
+        // "aproape că nu exista" în Feed.
+        //
+        // Reparat: fiecare user citește DOAR propriul Joker (id exact,
+        // mereu permis de regulă, fără query), și-l publică în Feed
+        // NUMAI după ce meciul s-a blocat — exact regula reală de
+        // reveal, nu una nouă, inventată. Cu userii activi deschizând
+        // aplicația de-a lungul etapei, toate jokerele ajung publicate
+        // treptat, fiecare de pe propriul client.
+        //
+        // COST FIRESTORE: citit O SINGURĂ DATĂ per montare (guard
+        // jokerFetchedRef), nu la fiecare re-fire a listenMatches —
+        // joker-ul PROPRIU nu se schimbă din update-uri externe de
+        // meciuri, doar starea de "blocat" a meciului lui se schimbă,
+        // iar aceea vine oricum din `m`, deja citit gratuit aici.
+        (async () => {
+          if (!jokerFetchedRef.current) {
+            jokerFetchedRef.current = true;
+            // Doua citiri independente (Joker si Joker Extra nu depind
+            // una de alta) - rulate acum in paralel, nu secvential, ca
+            // sa nu adaugam doua round-trip-uri complete de retea unul
+            // dupa altul (optimizare de performanta, audit Etapa 2).
+            [cachedJokerRef.current, cachedJokerExtraRef.current] = await Promise.all([
+              loadUserJoker(gw.id, user.uid).catch((err) => { console.error("Eroare citire Joker propriu:", err); return null; }),
+              loadUserJokerExtra(gw.id, user.uid).catch((err) => { console.error("Eroare citire Joker Extra propriu:", err); return null; }),
+            ]);
+          }
+          const j = cachedJokerRef.current;
+          if (j && !processedJokersRef.current.has(`${j.gameweekId}_${j.userId}`)) {
+            const jm = m.find((x) => x.id === j.matchId);
+            if (jm && isMatchLocked(jm)) { // privacy: nedezvăluit înainte de lock
+              processedJokersRef.current.add(`${j.gameweekId}_${j.userId}`);
+              const nickname = profile?.nickname || user.uid;
+              await (await feedSvc()).processJokerActivation(j, jm, nickname);
+              refreshFeedTop();
+            }
+          }
+
+          // Joker Extra — EXACT același mecanism de auto-publicare ca mai
+          // sus, doar cu cheia de dedup marcată "_extra" ca să nu se
+          // confunde cu Jokerul normal în același Set. Reutilizează
+          // processJokerActivation existent (isExtra=true) — niciun
+          // eveniment nou de Feed, doar textul diferă.
+          const je = cachedJokerExtraRef.current;
+          if (je && !processedJokersRef.current.has(`${je.gameweekId}_${je.userId}_extra`)) {
+            const jem = m.find((x) => x.id === je.matchId);
+            if (jem && isMatchLocked(jem)) {
+              processedJokersRef.current.add(`${je.gameweekId}_${je.userId}_extra`);
+              const nickname = profile?.nickname || user.uid;
+              await (await feedSvc()).processJokerActivation(je, jem, nickname, true);
+              refreshFeedTop();
+            }
+          }
+        })();
+
+        // Predicțiile proprii — au nevoie de ID-urile reale ale meciurilor,
+        // disponibile abia aici (realtime). O singură dată e suficient
+        // (nu se schimbă predicțiile PROPRII quando altcineva actualizează
+        // scorul altui meci) — refolosim predictionsLoadedRef ca gardă.
+        if (!predictionsLoadedRef.current) {
+          predictionsLoadedRef.current = true;
+          loadUserPredictions(user.uid, m.map((x) => x.id)).then(setPredictions).catch((err) => console.error("Eroare predicții proprii:", err));
+        }
+      });
+
+      try {
+        const joker = await loadUserJoker(gw.id, user.uid);
+        setOwnJoker(joker);
+
+        if (gw.status === "completed") {
+          const rows = await listGameweekScores(gw.id);
+          await applyRows(rows.map((r) => ({ ...r, uid: r.userId })));
+        } else {
+          // ── REPARAT (arhitectură nouă) — nu mai recalculăm din
+          // matchPoints la fiecare 2 minute, per user. Un singur listener
+          // partajat pe snapshot-ul deja calculat de Admin la validare
+          // (liveSnapshotStore.js) — actualizare instant, fără polling,
+          // fără recitire de sute de documente. ──
+          let cancelled = false;
+          unsubScores = subscribeToLiveSnapshot(gw.id, async (data) => {
+            if (cancelled) return;
+            if (!isSnapshotStale(data)) {
+              const rows = Object.entries(data.pointsByUid).map(([uid, totalPoints]) => ({ uid, totalPoints }));
+              await applyRows(rows);
+              return;
+            }
+            // ── Fallback controlat — DOAR dacă snapshot-ul chiar nu
+            // există/e stale pentru versiunea CURENTĂ. Promisiune
+            // PARTAJATĂ (liveSnapshotStore.js) — REPARAT după regresia
+            // de producție din 12 sept: varianta veche (semafor boolean)
+            // lăsa AL DOILEA consumator (Header sau Clasament, oricare
+            // venea al doilea) blocat, fără să aplice niciodată datele.
+            // Acum TOȚI consumatorii așteaptă și aplică ACELAȘI rezultat,
+            // calculul scump tot rulează o singură dată. ──
+            try {
+              const { pointsByUid } = await getOrRunFallback(gw.id, data.resultsVersion, () => getLiveGameweekPointsDiagnostic(gw.id));
+              if (cancelled) return;
+              const rows = Object.entries(pointsByUid).map(([uid, totalPoints]) => ({ uid, totalPoints }));
+              await applyRows(rows);
+              console.log(`[FS-TRACE] liveFallback DONE gw=${gw.id} users=${rows.length}`);
+            } catch (err) {
+              console.error("Eroare la fallback-ul clasamentului live:", err);
+              if (!cancelled) setStatsError("Clasamentul live nu s-a putut încărca complet.");
+            }
+          });
+          const origUnsub = unsubScores;
+          unsubScores = () => { cancelled = true; origUnsub(); };
+        }
+      } catch (err) {
+        console.error("Eroare la statisticile personale:", err);
+        setStatsError("Unele statistici nu s-au putut încărca.");
+      }
+    })();
+
+    async function applyRows(rows) {
+      const sorted = [...rows].sort((a, b) => (a.rank ?? 999) - (b.rank ?? 999));
+      setOwnRow(sorted.find((r) => r.uid === user.uid) || null);
+      const p = await getUserPublicProfiles(sorted.map((r) => r.uid));
+      setProfiles((prev) => ({ ...prev, ...p }));
+
+      // REPARAT (7 sept) — CAUZA GĂSITĂ a celor 400.000 de citiri/24h:
+      // processRankChanges() citea ÎNTREAGA colecție de useri, NECONDIȚIONAT,
+      // de fiecare dată când gameweekLiveScores se schimba — iar asta se
+      // întâmplă pentru FIECARE user conectat simultan (ascultător live),
+      // nu o singură dată. La 15-17 useri conectați + multe validări
+      // succesive de meciuri, costul se înmulțea, nu doar se aduna.
+      // Mecanismul echivalent există acum server-side, în Admin
+      // (processLiveRankChangesCapped, apelat O SINGURĂ DATĂ per validare,
+      // indiferent de câți useri sunt conectați) — acesta de aici a
+      // devenit complet redundant. Eliminat, nu doar oprit.
+    }
+
+    return () => { if (unsubMatches) unsubMatches(); if (unsubScores) unsubScores(); };
+  }
+
+  useEffect(load, [user.uid]);
+
+  // Notificări — derivate live din ce chiar mai are userul de făcut
+  // (meciuri fără pronostic azi, surprize dezvăluite dar neacționate,
+  // Meciurile Săptămânii încă deschise). Fără stare "citit" persistată
+  // — conținutul se auto-actualizează, nu are nevoie de sincronizare
+  // separată. Se reîncarcă natural ori de câte ori se schimbă lista de
+  // meciuri sau etapa curentă.
+  useEffect(() => {
+    const currentMatches = matchesRef.current;
+    if (!gameweek || currentMatches.length === 0) { setNotifItems([]); return; }
+    let cancelled = false;
+    setNotifLoading(true);
+    loadNotifications({ gameweekId: gameweek.id, matches: currentMatches, uid: user.uid, featuredMatchIds: gameweek.featuredMatchIds || [] })
+      .then(({ items }) => { if (!cancelled) setNotifItems(items); })
+      .catch((err) => console.error("Eroare la încărcarea notificărilor:", err))
+      .finally(() => { if (!cancelled) setNotifLoading(false); });
+    return () => { cancelled = true; };
+  }, [gameweek?.id, user.uid]);
+
+  // Teaser Surprizele Săptămânii — încărcat o dată per etapă, doar
+  // starea publică (revealed/nu) + tipul, DACĂ e deja dezvăluit. Nu e
+  // nimic secret aici — secret/main e oricum inaccesibil înainte de
+  // reveal, la nivel de regulă Firestore, nu doar ascuns în UI.
+  useEffect(() => {
+    if (!gameweek) return;
+    let cancelled = false;
+    (async () => {
+      const pub = await getWeeklySurprise(gameweek.id);
+      if (!pub || cancelled) { if (!cancelled) setSurpriseTeaser(null); return; }
+      const [sm, sb] = await Promise.all([
+        pub.mainRevealed ? getSecretMain(gameweek.id) : null,
+        pub.bonusRevealed ? getSecretBonus(gameweek.id) : null,
+      ]);
+      if (cancelled) return;
+      setSurpriseTeaser({
+        mainRevealed: !!pub.mainRevealed,
+        bonusRevealed: !!pub.bonusRevealed,
+        mainLabel: sm ? (MAIN_CATALOG.find((c) => c.id === sm.type)?.label || sm.type) : null,
+        bonusLabel: sb ? (BONUS_CATALOG.find((c) => c.id === sb.type)?.label || sb.type) : null,
+      });
+
+      // FAZA 1 reads — generatorii de Feed ai Surprizelor (created /
+      // matchup / result) NU mai rulează aici, pe fiecare telefon. Rulează
+      // din Admin, la dezvăluire/rezolvare (handleSurpriseAction).
+    })();
+    return () => { cancelled = true; };
+  }, [gameweek?.id]);
+
+  const staticFeedRef = useRef(false);
+  // ── FIX P0 (audit Firestore reads) — matches/gameweek sunt folosite
+  // în efectele de mai jos DOAR ca dependințe de declanșare înainte;
+  // problema era că "matches" capătă o referință NOUĂ la fiecare
+  // declanșare a listener-ului (inclusiv la reconectări mobile, fără
+  // nicio schimbare reală de conținut), ceea ce remonta efectele de
+  // fiecare dată, nu doar la schimbare reală de etapă. Acum efectele
+  // depind STRICT de gameweek?.id (valoare stabilă) — citesc "matches"
+  // din acest ref, nu din closure, ca să tot vadă lista curentă, fără
+  // să se re-declanșeze la fiecare referință nouă a array-ului.
+  const matchesRef = useRef(matches);
+  useEffect(() => { matchesRef.current = matches; }, [matches]);
+  useEffect(() => {
+    // FAZA 1 reads — generare GLOBALĂ (meciuri viitoare + fapte de club):
+    // rulează DOAR pe dispozitivul Adminului, o singură dată pe sesiune
+    // per etapă — nu pe fiecare telefon la fiecare deschidere de Home.
+    if (!isAdmin || staticFeedRef.current || !gameweek || matches.length === 0) return;
+    if (staticFeedDoneForGw.has(gameweek.id)) { staticFeedRef.current = true; return; }
+    staticFeedRef.current = true;
+    staticFeedDoneForGw.add(gameweek.id);
+    const featuredIds = gameweek.featuredMatchIds || [];
+    // Toate meciurile care urmează (fereastră 7 zile), nu doar Meciul
+    // Săptămânii — fiecare primește context editorial STRICT dacă
+    // există conținut pentru echipele respective (regula zero).
+    feedSvc().then((m) => m.processUpcomingMatches(matches, featuredIds, gameweek.id))
+      .then((events) => { if (events.length > 0) refreshFeedTop(); })
+      .catch((err) => console.error("Eroare Feed meciuri viitoare:", err));
+
+    // ── Filler zilnic OPRIT — cerut explicit: nu mai vrem glume/facts
+    // generice noi acumulate persistent. Nu șterge nimic din ce există
+    // deja în Firestore (feedEvents rămâne neatins) — doar nu se mai
+    // generează conținut nou de aici încolo. Funcția rămâne definită în
+    // feedService.js, doar neapelată. ──
+
+    // Fapte de club/oraș/competiție — DOAR pentru meciurile în
+    // fereastra 08:00→23:59 ziua următoare (verificată intern per
+    // meci); istoric persistent, deci refresh-ul nu repetă nimic.
+    matches.forEach((m) => {
+      feedSvc().then((f) => f.processClubFactsForMatchGuarded(m))
+        .then((events) => { if (events.length > 0) refreshFeedTop(); })
+        .catch((err) => console.error(`Eroare fapte club (${m.homeTeam}-${m.awayTeam}):`, err));
+    });
+  }, [gameweek, matches]);
+
+  // Meciul principal (hero) — prioritate STRICTĂ, cerută explicit:
+  //   1. primul meci LIVE (sau Pauză — tot "în desfășurare")
+  //   2. dacă nu există → primul PROGRAMAT (cel mai apropiat)
+  //   3. dacă toate sunt FINAL/altceva → ultimul meci TERMINAT
+  // Derby-ul are prioritate DOAR în interiorul bucket-ului ales — nu mai
+  // poate scoate în față un meci FINAL cât timp mai există LIVE/PROGRAMAT.
+  const allSorted = matches.slice().sort((a, b) => a.kickoffAt.toMillis() - b.kickoffAt.toMillis());
+  const featuredIds = gameweek?.featuredMatchIds || [];
+
+  const liveBucket = allSorted.filter((m) => ["live", "paused"].includes(getMatchStatus(m, now)));
+  const scheduledBucket = allSorted.filter((m) => getMatchStatus(m, now) === "scheduled");
+  const finishedBucket = allSorted
+    .filter((m) => getMatchStatus(m, now) === "finished")
+    .slice()
+    .sort((a, b) => b.kickoffAt.toMillis() - a.kickoffAt.toMillis()); // cel mai recent primul
+
+  const heroPool = liveBucket.length ? liveBucket : scheduledBucket.length ? scheduledBucket : finishedBucket;
+  const featuredMatch = heroPool.find((m) => featuredIds.includes(m.id));
+  // Hero = ÎNTOTDEAUNA meciul cel mai apropiat cronologic (heroPool[0],
+  // deja sortat). "Meciul Săptămânii" NU mai forțează prioritate peste
+  // ordinea cronologică — dacă e departe în timp, insigna lui apare
+  // doar când chiar el ajunge să fie următorul meci, nu mai devreme.
+  // Bug real, semnalat direct: Espanyol–Real Madrid (93h) bloca hero-ul
+  // în fața unor meciuri cu mult mai apropiate (Celtic–LASK, 21h).
+  const heroMatch = heroPool[0] || allSorted[0] || null;
+  const heroStatus = heroMatch ? getMatchStatus(heroMatch, now) : null;
+  const heroTheme = heroMatch ? getCompetitionTheme(heroMatch.competitionId) : null;
+  // Meciuri LIVE suplimentare (dincolo de cel din hero) — BUG P0 reparat:
+  // înainte dispăreau complet, nu apăreau nici în hero (doar heroPool[0]),
+  // nici în "Urmează" (filtrat strict la "scheduled"). Acum au propria
+  // secțiune, vizibilă imediat, fără să intre în Pronosticuri ca să afli
+  // că mai există meciuri în desfășurare.
+  const otherLiveMatches = liveBucket.slice(1);
+  // Rail-ul "Urmează" — doar meciuri care CHIAR urmează: statusul real
+  // (nu cel brut din Firestore) trebuie să fie "scheduled". Un meci rămas
+  // pe status "scheduled" în bază dar cu ora deja trecută e tratat LIVE
+  // de getMatchStatus și dispare automat de-aici, cum a fost cerut.
+  const railMatches = allSorted.filter((m) => m.id !== heroMatch?.id && getMatchStatus(m, now) === "scheduled");
+  const remainingMs = heroMatch ? heroMatch.kickoffAt.toMillis() - LOCK_MS - now : 0;
+
+  const predictedCount = Object.keys(predictions).length;
+  const totalMatches = matches.length;
+  const firstUnpredicted = allSorted.find((m) => !predictions[m.id]);
+
+  function handleTopTab(id) {
+    if (id === "matchday") return;
+    if (id === "live") return onOpenLive();
+    if (id === "profil") return onOpenProfile();
+  }
+
+  function handleBottomTab(id) {
+    if (id === "home") return;
+    if (id === "pronosticuri") return onOpenPredictions();
+    if (id === "clasament") return onOpenLeaderboard();
+    if (id === "speciale") return onOpenSpecials();
+    if (id === "profil") return onOpenProfile();
+  }
+
+  if (criticalError) {
+    return (
+      <div style={{ minHeight: "100vh", background: color.bgBase }}>
+        <div style={s.errorWrap}>
+          <p style={s.errorTitle}>Nu s-a putut încărca Home</p>
+          <p style={s.errorText}>{criticalError}</p>
+          <PremiumButton onClick={load}>Încearcă din nou</PremiumButton>
+        </div>
+      </div>
+    );
+  }
+
+  const recentResults = matches
+    .filter((m) => getMatchStatus(m, now) === "finished")
+    .sort((a, b) => b.kickoffAt.toMillis() - a.kickoffAt.toMillis())
+    .slice(0, 5);
+
+  // ── REPARAT — header-ul arăta "0 PCT" pentru toată lumea. Cauza:
+  // freshSeasonPoints era cod mort (niciodată actualizat), iar restul
+  // lanțului cădea pe profile.seasonPoints (persistat, sezon, fără
+  // Specialele) sau pe ownRow.totalPoints (live, dar DOAR etapa, nu
+  // general). Acum: aceeași sursă ca GENERAL din Clasament
+  // (seasonPoints + specialPoints, persistat) + progresul LIVE al
+  // etapei curente — DAR doar dacă etapa încă nu e finalizată (altfel
+  // ownRow.totalPoints ar dubla ce e deja în seasonPoints persistat).
+  // Zero citiri noi — profile, ownRow și gameweek sunt deja încărcate.
+  const isCurrentGwCompleted = gameweek?.status === "completed";
+  const generalPointsLive = (profile?.seasonPoints || 0) + (profile?.specialPoints || 0)
+    + (isCurrentGwCompleted ? 0 : (ownRow?.totalPoints || 0));
+
+  // ── Rezolvă storyGameweek din seasons/{id}.activeStoryGameweekId.
+  // Dacă pointerul lipsește sau indică chiar etapa curentă (cazul
+  // obișnuit), reutilizează gameweek — ZERO citire suplimentară. Dacă
+  // indică altă etapă (Story publicat pentru o etapă trecută), o
+  // singură citire, strict a acelui document. ──
+  // Sezon nou fără Story de etapă încă (ex. începutul Sezonului 3): ultimul Story de etapă
+  // publicat rămâne vizibil — se caută pointerul în sezonul anterior (o singură citire a listei).
+  const [fallbackStoryGwId, setFallbackStoryGwId] = useState(null);
+  useEffect(() => {
+    if (seasonState?.activeStoryGameweekId || gameweek?.storyActive || !seasonState?.id) { setFallbackStoryGwId(null); return undefined; }
+    let cancelled = false;
+    listSeasons().then((all) => {
+      const ms = (x) => (x?.createdAt?.toMillis ? x.createdAt.toMillis() : 0);
+      const prev = all.filter((x) => x.id !== seasonState.id && x.activeStoryGameweekId).sort((a, b) => ms(b) - ms(a))[0];
+      if (!cancelled) setFallbackStoryGwId(prev?.activeStoryGameweekId || null);
+    }).catch(() => {});
+    return () => { cancelled = true; };
+  }, [seasonState?.id, seasonState?.activeStoryGameweekId, gameweek?.storyActive]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const pointerId = seasonState?.activeStoryGameweekId || fallbackStoryGwId;
+    if (!pointerId || pointerId === gameweek?.id) {
+      setStoryGameweek(gameweek);
+      return;
+    }
+    (async () => {
+      try {
+        const snap = await getDoc(doc(db, "gameweeks", pointerId));
+        if (!cancelled) setStoryGameweek(snap.exists() ? { id: snap.id, ...snap.data() } : gameweek);
+      } catch (err) {
+        console.error("Eroare la încărcarea etapei Story evidențiate:", err);
+        if (!cancelled) setStoryGameweek(gameweek);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [seasonState?.activeStoryGameweekId, gameweek, fallbackStoryGwId]);
+
+  // Story de SEZON: dacă sezonul CURENT nu are Story activ, căutăm cel mai nou sezon ANTERIOR care are
+  // unul (Home citea doar sezonul curent, deci Story-ul unui sezon încheiat nu apărea niciodată).
+  // O interogare pe colecția „seasons” (2–3 documente), reținută 5 minute per telefon — fără polling.
+  useEffect(() => {
+    if (!seasonState?.id || seasonState.storyActive) { setOlderStorySeason(null); return undefined; }
+    const cached = olderStoryCache;
+    if (cached.currentId === seasonState.id && Date.now() - cached.at < OLDER_STORY_CACHE_MS) {
+      setOlderStorySeason(cached.value);
+      return undefined;
+    }
+    let cancelled = false;
+    listSeasons()
+      .then((all) => {
+        const ms = (x) => (x?.createdAt?.toMillis ? x.createdAt.toMillis() : 0);
+        const older = all
+          .filter((x) => x.id !== seasonState.id && x.storyActive && x.storySlideCount)
+          .sort((a, b) => ms(b) - ms(a))[0] || null;
+        olderStoryCache = { currentId: seasonState.id, at: Date.now(), value: older };
+        if (!cancelled) setOlderStorySeason(older);
+      })
+      .catch((err) => console.error("Eroare la căutarea Story-ului de sezon anterior:", err));
+    return () => { cancelled = true; };
+  }, [seasonState?.id, seasonState?.storyActive]);
+  const seasonStorySeason = seasonState?.storyActive ? seasonState : olderStorySeason;
+
+  // ── PLAY LEAGUE Stories — determinare "nevăzut", STRICT din date deja
+  // încărcate (storyGameweek, seasonState, profile) — zero citire nouă doar
+  // ca să decidem dacă iconița pulsează. ──
+  const gwStoryUnseen = !!(storyGameweek?.storyActive && profile
+    && profile.lastSeenGwStoryKey !== storyKey(storyGameweek.id, storyGameweek.storyVersion || 1)
+    && locallySeenKeys.gw !== storyKey(storyGameweek.id, storyGameweek.storyVersion || 1));
+  const seasonStoryUnseen = !!(seasonStorySeason?.storyActive && profile
+    && profile.lastSeenSeasonStoryKey !== storyKey(seasonStorySeason.id, seasonStorySeason.storyVersion || 1)
+    && locallySeenKeys.season !== storyKey(seasonStorySeason.id, seasonStorySeason.storyVersion || 1));
+  const anyStoryUnseen = gwStoryUnseen || seasonStoryUnseen;
+
+  async function openGwStory() {
+    if (!storyGameweek?.storyActive || !storyGameweek.storySlideCount) return;
+    setStoryLoading(true);
+    try {
+      const seasons = await listSeasons();
+      const seasonNumber = seasonNumberFromList(storyGameweek.seasonId, seasons);
+      const slideUrls = Array.from({ length: storyGameweek.storySlideCount }, (_, i) =>
+        slideUrl({ seasonNumber, etapaNumber: storyGameweek.number, slideIndex: i + 1 }));
+      setStoryView({ slideUrls, kind: "gw", id: storyGameweek.id, version: storyGameweek.storyVersion || 1, isSeasonStory: false });
+    } catch (err) {
+      console.error("Eroare la deschiderea Story-ului de etapă:", err);
+    } finally {
+      setStoryLoading(false);
+    }
+  }
+
+  async function openSeasonStory() {
+    if (!seasonStorySeason?.storyActive || !seasonStorySeason.storySlideCount) return;
+    setStoryLoading(true);
+    try {
+      const seasons = await listSeasons();
+      const seasonNumber = seasonNumberFromList(seasonStorySeason.id, seasons);
+      const slideUrls = Array.from({ length: seasonStorySeason.storySlideCount }, (_, i) =>
+        slideUrl({ seasonNumber, etapaNumber: null, slideIndex: i + 1 }));
+      setStoryView({ slideUrls, kind: "season", id: seasonStorySeason.id, version: seasonStorySeason.storyVersion || 1, isSeasonStory: true });
+    } catch (err) {
+      console.error("Eroare la deschiderea Story-ului de sezon:", err);
+    } finally {
+      setStoryLoading(false);
+    }
+  }
+
+  function handleStoryIconClick() {
+    if (gwStoryUnseen) { openGwStory(); return; }
+    if (seasonStoryUnseen) { openSeasonStory(); return; }
+    onOpenStoriesArchive?.();
+  }
+
+  async function handleStoryComplete() {
+    if (!storyView) return;
+    try {
+      if (storyView.kind === "gw") {
+        await markGwStorySeen(user.uid, storyView.id, storyView.version);
+        setLocallySeenKeys((prev) => ({ ...prev, gw: storyKey(storyView.id, storyView.version) }));
+      } else {
+        await markSeasonStorySeen(user.uid, storyView.id, storyView.version);
+        setLocallySeenKeys((prev) => ({ ...prev, season: storyKey(storyView.id, storyView.version) }));
+      }
+    } catch (err) {
+      console.error("Eroare la marcarea Story-ului ca văzut:", err);
+    }
+  }
+
+  return (
+    <div style={{ minHeight: "100vh", background: color.bgBase, paddingBottom: 96 }}>
+      {/* ── HERO — comprimat, ~50% din ecran ── */}
+      <CinematicBackdrop crowd rain style={{ minHeight: 480, display: "flex", flexDirection: "column" }}>
+        <AppHeader
+          nickname={profile?.nickname || "Jucător"}
+          points={generalPointsLive.toLocaleString("ro-RO")}
+          avatarId={profile?.avatarId}
+          storyPulse={anyStoryUnseen}
+          onAvatarClick={onOpenProfile}
+          onStoryClick={handleStoryIconClick}
+        />
+        <TopTabNav active="matchday" onChange={handleTopTab} hasLiveMatch={matches.some((m) => getDisplayMatchState(m, now).status === "live")} />
+
+        {toast && <div style={s.toast}>{toast}</div>}
+
+        <div style={s.heroBody}>
+          {loading && <div style={s.centerNote}>Se încarcă…</div>}
+          {!loading && !gameweek && <div style={s.centerNote}>Nu există o etapă activă în această săptămână.</div>}
+
+          {!loading && gameweek && (
+            heroMatch ? (
+              <div style={s.heroCard}>
+                <CompetitionHeaderStrip match={heroMatch} size="lg" />
+
+                <div style={s.heroCardBody}>
+                  {(featuredMatch && heroMatch === featuredMatch) || heroStatus !== "scheduled" ? (
+                    <div style={{ display: "flex", justifyContent: "center", gap: 6, marginBottom: 10, flexWrap: "wrap" }}>
+                      {featuredMatch && heroMatch === featuredMatch && (
+                        <span
+                          style={{ ...s.motwBadge, cursor: onOpenFeaturedMatch ? "pointer" : "default" }}
+                          onClick={() => onOpenFeaturedMatch?.(heroMatch, gameweek?.id)}
+                        >
+                          ⭐ Meciul Săptămânii · Punctaj Dublu{onOpenFeaturedMatch ? " · VEZI DETALII →" : ""}
+                        </span>
+                      )}
+                      {heroStatus === "live" && <Pill tone="green">● LIVE{heroMatch.liveMinute != null ? ` · ${heroMatch.liveMinute}'` : ""}</Pill>}
+                      {heroStatus === "paused" && <Pill tone="gold">Pauză</Pill>}
+                      {heroStatus === "finished" && <Pill tone="gold">Final</Pill>}
+                      {heroStatus === "postponed" && <Pill tone="gold">Amânat</Pill>}
+                      {heroStatus === "cancelled" && <Pill tone="gold">Anulat</Pill>}
+                    </div>
+                  ) : null}
+
+                  <div style={s.matchup}>
+                    <div style={s.side}>
+                      <div style={s.logoRing}><ClubLogo teamName={heroMatch.homeTeam} size={60} /></div>
+                      <span style={s.tname}>{heroMatch.homeTeam}</span>
+                    </div>
+                    <span style={s.vsx}>VS</span>
+                    <div style={s.side}>
+                      <div style={s.logoRing}><ClubLogo teamName={heroMatch.awayTeam} size={60} /></div>
+                      <span style={s.tname}>{heroMatch.awayTeam}</span>
+                    </div>
+                  </div>
+
+                  {heroStatus === "scheduled" && (
+                    <div style={s.flapWrap}>
+                      <div style={s.lockLabel}>Se blochează în</div>
+                      <SplitFlapClock remainingMs={remainingMs} />
+                    </div>
+                  )}
+                  {heroStatus === "scheduled" && heroMatch && isMatchLocked(heroMatch) && (
+                    <button type="button" style={s.eyeBtn} onClick={() => setRevealMatch(heroMatch)} aria-label="Vezi pronosticurile">
+                      👁 <span style={s.eyeBtnLabel}>Vezi pronosticurile blocate</span>
+                    </button>
+                  )}
+                  {heroStatus === "live" && (
+                    <>
+                      {heroMatch.realScoreA != null && heroMatch.realScoreB != null ? (
+                        <div style={s.finalScore}>{heroMatch.realScoreA} – {heroMatch.realScoreB}</div>
+                      ) : (
+                        <div style={s.liveNote}>LIVE · rezultat neintrodus încă</div>
+                      )}
+                      <LiveMatchDetails match={heroMatch} />
+                      <div style={s.liveRevealWrap}>
+                        <button type="button" style={s.eyeBtn} onClick={() => setRevealMatch(heroMatch)} aria-label="Vezi pronosticurile">
+                          👁 <span style={s.eyeBtnLabel}>Cine mai e în joc?</span>
+                        </button>
+                      </div>
+                    </>
+                  )}
+                  {heroStatus === "paused" && (
+                    <>
+                      {heroMatch.realScoreA != null && heroMatch.realScoreB != null && (
+                        <div style={s.finalScore}>{heroMatch.realScoreA} – {heroMatch.realScoreB}</div>
+                      )}
+                      <div style={s.liveNote}>Meciul e la pauză</div>
+                      <LiveMatchDetails match={heroMatch} />
+                    </>
+                  )}
+                  {heroStatus === "finished" && (
+                    <>
+                      <div style={s.finalScore}>{heroMatch.realScoreA} – {heroMatch.realScoreB}</div>
+                      <LiveMatchDetails match={heroMatch} />
+                    </>
+                  )}
+                  {heroStatus === "postponed" && <div style={s.liveNote}>Meci amânat — dată nouă în curând</div>}
+                  {heroStatus === "cancelled" && <div style={s.liveNote}>Meci anulat</div>}
+
+                  <div style={s.ctaWrap}><PremiumButton onClick={() => onOpenPredictions(heroMatch?.id)}>{CTA_LABEL[heroStatus]}</PremiumButton></div>
+                </div>
+              </div>
+            ) : (
+              <div style={s.centerNote}>Etapa asta nu are încă meciuri adăugate.</div>
+            )
+          )}
+        </div>
+      </CinematicBackdrop>
+
+      {!loading && gameweek && (
+        <div style={s.wrap}>
+          {statsError && <div style={s.statsErrorNote}>{statsError}</div>}
+
+          {totalMatches > 0 && (
+            <PressableCard reduced={reduced} onClick={() => onOpenPredictions(firstUnpredicted?.id)} style={{ marginBottom: 18 }}>
+              <div style={s.progressTop}>
+                <span style={s.progressLabel}>Progres etapă</span>
+                <span style={s.progressCount}>{predictedCount}/{totalMatches}</span>
+              </div>
+              <div style={s.progressTrack}>
+                <div style={{ ...s.progressFill, width: `${totalMatches ? (predictedCount / totalMatches) * 100 : 0}%` }} />
+              </div>
+              <div style={s.progressNote}>
+                {predictedCount >= totalMatches ? "Etapa este completă." : `Mai ai ${totalMatches - predictedCount} meciuri.`}
+              </div>
+            </PressableCard>
+          )}
+
+          {surpriseTeaser && (
+            <button type="button" style={s.surpriseCard} onClick={onOpenSurprises}>
+              <div style={s.surpriseCardGlow} />
+              <div style={s.surpriseCardHead}>
+                <span style={s.surpriseCardTitle}>🎭 SURPRIZA SĂPTĂMÂNII</span>
+                <span style={s.surpriseCardArrow}>→</span>
+              </div>
+              <div style={s.surpriseCardRows}>
+                <span style={s.surpriseCardRow}>
+                  <span style={s.surpriseCardIcon}>🏆</span>
+                  <span style={s.surpriseCardRowText}>
+                    {surpriseTeaser.mainRevealed ? surpriseTeaser.mainLabel : "Surpriza Principală"}
+                  </span>
+                  <span style={surpriseTeaser.mainRevealed ? s.surpriseCardStatusActive : s.surpriseCardStatusLocked}>
+                    {surpriseTeaser.mainRevealed ? "Activ" : "🔒"}
+                  </span>
+                </span>
+                <span style={s.surpriseCardRow}>
+                  <span style={s.surpriseCardIcon}>🎁</span>
+                  <span style={s.surpriseCardRowText}>
+                    {surpriseTeaser.bonusRevealed ? surpriseTeaser.bonusLabel : "Bonusul Săptămânii"}
+                  </span>
+                  <span style={surpriseTeaser.bonusRevealed ? s.surpriseCardStatusActive : s.surpriseCardStatusLocked}>
+                    {surpriseTeaser.bonusRevealed ? "Activ" : "🔒"}
+                  </span>
+                </span>
+              </div>
+            </button>
+          )}
+
+          {otherLiveMatches.length > 0 && (
+            <div style={s.otherLiveSection}>
+              <div style={s.otherLiveLabel}>🔴 ALTE MECIURI LIVE ({otherLiveMatches.length})</div>
+              <div style={s.otherLiveList}>
+                {otherLiveMatches.map((m) => (
+                  <div key={m.id} style={s.otherLiveCard}>
+                    <div style={s.otherLiveTop}>
+                      <ClubLogo teamName={m.homeTeam} size={34} />
+                      <div style={s.otherLiveMid}>
+                        <div style={s.otherLiveTeams}>{m.homeTeam} – {m.awayTeam}</div>
+                        <div style={s.otherLiveScoreRow}>
+                          {m.realScoreA != null && m.realScoreB != null ? (
+                            <span style={s.otherLiveScore}>{m.realScoreA} – {m.realScoreB}</span>
+                          ) : (
+                            <span style={s.otherLiveScorePending}>rezultat neintrodus</span>
+                          )}
+                          <span style={s.otherLiveMinute}>● LIVE{m.liveMinute != null ? ` ${m.liveMinute}'` : ""}</span>
+                        </div>
+                      </div>
+                      <ClubLogo teamName={m.awayTeam} size={34} />
+                    </div>
+                    <LiveMatchDetails match={m} compact />
+                    <button type="button" style={s.otherLiveEyeBtn} onClick={() => setRevealMatch(m)}>
+                      👁 Cine mai e în joc?
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {railMatches.length > 0 && (
+            <div style={s.railSection}>
+              <div style={s.sectionLabel}>Urmează</div>
+              <div style={s.rail}>
+                {railMatches.map((m, i) => (
+                  <MatchRailCard
+                    key={m.id}
+                    match={m}
+                    now={now}
+                    emphasizeCountdown={i < 3}
+                    isFeatured={featuredIds.includes(m.id)}
+                    featuredIndex={featuredIds.includes(m.id) ? featuredIds.indexOf(m.id) + 1 : null}
+                    onClick={() => onOpenPredictions(m.id)}
+                    onOpenFeatured={featuredIds.includes(m.id) ? () => onOpenFeaturedMatch?.(m, gameweek?.id) : undefined}
+                  />
+                ))}
+              </div>
+            </div>
+          )}
+
+          {recentResults.length > 0 && (
+            <div style={s.railSection}>
+              <div style={s.sectionLabel}>Ultimele rezultate</div>
+              <div style={s.resultsList}>
+                {/* Implicit vizibil: DOAR ultimul meci terminat. */}
+                <ResultRow match={recentResults[0]} onClick={() => onOpenPredictions(recentResults[0].id)} />
+
+                {recentResults.length > 1 && (
+                  <>
+                    <div style={{ ...s.accordionBody, gridTemplateRows: resultsOpen ? "1fr" : "0fr" }}>
+                      <div style={{ overflow: "hidden" }}>
+                        {recentResults.slice(1).map((m) => (
+                          <ResultRow key={m.id} match={m} onClick={() => onOpenPredictions(m.id)} />
+                        ))}
+                      </div>
+                    </div>
+                    <button type="button" onClick={() => setResultsOpen((v) => !v)} style={s.accordionToggle}>
+                      <span>{resultsOpen ? "Arată mai puține" : `Încă ${recentResults.length - 1}`}</span>
+                      <span style={{ ...s.accordionChevron, transform: resultsOpen ? "rotate(180deg)" : "rotate(0deg)" }}>▾</span>
+                    </button>
+                  </>
+                )}
+              </div>
+            </div>
+          )}
+
+          <div style={s.feedSection}>
+            <div style={s.feedSectionHead}>
+              <div style={s.sectionLabel}>📰 Feed</div>
+              {onOpenFeed && <button type="button" style={s.seeAllBtn} onClick={onOpenFeed}>Vezi tot →</button>}
+            </div>
+            <div style={s.feedList}>
+              {feedTop.length === 0 && <div style={s.feedEmpty}>Niciun eveniment încă — revino după primele rezultate.</div>}
+              {feedTop.map((e) => (
+                <FeedCard key={e.id} event={e} now={now} onClick={setSelectedFeedEvent} compact />
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      <FeedDetailModal event={selectedFeedEvent} onClose={() => setSelectedFeedEvent(null)} />
+      {revealMatch && (
+        <PredictionsRevealSheet
+          match={revealMatch}
+          isFeatured={(gameweek?.featuredMatchIds || []).includes(revealMatch.id)}
+          currentUserId={user.uid}
+          isAdmin={isAdmin}
+          onClose={() => setRevealMatch(null)}
+        />
+      )}
+      {notifOpen && (
+        <NotificationPanel
+          items={notifItems}
+          loading={notifLoading}
+          onClose={() => setNotifOpen(false)}
+          onOpenPredictions={() => onOpenPredictions()}
+          onOpenSurprises={onOpenSurprises}
+        />
+      )}
+      {storyView && (
+        <StoryViewer
+          slideUrls={storyView.slideUrls}
+          isSeasonStory={storyView.isSeasonStory}
+          onClose={() => setStoryView(null)}
+          onComplete={handleStoryComplete}
+          onOpenArchive={() => { setStoryView(null); onOpenStoriesArchive?.(); }}
+          onOpenLeaderboard={() => { setStoryView(null); onOpenLeaderboard?.(); }}
+        />
+      )}
+    </div>
+  );
+}
+
+// Un singur rând de rezultat — extras ca să fie refolosit atât pentru
+// meciul mereu-vizibil, cât și pentru cele ascunse în accordion.
+function ResultRow({ match: m, onClick }) {
+  return (
+    <button type="button" onClick={onClick} style={s.resultRow}>
+      <ClubLogo teamName={m.homeTeam} size={24} />
+      <span style={s.resultName}>{m.homeTeam}</span>
+      <span style={s.resultScore}>{m.realScoreA} – {m.realScoreB}</span>
+      <span style={s.resultName}>{m.awayTeam}</span>
+      <ClubLogo teamName={m.awayTeam} size={24} />
+    </button>
+  );
+}
+
+// Wrapper unic pentru cardurile "de bloc" (progres, special) — aceeași
+// rază, umbră, padding și animație de apăsare peste tot (cerința #9).
+function PressableCard({ children, onClick, reduced, style }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      onPointerDown={(e) => { if (!reduced) e.currentTarget.style.transform = "scale(0.985)"; }}
+      onPointerUp={(e) => { e.currentTarget.style.transform = "scale(1)"; }}
+      onPointerLeave={(e) => { e.currentTarget.style.transform = "scale(1)"; }}
+      style={{
+        display: "block", width: "100%", textAlign: "left", background: color.surface,
+        border: `1px solid ${color.border}`, borderRadius: radius.lg, padding: 16,
+        boxShadow: shadow.card, cursor: "pointer", transition: "transform 90ms cubic-bezier(.4,0,.2,1)",
+        ...style,
+      }}
+    >
+      {children}
+    </button>
+  );
+}
+
+const s = {
+  wrap: { maxWidth: 480, margin: "0 auto", padding: "16px 16px 0" },
+  centerNote: { textAlign: "center", color: color.textSecondary, fontSize: 13.5, padding: "40px 16px" },
+  statsErrorNote: {
+    fontSize: 11, color: color.textFaint, background: color.surfaceInset, border: `1px solid ${color.border}`,
+    borderRadius: radius.sm, padding: "8px 12px", marginBottom: 14,
+  },
+
+  toast: {
+    position: "fixed", left: "50%", top: 92, transform: "translateX(-50%)", zIndex: 70,
+    background: color.surfaceElevated, border: `1px solid ${color.goldBorder}`, color: color.goldLight,
+    borderRadius: radius.pill, padding: "8px 16px", fontSize: 12, fontWeight: 700, fontFamily: font.body,
+    boxShadow: shadow.elevated,
+  },
+
+  heroBody: {
+    flex: 1, display: "flex", flexDirection: "column", justifyContent: "center", alignItems: "center",
+    padding: "8px 16px 16px", textAlign: "center",
+    // Continuă din culoarea de bază a TopTabNav (#15181F), introduce
+    // FOARTE gradual o urmă din albastrul real Champions League
+    // (extras din tema competiției existente, nu inventat) — se
+    // stabilizează la acea valoare pe la ~260px (unde ajunge cardul,
+    // în mod normal), nu se tot diluează spre nesfârșit în zona goală
+    // de dedesubt, dacă ecranul e mai înalt decât conținutul.
+    background: "linear-gradient(180deg, #15181F 0px, #14171E 120px, rgba(12,42,171,0.05) 260px, rgba(12,42,171,0.05) 100%)",
+  },
+
+  // ── Cardul hero — compoziție unică (competiție + echipe + countdown +
+  // CTA), cu profunzime reală: gradient discret + glow + bordură, nu
+  // conținut plutind pe negru pur. Lățime plină, ca să domine ecranul. ──
+  heroCard: {
+    width: "100%", maxWidth: 400, borderRadius: radius.lg, overflow: "hidden",
+    background: "linear-gradient(180deg, rgba(212,175,55,0.07) 0%, rgba(18,20,28,0.92) 35%, rgba(10,11,16,0.96) 100%)",
+    border: "1px solid rgba(212,175,55,0.22)",
+    boxShadow: "0 0 40px -8px rgba(212,175,55,0.18), 0 20px 45px -20px rgba(0,0,0,0.7)",
+  },
+  heroCardBody: { padding: "16px 18px 18px" },
+
+  matchup: { display: "flex", alignItems: "flex-start", justifyContent: "center", gap: 14, marginBottom: 6 },
+  side: { display: "flex", flexDirection: "column", alignItems: "center", gap: 9, width: 108 },
+  logoRing: {
+    width: 76, height: 76, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center",
+    background: "radial-gradient(circle, rgba(212,175,55,0.14) 0%, rgba(212,175,55,0.02) 70%)",
+    border: "1px solid rgba(212,175,55,0.25)", boxShadow: "0 0 20px -4px rgba(212,175,55,0.3)",
+  },
+  tname: {
+    fontFamily: font.display, fontWeight: 700, fontSize: 13, textTransform: "uppercase", letterSpacing: "0.01em",
+    color: color.textPrimary, lineHeight: 1.25, minHeight: 32, display: "flex", alignItems: "center", justifyContent: "center",
+  },
+  vsx: {
+    fontFamily: font.display, fontSize: 12, color: color.goldLight, fontWeight: 800, letterSpacing: "0.05em",
+    marginTop: 26, flexShrink: 0, width: 30, height: 30, borderRadius: "50%",
+    display: "flex", alignItems: "center", justifyContent: "center",
+    background: "rgba(212,175,55,0.1)", border: "1px solid rgba(212,175,55,0.3)",
+  },
+
+  flapWrap: {
+    margin: "14px auto 16px", transform: "scale(0.88)", display: "inline-block",
+    padding: "10px 18px", borderRadius: radius.md, background: "rgba(255,255,255,0.03)",
+    border: "1px solid rgba(255,255,255,0.08)",
+  },
+  lockLabel: { fontSize: 10, fontWeight: 700, color: color.textFaint, letterSpacing: "0.04em", textTransform: "uppercase", marginBottom: 6, fontFamily: font.body },
+  liveNote: { fontSize: 11.5, color: "#8BD957", fontWeight: 700, margin: "12px 0", fontFamily: font.body },
+  liveRevealWrap: { display: "flex", flexDirection: "column", alignItems: "center", gap: 8, margin: "12px 0" },
+  eyeBtn: {
+    display: "flex", alignItems: "center", gap: 6, background: "rgba(212,175,55,0.1)",
+    border: "1px solid rgba(212,175,55,0.35)", borderRadius: 999, padding: "6px 14px",
+    fontSize: 11.5, cursor: "pointer", color: color.goldLight, fontFamily: font.body, fontWeight: 700,
+  },
+  eyeBtnLabel: { fontSize: 11.5, fontWeight: 700 },
+
+  otherLiveSection: { marginBottom: 20 },
+  // ── Card premium „Surpriza Săptămânii" — dark, glow auriu discret,
+  // ierarhie clară (titlu mare sus, 2 rânduri de status dedesubt).
+  // Aceeași țintă de click ca înainte (onOpenSurprises), doar cromatica
+  // mult mai vizibilă. Înălțime ~110-120px, nu un hero. ──
+  surpriseCard: {
+    position: "relative", overflow: "hidden", display: "block", width: "100%", textAlign: "left",
+    background: "linear-gradient(155deg, rgba(212,175,55,0.14), rgba(20,16,8,0.5) 60%, rgba(139,58,138,0.10))",
+    border: "1px solid rgba(212,175,55,0.35)", borderRadius: radius.lg,
+    padding: "14px 16px 16px", marginBottom: 16, cursor: "pointer", fontFamily: font.body,
+    boxShadow: `${shadow.card}, ${shadow.rim}`,
+  },
+  surpriseCardGlow: {
+    position: "absolute", top: -40, right: -40, width: 140, height: 140, borderRadius: "50%",
+    background: "radial-gradient(circle, rgba(212,175,55,0.28), transparent 70%)", pointerEvents: "none",
+  },
+  surpriseCardHead: { display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12, position: "relative" },
+  surpriseCardTitle: {
+    fontSize: 13.5, fontWeight: 800, letterSpacing: "0.03em", color: color.textPrimary, fontFamily: font.display,
+  },
+  surpriseCardArrow: { fontSize: 15, fontWeight: 800, color: color.goldLight },
+  surpriseCardRows: { display: "flex", flexDirection: "column", gap: 8, position: "relative" },
+  surpriseCardRow: { display: "flex", alignItems: "center", gap: 9 },
+  surpriseCardIcon: { fontSize: 15, flexShrink: 0, width: 22, textAlign: "center" },
+  surpriseCardRowText: {
+    flex: 1, fontSize: 12.5, fontWeight: 600, color: color.textSecondary,
+    overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+  },
+  surpriseCardStatusActive: {
+    fontSize: 9.5, fontWeight: 800, letterSpacing: "0.04em", color: "#0A0D14",
+    background: color.goldGradient, borderRadius: 999, padding: "3px 9px", flexShrink: 0,
+  },
+  surpriseCardStatusLocked: {
+    fontSize: 11, color: color.textFaint, flexShrink: 0,
+  },
+  otherLiveLabel: { fontSize: 11, fontWeight: 800, letterSpacing: "0.05em", color: "#F0555A", marginBottom: 10, fontFamily: font.body },
+  otherLiveList: { display: "flex", flexDirection: "column", gap: 10 },
+  otherLiveCard: {
+    background: "rgba(240,85,90,0.05)", border: "1px solid rgba(240,85,90,0.25)", borderRadius: radius.md, padding: 14,
+  },
+  otherLiveTop: { display: "flex", alignItems: "center", gap: 10 },
+  otherLiveMid: { flex: 1, minWidth: 0, textAlign: "center" },
+  otherLiveTeams: { fontSize: 11.5, fontWeight: 700, color: color.textPrimary, fontFamily: font.body, marginBottom: 3 },
+  otherLiveScoreRow: { display: "flex", alignItems: "center", justifyContent: "center", gap: 8 },
+  otherLiveScore: { fontFamily: font.display, fontSize: 18, fontWeight: 800, color: color.textPrimary },
+  otherLiveScorePending: { fontSize: 10.5, color: color.textFaint, fontFamily: font.body },
+  otherLiveMinute: { fontSize: 10, fontWeight: 800, color: "#8BD957", fontFamily: font.body },
+  otherLiveEyeBtn: {
+    width: "100%", marginTop: 8, background: "rgba(212,175,55,0.1)", border: "1px solid rgba(212,175,55,0.35)",
+    borderRadius: 999, padding: "7px 0", fontSize: 11, fontWeight: 700, color: color.goldLight, cursor: "pointer", fontFamily: font.body,
+  },
+  finalScore: { fontFamily: font.display, fontSize: 30, fontWeight: 800, color: color.textPrimary, margin: "8px 0 12px" },
+  ctaWrap: { width: "100%", maxWidth: 280, margin: "0 auto" },
+  motwBadge: {
+    display: "inline-flex", alignItems: "center", gap: 5, fontSize: 10.5, fontWeight: 800, color: "#241B05",
+    background: "linear-gradient(180deg, #FFF6D9, #D4AF37)", padding: "4px 10px", borderRadius: 999,
+    fontFamily: font.body, boxShadow: "0 0 12px rgba(212,175,55,0.45)",
+  },
+
+  sectionLabel: {
+    fontSize: 10, fontWeight: 700, letterSpacing: "0.09em", textTransform: "uppercase",
+    color: color.textFaint, marginBottom: 10, fontFamily: font.body,
+  },
+
+  progressTop: { display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 },
+  progressLabel: { fontSize: 12.5, fontWeight: 700, color: color.textPrimary, fontFamily: font.body },
+  progressCount: { fontFamily: font.display, fontSize: 14, color: color.goldLight, fontWeight: 700 },
+  progressTrack: { height: 6, borderRadius: 999, background: color.surfaceInset, overflow: "hidden", marginBottom: 8 },
+  progressFill: { height: "100%", background: color.goldGradient, borderRadius: 999, transition: "width 300ms ease" },
+  progressNote: { fontSize: 11.5, color: color.textSecondary, fontFamily: font.body },
+
+  railSection: { marginBottom: 22 },
+  rail: { display: "flex", gap: 9, overflowX: "auto", paddingBottom: 4 },
+
+  accordionToggle: {
+    display: "flex", alignItems: "center", justifyContent: "center", gap: 5, width: "100%",
+    background: "none", border: "none", borderTop: `1px solid ${color.borderSubtle}`,
+    padding: "9px 0", cursor: "pointer", fontSize: 11, fontWeight: 700, color: color.textFaint, fontFamily: font.body,
+  },
+  accordionChevron: { fontSize: 11, transition: "transform 220ms ease" },
+  accordionBody: { display: "grid", transition: "grid-template-rows 260ms ease" },
+
+  resultsList: { display: "flex", flexDirection: "column", gap: 1, background: color.surface, borderRadius: radius.lg, overflow: "hidden", border: `1px solid ${color.border}` },
+  resultRow: {
+    display: "flex", alignItems: "center", gap: 8, padding: "10px 12px", background: "none", border: "none",
+    borderBottom: `1px solid ${color.borderSubtle}`, cursor: "pointer", width: "100%", textAlign: "left",
+  },
+  resultName: { flex: 1, fontSize: 11.5, color: color.textSecondary, fontWeight: 600, fontFamily: font.body, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" },
+  resultScore: { fontSize: 13, color: color.textPrimary, fontWeight: 800, fontFamily: font.display, flexShrink: 0, padding: "0 4px" },
+
+  feedSection: { marginBottom: 22 },
+  feedSectionHead: { display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4 },
+  seeAllBtn: { background: "none", border: "none", color: color.goldLight, fontSize: 11.5, fontWeight: 700, cursor: "pointer", fontFamily: font.body },
+  feedList: { display: "flex", flexDirection: "column", gap: 6 },
+  feedEmpty: { fontSize: 11.5, color: color.textFaint, fontFamily: font.body, padding: "8px 0" },
+
+  errorWrap: { maxWidth: 420, margin: "80px auto", textAlign: "center", padding: "0 20px" },
+  errorTitle: { fontSize: 16, fontWeight: 700, color: color.textPrimary, marginBottom: 8, fontFamily: font.body },
+  errorText: { fontSize: 12.5, color: "#E5534B", marginBottom: 18, fontFamily: font.body },
+};

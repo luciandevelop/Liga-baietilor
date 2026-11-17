@@ -85,6 +85,9 @@ import SquidAvatarsPanel from "../components/SquidAvatarsPanel";
 import AccountTransferPanel from "../components/AccountTransferPanel";
 import PlayerSpecialsPanel from "../components/PlayerSpecialsPanel";
 import PusculitaAdminPanel from "../components/PusculitaAdminPanel";
+import RedLightAdminPanel from "../components/RedLightAdminPanel";
+import { RED_LIGHT_TYPE_ID } from "../services/redLightEngine";
+import { runRedLightAfterValidation } from "../services/redLightService";
 import BridgeAdminPanel from "../components/BridgeAdminPanel";
 import BridgeTestLab from "../components/BridgeTestLab";
 import PusculitaTestLab from "../components/PusculitaTestLab";
@@ -122,7 +125,6 @@ import { getSeasonNumbers } from "../services/seasonNumbersService";
 import { s3AvatarId } from "../assets/avatars";
 import MysteryBoxExperience from "../components/MysteryBoxExperience";
 import { MYSTERY_BOX_VALUES } from "../services/surprisesService";
-import CuratedMatchContentPanel from "../components/CuratedMatchContentPanel";
 
 // Ordonare operațională pentru secțiunea de Rezultate: meciurile FĂRĂ
 // rezultat introdus încă vin primele (sortate după kickoffAt), apoi cele
@@ -1293,8 +1295,6 @@ export default function AdminScreen({ onBack }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab]);
 
-  // Filtrul listei de evenimente din Feed (Admin): toate / clasament de aprobat
-  const [feedFilter, setFeedFilter] = useState("rank-candidates");
   function loadFeedAdminData() {
     setFeedLoading(true);
     Promise.all([listRecentEventsForAdmin(), listAdminFunItems(), listRecentManualNews(50)])
@@ -1877,6 +1877,11 @@ export default function AdminScreen({ onBack }) {
               .then((acts) => { if (acts?.length) setPreviewMessage((prev) => (prev ? prev + " " : "") + acts.map((x) => `🐷 Runda ${x.round + 1} confirmată (${x.survivors} supraviețuitori)${x.voteOpened ? ", votul e deschis." : "."}`).join(" ")); })
               .catch((e) => console.warn("Pușculița: avansarea automată a eșuat:", e?.code || e?.message));
           }
+          // 🚦 Lumină roșie: la fiecare validare/corectare, recalcul complet din ACELEAȘI rezultate (zero citiri
+          // de pronosticuri în plus) + starea oficială, scrisă monoton. Un eșec aici NU afectează restul.
+          runRedLightAfterValidation(selectedGameweekId, capturedResultsVersion, result)
+            .then((m) => { if (m) setPreviewMessage((prev) => (prev ? prev + " " : "") + m); })
+            .catch((e) => console.warn("Lumină roșie: recalculul a eșuat:", e?.code || e?.message));
           // PRINȚ SAU BROSCOI?: istoricul real al validărilor (pentru graficul duelului). Se face doar dacă etapa are jocul
           // activ; un eșec aici NU afectează publicarea snapshot-ului și nu se așteaptă.
           appendBursaHistoryIfActive(selectedGameweekId, capturedResultsVersion, pointsByUid)
@@ -3216,6 +3221,10 @@ export default function AdminScreen({ onBack }) {
                         <PusculitaAdminPanel gameweekId={gw.id} />
                       )}
 
+                      {mainType === RED_LIGHT_TYPE_ID && (
+                        <RedLightAdminPanel gameweekId={gw.id} />
+                      )}
+
                       {mainType === "higherLower" && mainRevealed && (
                         <div style={s.triviaBox}>
                           <p style={s.hint}>📈📉 Mai Mare/Mai Mic — 18 jucători, 9 perechi RANDOM, 6 runde comune.</p>
@@ -3915,26 +3924,8 @@ export default function AdminScreen({ onBack }) {
                   {cleanupMessage && <p style={s.hint}>{cleanupMessage}</p>}
                   {feedLoading && <p style={s.hint}>Se încarcă…</p>}
                   {!feedLoading && feedEvents.length === 0 && <p style={s.hint}>Niciun eveniment încă.</p>}
-                  <div style={{ display: "flex", gap: 6, flexWrap: "wrap", margin: "8px 0" }}>
-                    {[
-                      { key: "rank-candidates", label: `🏆 Clasament de aprobat (${feedEvents.filter((e) => e.category === "clasament" && (e.status || "published") === "candidate").length})` },
-                      { key: "candidates", label: "◷ Toți candidații" },
-                      { key: "all", label: "Toate" },
-                    ].map((f) => (
-                      <button key={f.key} type="button" onClick={() => setFeedFilter(f.key)}
-                        style={{ ...s.smallBtn, ...(feedFilter === f.key ? { background: color.gold, color: "#12141C", borderColor: color.gold } : {}) }}>
-                        {f.label}
-                      </button>
-                    ))}
-                  </div>
-                  <p style={s.hint}>Schimbările de clasament (lider nou, urcări/coborâri, diferențe la vârf) NU se mai publică automat. Apar aici ca „candidat”; tu apeși 📣 Publică pe ce merită. Punctele sunt cele reale, fără bonusul de final de etapă.</p>
                   <div style={s.feedAdminList}>
-                    {feedEvents.filter((e) => {
-                      const st = e.status || "published";
-                      if (feedFilter === "rank-candidates") return e.category === "clasament" && st === "candidate";
-                      if (feedFilter === "candidates") return st === "candidate";
-                      return true;
-                    }).map((e) => {
+                    {feedEvents.map((e) => {
                       const status = e.status || "published"; // fara camp = scris inainte de acest fix, ramane vizibil (istoric pastrat)
                       return (
                         <div key={e.id} style={s.feedAdminRow}>
@@ -3950,7 +3941,6 @@ export default function AdminScreen({ onBack }) {
                             </span>
                           </div>
                           <div style={s.feedAdminTitle}>{e.title}</div>
-                          {e.subtitle && <div style={{ ...s.feedAdminMeta, color: "#cfd6e4" }}>{e.subtitle}</div>}
                           <div style={s.feedAdminMeta}>{new Date(e.ts).toLocaleString("ro-RO")} · sursă: automat</div>
                           <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 6, flexWrap: "wrap" }}>
                             <span style={s.hint}>prioritate</span>
@@ -3972,10 +3962,6 @@ export default function AdminScreen({ onBack }) {
                       );
                     })}
                   </div>
-                </SectionCard>
-
-                <SectionCard title="🏙️ Curiozități pentru meciurile etapei (orașe, echipe)">
-                  <CuratedMatchContentPanel gameweekId={regenerateGameweekId} />
                 </SectionCard>
 
                 <SectionCard title="📰 Adaugă știre în Feed">

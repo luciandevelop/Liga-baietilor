@@ -21,6 +21,8 @@ import HigherLowerScreen from "./HigherLowerScreen";
 import BursaScreen from "./BursaScreen";
 import { BURSA_TYPE_ID } from "../services/bursaService";
 import PusculitaScreen from "./PusculitaScreen";
+import RedLightScreen from "./RedLightScreen";
+import { RED_LIGHT_TYPE_ID } from "../services/redLightEngine";
 import { PUSCULITA_TYPE_ID } from "../services/pusculitaService";
 import SabotajExperience from "../components/SabotajExperience";
 import RouletteExperience from "../components/RouletteExperience";
@@ -401,6 +403,10 @@ export default function SurprisesScreen({ user, onBack }) {
 
                   {secretMain?.type === PUSCULITA_TYPE_ID && (
                     <PusculitaScreen gameweekId={gameweek.id} uid={user.uid} />
+                  )}
+
+                  {secretMain?.type === RED_LIGHT_TYPE_ID && (
+                    <RedLightScreen gameweekId={gameweek.id} uid={user.uid} />
                   )}
 
                   {secretMain?.type === "sabotaj" && (

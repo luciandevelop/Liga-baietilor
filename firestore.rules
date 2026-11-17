@@ -304,6 +304,91 @@ service cloud.firestore {
       }
     }
 
+    // ══════════════════════════════════════════════════════════════════
+    // 🚦 LUMINĂ ROȘIE, LUMINĂ VERDE (Sezonul 3)
+    // - Configurația: CREATĂ o singură dată de Admin; nu se poate modifica
+    //   niciodată; se poate doar anula (ștergere), înainte de prima blocare.
+    // - choices/{matchId}_{uid}: existența = AVANSEZ. Doar jucătorul, doar
+    //   participant, doar înainte de blocare (30 min, ca pronosticurile),
+    //   doar cu pronostic salvat, doar dacă nu s-a oprit. Fără modificare;
+    //   ștergerea (= STAU) doar înainte de blocare. Ascunse celorlalți până
+    //   la blocarea meciului.
+    // - stops/{uid}: MĂ OPRESC — o singură dată, cu ora SERVERULUI, fără
+    //   modificare sau ștergere de către jucător.
+    // Pașii, greșelile și punctele NU se scriu niciodată de jucători.
+    // ══════════════════════════════════════════════════════════════════
+    match /redLight/{gameweekId} {
+      function rlGame() {
+        return get(/databases/$(database)/documents/redLight/$(gameweekId)).data;
+      }
+      function rlBeforeFirstLock() {
+        return !exists(/databases/$(database)/documents/redLight/$(gameweekId))
+          || request.time < rlGame().firstLockAt;
+      }
+
+      allow read: if isSignedIn();
+      allow create: if isAdmin()
+        && request.resource.data.keys().hasOnly(['gameweekId', 'published', 'publishedAt', 'participants', 'order', 'firstLockAt'])
+        && request.resource.data.gameweekId == gameweekId
+        && request.resource.data.published == true
+        && request.resource.data.publishedAt == request.time
+        && request.resource.data.participants is list
+        && request.resource.data.participants.size() >= 2
+        && request.resource.data.order is list
+        && request.resource.data.order.size() >= 1
+        && request.resource.data.order.size() <= 40
+        && request.resource.data.firstLockAt is timestamp
+        && request.time < request.resource.data.firstLockAt;
+      allow update: if false;
+      allow delete: if isAdmin() && request.time < resource.data.firstLockAt;
+
+      match /choices/{choiceId} {
+        allow read: if isAdmin() || (
+          isSignedIn() && (
+            resource.data.uid == request.auth.uid ||
+            isAfterLock(resource.data.matchId)
+          )
+        );
+        allow create: if isSignedIn()
+          && request.resource.data.keys().hasOnly(['uid', 'matchId', 'at'])
+          && request.resource.data.uid == request.auth.uid
+          && request.resource.data.matchId is string
+          && choiceId == request.resource.data.matchId + '_' + request.auth.uid
+          && request.resource.data.at == request.time
+          && rlGame().published == true
+          && request.auth.uid in rlGame().participants
+          && request.resource.data.matchId in rlGame().order
+          && isBeforeLock(request.resource.data.matchId)
+          && exists(/databases/$(database)/documents/predictions/$(request.resource.data.matchId + '_' + request.auth.uid))
+          && !exists(/databases/$(database)/documents/redLight/$(gameweekId)/stops/$(request.auth.uid));
+        allow update: if false;
+        allow delete: if (isSignedIn()
+            && resource.data.uid == request.auth.uid
+            && isBeforeLock(resource.data.matchId))
+          || (isAdmin() && rlBeforeFirstLock());
+      }
+
+      match /stops/{uid} {
+        allow read: if isSignedIn();
+        allow create: if isSignedIn()
+          && uid == request.auth.uid
+          && request.resource.data.keys().hasOnly(['uid', 'at'])
+          && request.resource.data.uid == uid
+          && request.resource.data.at == request.time
+          && rlGame().published == true
+          && request.auth.uid in rlGame().participants;
+        allow update: if false;
+        allow delete: if isAdmin() && rlBeforeFirstLock();
+      }
+
+      // Starea oficială (pași, greșeli, PCT, jurnalul pentru show) — calculată
+      // și scrisă DOAR de Admin, la validare. Citită de toți.
+      match /meta/{docId} {
+        allow read: if isSignedIn();
+        allow write: if isAdmin();
+      }
+    }
+
     match /gameweeks/{gameweekId} {
       allow read: if isSignedIn();
       allow write: if isAdmin();

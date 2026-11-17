@@ -4,6 +4,8 @@ import { listActiveUserIds, listGameweeks, getLiveGameweekPoints, isGameweekRead
 import { PUSCULITA_TYPE_ID, computePusculita } from "./pusculitaService";
 import { getPusculita, buildPusculitaInput, buildRoundSnapshot } from "./pusculitaGame";
 import { BRIDGE_TYPE_ID, finalPoints as bridgeFinalPoints } from "./bridgeLogic";
+import { RED_LIGHT_TYPE_ID } from "./redLightEngine";
+import { getRedLight, computeRedLightPrizes } from "./redLightService";
 import { teamScore } from "./scoringEngine";
 import {
   BURSA_TYPE_ID, BURSA_PUBLIC_NAME, BURSA_ENABLED, computeBursaResults, normalizePortfolio, rankingUidsFor, summarizeBursaResult,
@@ -34,6 +36,8 @@ export const MAIN_CATALOG = [
   { id: BURSA_TYPE_ID, label: BURSA_PUBLIC_NAME, active: BURSA_ENABLED },
   // 🐷 Pușculița — se configurează și se publică din panoul ei (Admin → Surprize), ÎNAINTE de Dezvăluire.
   { id: PUSCULITA_TYPE_ID, label: "🐷 Pușculița", active: true },
+  // 🚦 Lumină roșie, lumină verde — se configurează și se publică din panoul ei (Admin → Surprize), ÎNAINTE de Dezvăluire.
+  { id: RED_LIGHT_TYPE_ID, label: "🚦 Lumină roșie, lumină verde", active: true },
 ];
 
 export const BONUS_CATALOG = [
@@ -289,6 +293,11 @@ export async function revealMain(gameweekId) {
     if (preSecret.exists() && preSecret.data().type === PUSCULITA_TYPE_ID) {
       const game = await getPusculita(gameweekId);
       if (!game?.published) throw new Error("Pușculița nu e publicată: configureaz-o și apasă „Publică și blochează” înainte de Dezvăluire.");
+    }
+    // 🚦 Lumină roșie: nu se dezvăluie fără configurația publicată (participanți, ordinea meciurilor).
+    if (preSecret.exists() && preSecret.data().type === RED_LIGHT_TYPE_ID) {
+      const rl = await getRedLight(gameweekId);
+      if (!rl?.published) throw new Error("Lumină roșie nu e publicată: configureaz-o și apasă „Publică și blochează” înainte de Dezvăluire.");
     }
     if (preSecret.exists() && preSecret.data().type === BURSA_TYPE_ID) {
       const ms = await listMatches(gameweekId);
@@ -774,6 +783,13 @@ export async function resolveMain(gameweekId) {
   // tot recitește totul, idempotența nu are de suferit.
   const preSecretSnap = await getDoc(secretRef);
   const preType = preSecretSnap.exists() ? preSecretSnap.data().type : null;
+  // 🚦 Lumină roșie (FINALIZEAZĂ): premiile se calculează ÎNAINTE de tranzacție, cu motorul unic
+  // (redLightEngine), din rezultatele OFICIALE, toate alegerile și toate opririle. Dacă vreun meci din
+  // ordinea jocului nu e rezolvat (validat / amânat / anulat), Rezolvarea REFUZĂ — nu dă 0 puncte.
+  let redLightPrizes = null;
+  if (preType === RED_LIGHT_TYPE_ID) {
+    redLightPrizes = (await computeRedLightPrizes(gameweekId)).prizes;
+  }
   // Prinț sau Broscoi?: portofoliile și lista activilor se citesc ÎNAINTE de tranzacție (ca la Trivia/Zaruri).
   let bursaPicksByUid = {};
   let bursaActiveSet = null;
@@ -1018,6 +1034,11 @@ export async function resolveMain(gameweekId) {
       Object.values(res.byUid).forEach((r) => {
         const opp = r.opponentUid ? res.byUid[r.opponentUid] : null;
         toWrite.push({ uid: r.uid, points: r.total, matchScore: r.raw, opponentMatchScore: opp ? opp.raw : null, bursa: summarizeBursaResult(r) });
+      });
+    } else if (mainType === RED_LIGHT_TYPE_ID) {
+      if (!redLightPrizes) throw new Error("Lumină roșie: calculul premiilor lipsește — reîncearcă.");
+      Object.entries(redLightPrizes).forEach(([uid, points]) => {
+        toWrite.push({ uid, points, matchScore: null, opponentMatchScore: null });
       });
     } else if (mainType === PUSCULITA_TYPE_ID) {
       if (!pusculitaPrizes) throw new Error("Pușculița: calculul premiilor lipsește — reîncearcă.");

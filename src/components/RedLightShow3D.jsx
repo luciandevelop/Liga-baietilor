@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
 import { getAvatarUrl, isS3Avatar } from "../assets/avatars";
-import { RL_FINISH_STEPS, RL_MAX_STRIKES, RL_OUTCOME, RL_STATUS, computeRedLight, pointsForSteps } from "../services/redLightEngine";
+import { RL_CHOICE, RL_FINISH_STEPS, RL_MAX_STRIKES, RL_OUTCOME, RL_POINTS_TABLE, RL_STATUS, computeRedLight, pointsForSteps } from "../services/redLightEngine";
 import { loadBridgeAssets } from "../services/bridgeService";
-import { getPlayerLooks } from "../services/seasonNumbersService";
+import { getPlayerLooks, getSeasonNumbers } from "../services/seasonNumbersService";
+import { getUserPublicProfiles } from "../services/profilesService";
 import { createCharacterKit } from "./redLightCharacters";
 
 // ══════════════════════════════════════════════════════════════════
@@ -38,6 +39,9 @@ const LANE_W = 22;
 const smooth = (t) => t * t * (3 - 2 * t);
 const pad3 = (n) => (Number.isFinite(Number(n)) && n !== null && n !== "" ? String(n).padStart(3, "0") : "");
 const roleForNumber = (n) => (n === 1 ? "boss" : n >= 2 && n <= 4 ? `vip${n}` : n >= 5 && n <= 10 ? "guard" : "player");
+// culorile etichetei cu număr (aceleași roluri ca la Pod: 001 Leader, 002–004 Pretenders, 005–010 Gardieni, restul concurenți)
+const ROLE_TAG = { boss: ["#0c0c0e", "#e0bc4a"], vip2: ["#4a1f17", "#ffffff"], vip3: ["#14203f", "#e0bc4a"], vip4: ["#3a1450", "#e0bc4a"], guard: ["#b0163c", "#ffffff"], player: ["#1b6b52", "#ffffff"] };
+const ROLE_LABEL = { boss: "LEADER", vip2: "PRETENDER", vip3: "PRETENDER", vip4: "PRETENDER", guard: "GARDIAN", player: "" };
 
 // ══════════════════════════════════════════════════════════════════
 // SUNET — ambianță reală CC0 (din /bridge/sfx.json, deja în proiect) +
@@ -45,7 +49,7 @@ const roleForNumber = (n) => (n === 1 ? "boss" : n >= 2 && n <= 4 ? `vip${n}` : 
 // ══════════════════════════════════════════════════════════════════
 function createAudio(SFX, songBytes) {
   let ctx = null; let bus = null; let master = null; let on = true; let tune = null; const buf = {}; const amb = [];
-  let fx = null; let voice = null; let songBuf = null; let songSrc = null; let songDone = true; const vol = { voice: 1, fx: 1 };
+  let fx = null; let voice = null; let songBuf = null; let songSrc = null; let songDone = true; const vol = { voice: 1, fx: 1 }; let duckF = 1;
   const AC = typeof window !== "undefined" ? (window.AudioContext || window.webkitAudioContext) : null;
   function init() {
     if (ctx || !AC) return;
@@ -54,7 +58,7 @@ function createAudio(SFX, songBytes) {
     master = ctx.createGain(); master.gain.value = on ? 0.9 : 0; comp.connect(master); master.connect(ctx.destination);
     // canalul „efecte” (toate sunetele show-ului) și canalul „voce” (fișierul din slotul song.mp3), cu volume separate
     fx = ctx.createGain(); fx.gain.value = vol.fx; fx.connect(comp);
-    voice = ctx.createGain(); voice.gain.value = vol.voice; voice.connect(comp);
+    voice = ctx.createGain(); voice.gain.value = vol.voice; voice.connect(master); // cântecul NU trece prin compresor: sunetele show-ului nu-l mai pot „îneca”
     if (songBytes) { try { const p = ctx.decodeAudioData(songBytes.slice(0), (x) => { songBuf = x; }, () => {}); if (p?.then) p.then((x) => { songBuf = x; }).catch(() => {}); } catch { /* fișier audio invalid */ } }
     bus = ctx.createGain(); const dry = ctx.createGain(); const wet = ctx.createGain(); wet.gain.value = 0.3;
     const rev = ctx.createConvolver(); const len = ctx.sampleRate * 3; const b = ctx.createBuffer(2, len, ctx.sampleRate);
@@ -81,7 +85,9 @@ function createAudio(SFX, songBytes) {
     get on() { return on; },
     resume() { init(); if (ctx?.state === "suspended") ctx.resume(); },
     setOn(v) { on = v; if (master) master.gain.setTargetAtTime(v ? 0.9 : 0, now(), 0.05); },
-    setVolume(ch, v) { vol[ch] = v; const g = ch === "voice" ? voice : fx; if (g) g.gain.setTargetAtTime(v, now(), 0.05); },
+    setVolume(ch, v) { vol[ch] = v; const g = ch === "voice" ? voice : fx; if (g) g.gain.setTargetAtTime(ch === "fx" ? v * duckF : v, now(), 0.05); },
+    // cât timp cântă cântecul, efectele scad, ca vocea să rămână clară
+    duck(v) { duckF = v ? 0.35 : 1; if (fx) fx.gain.setTargetAtTime(vol.fx * duckF, now(), 0.15); },
     // Slotul audio: redă fișierul NEMODIFICAT, o singură dată; întoarce durata (secunde) sau 0 dacă lipsește.
     playSong() { if (!ctx || !songBuf) return 0; this.stopSong(); const src = ctx.createBufferSource(); src.buffer = songBuf; src.connect(voice); songDone = false; src.onended = () => { if (songSrc === src) { songDone = true; songSrc = null; } }; src.start(); songSrc = src; return songBuf.duration; },
     stopSong() { if (songSrc) { const x = songSrc; songSrc = null; try { x.stop(); } catch { /* deja oprit */ } } songDone = true; },
@@ -111,7 +117,7 @@ function createAudio(SFX, songBytes) {
     caught() { if (!ctx) return; const at = now(); noise(at, 0.15, 0.3, "highpass", 2200); const o = tone(420, at, 0.3, "square", 0.07); o.frequency.exponentialRampToValueAtTime(110, at + 0.3); },
     heartbeat() { if (!ctx) return; const at = now(); tone(55, at, 0.13, "sine", 0.4); tone(48, at + 0.24, 0.15, "sine", 0.32); },
     eliminate() { if (!ctx) return; const at = now(); noise(at, 1.6, 0.45, "lowpass", 160); const o = tone(120, at, 1.8, "sine", 0.45, 0.02); o.frequency.exponentialRampToValueAtTime(28, at + 1.8); play("WHSH_WhooshMedium_OS_01", { vol: 0.5, rate: 0.5, delay: 0.3 }); },
-    sprint() { if (!ctx) return; const at = now(); [0, 4, 7, 12, 16].forEach((s, k) => tone(659 * Math.pow(2, s / 12), at + k * 0.07, 0.4, "triangle", 0.1)); play("VOXEfrt_Male01Effort_OS_01", { vol: 0.35 }); },
+    sprint(withVoice = true) { if (!ctx) return; const at = now(); [0, 4, 7, 12, 16].forEach((s, k) => tone(659 * Math.pow(2, s / 12), at + k * 0.07, 0.4, "triangle", 0.1)); if (withVoice) play("VOXEfrt_Male01Effort_OS_01", { vol: 0.35 }); },
     finisher() { if (!ctx) return; const at = now(); [0, 4, 7, 12, 16, 19].forEach((s, k) => { tone(392 * Math.pow(2, s / 12), at + k * 0.12, 0.9, "sawtooth", 0.045); tone(392 * Math.pow(2, s / 12), at + k * 0.12, 1.1, "triangle", 0.09); }); tone(98, at, 1.6, "sine", 0.25); },
     safe() { if (!ctx) return; const at = now(); [0, 7, 12, 19].forEach((s, k) => tone(587 * Math.pow(2, s / 12), at + k * 0.1, 0.9, "sine", 0.08)); },
     reveal() { if (!ctx) return; const at = now(); tone(82, at, 0.7, "sawtooth", 0.08); noise(at, 0.4, 0.25, "lowpass", 500); },
@@ -421,6 +427,15 @@ export function createRedLightScene(container, assets, { low: forceLow, onFps } 
     h.mesh.castShadow = !LOW; scene.add(h.root);
     const blob = new T.Mesh(new T.PlaneGeometry(1.1, 1.1), new T.MeshBasicMaterial({ map: shadowTex, transparent: true, depthWrite: false, opacity: 0.8 }));
     blob.rotation.x = -Math.PI / 2; blob.position.y = 0.02; h.root.add(blob);
+    if (info.number !== null && info.number !== undefined && info.number !== "") { // numărul mare, vizibil de departe
+      const [bg, fg] = ROLE_TAG[roleForNumber(n)] || ROLE_TAG.player;
+      const c = document.createElement("canvas"); c.width = 256; c.height = 128; const g = c.getContext("2d");
+      g.fillStyle = bg; g.strokeStyle = fg; g.lineWidth = 8; g.beginPath(); g.roundRect ? g.roundRect(6, 6, 244, 116, 26) : g.rect(6, 6, 244, 116); g.fill(); g.stroke();
+      g.fillStyle = fg; g.font = "800 92px Oswald, 'Arial Narrow', Arial, sans-serif"; g.textAlign = "center"; g.textBaseline = "middle"; g.fillText(pad3(info.number), 128, 70);
+      const tt = keep(new T.CanvasTexture(c)); tt.encoding = T.sRGBEncoding;
+      const tag = new T.Sprite(new T.SpriteMaterial({ map: tt, transparent: true, depthWrite: false, toneMapped: false }));
+      tag.scale.set(0.84, 0.42, 1); tag.position.y = 2.12; tag.renderOrder = 5; h.root.add(tag);
+    }
     const p = { uid, info, h, lane, mTex, steps: state.steps, strikes: state.strikes, status: state.status, pose: "idle", poseFrom: "idle", poseT: 1, walk: Math.random() * 6, moving: false, speed: 1.4, fade: 1, flinch: 0, kneel: 0, cheer: 0, glow: 0, glowColor: new T.Color(0xff2030), ghost: false, stepAcc: 0, faceYaw: 0 };
     p.h.root.position.copy(homeOf(p)); p.target = p.h.root.position.clone();
     p.mat = p.h.mesh.material; p.mat.emissive = new T.Color(0x000000);
@@ -571,7 +586,7 @@ export function createRedLightScene(container, assets, { low: forceLow, onFps } 
     });
     // medalionul (doar personajul în prim-plan)
     const mp = medal.uid ? players.get(medal.uid) : null;
-    if (mp) { medal.grp.position.copy(mp.h.root.position).add(tmp.set(0, 2.35 - mp.kneel * 0.7, 0)); medal.grp.quaternion.copy(camera.quaternion); medal.grp.visible = mp.fade > 0.05; }
+    if (mp) { medal.grp.position.copy(mp.h.root.position).add(tmp.set(0, 2.95 - mp.kneel * 0.7, 0)); medal.grp.quaternion.copy(camera.quaternion); medal.grp.visible = mp.fade > 0.05; }
     else medal.grp.visible = false;
     updateCamera(dt);
     // păpușa
@@ -636,9 +651,19 @@ export function createRedLightScene(container, assets, { low: forceLow, onFps } 
 // MOTORUL REAL (computeRedLight) pe alegeri/rezultate aleatorii.
 // ══════════════════════════════════════════════════════════════════
 const DEMO_NAMES = ["Lu", "Ghioca", "AdiReal", "Sexu", "Mihai", "Vlad", "Cristi", "Dani", "Bogdan", "Răzvan", "Tudor", "Ionuț", "Sorin", "Andrei", "Paul", "Radu", "Alex", "Marius"];
-export function buildDemoShow(seed = 7) {
+// Citește (o singură dată, fără scrieri) numerele Sezonului 3, poreclele și aspectul (chel/păr) — ca la Pod.
+export async function loadDemoRoster() {
+  const nums = await getSeasonNumbers().catch(() => null);
+  const entries = Object.entries(nums?.numbers || {}).filter(([, n]) => Number.isFinite(n)).sort((a, b) => a[1] - b[1]).slice(0, 18);
+  if (entries.length < 4) return null;
+  const uids = entries.map(([u]) => u);
+  const [profiles, looks] = await Promise.all([getUserPublicProfiles(uids).catch(() => ({})), getPlayerLooks().catch(() => ({ bald: {} }))]);
+  return entries.map(([u, n]) => ({ nick: profiles?.[u]?.nickname || `Jucător ${pad3(n)}`, avatarId: profiles?.[u]?.avatarId || null, number: n, bald: !!looks?.bald?.[u] }));
+}
+export function buildDemoShow(seed = 7, roster = null) {
   let s = seed; const rnd = () => { s = (s * 16807) % 2147483647; return s / 2147483647; };
-  const uids = DEMO_NAMES.map((_, i) => `demo${i + 1}`);
+  const R = roster?.length ? roster : DEMO_NAMES.map((nick, i) => ({ nick, avatarId: `s3/${i + 1}`, number: i + 1, bald: i % 4 === 2 }));
+  const uids = R.map((_, i) => `demo${i + 1}`);
   const order = Array.from({ length: 20 }, (_, i) => `d${i + 1}`);
   const base = Date.now() - 40 * 3600e3;
   const matches = Object.fromEntries(order.map((id, i) => [id, { status: "finished", lockAtMs: base + i * 3600e3 }]));
@@ -656,8 +681,8 @@ export function buildDemoShow(seed = 7) {
     demo: true, fromIndex: from, toIndex: to, total: 20,
     events: res.events.filter((e) => e.index >= from && e.index < to), initialSafe: [],
     matches: order.slice(from, to).map((id, k) => { const t = TEAMS[(from + k) % TEAMS.length]; return { index: from + k, id, home: t[0], away: t[1], scoreA: Math.floor(rnd() * 4), scoreB: Math.floor(rnd() * 3), status: "finished" }; }),
-    players: Object.fromEntries(uids.map((u, i) => [u, { nick: DEMO_NAMES[i], avatarId: `s3/${i + 1}`, number: i + 1 }])),
-    looks: Object.fromEntries(uids.map((u, i) => [u, { bald: i % 4 === 2 }])),
+    players: Object.fromEntries(uids.map((u, i) => [u, { nick: R[i].nick, avatarId: R[i].avatarId, number: R[i].number }])),
+    looks: Object.fromEntries(uids.map((u, i) => [u, { bald: !!R[i].bald }])),
     corrected: false, invalid: false,
   };
 }
@@ -672,6 +697,10 @@ async function direct(api, audio, show, ui, isCancelled) {
   const card = (uid, kind, extra = {}) => { const p = api.players.get(uid); if (!p) return; say({ card: { uid, kind, steps: p.steps, strikes: p.strikes, ...extra, id: Math.random() } }); };
   const letterbox = (v) => say({ letterbox: v });
   if (!show.events[0]) return;
+  const board = {};
+  show.events[0].entries.forEach((x) => { board[x.uid] = { steps: x.stepsBefore ?? 0, strikes: x.strikesBefore ?? 0, status: x.statusBefore || RL_STATUS.ACTIVE, choice: null, outcome: null }; });
+  (show.initialSafe || []).forEach((u) => { if (board[u]) board[u].status = RL_STATUS.SAFE; });
+  const openBoard = (title, sub) => say({ board: JSON.parse(JSON.stringify(board)), boardOpen: { title, sub, id: Math.random() } });
 
   // ── Deschiderea: cadru general care coboară din tavan spre păpușă ──
   audio.ambience(true); letterbox(true);
@@ -695,14 +724,17 @@ async function direct(api, audio, show, ui, isCancelled) {
     await api.wait(1.6);
     if (ev.state === "void") { say({ caption: "AMÂNAT / ANULAT", sub: "Fără pași · fără greșeli", tone: null }); await api.wait(3); say({ caption: null, sub: null }); continue; }
     say({ counts: { adv: adv.length, stay: active.length - adv.length } });
-    await api.wait(2.0);
+    ev.entries.forEach((x) => { const b = board[x.uid]; if (!b) return; b.choice = x.statusBefore === RL_STATUS.ACTIVE ? x.choice : null; b.outcome = null; });
+    openBoard(`ALEGERILE · MECIUL ${ev.index + 1}`, "înainte de meci: cine AVANSEAZĂ și cine STĂ");
+    await api.wait(4.2); say({ boardOpen: null });
     audio.reveal(); say({ match: { no: ev.index + 1, home: m.home, away: m.away, score: [m.scoreA, m.scoreB] }, caption: `${m.scoreA ?? "-"} – ${m.scoreB ?? "-"}`, sub: "REZULTAT FINAL", tone: null });
     await api.wait(1.8); say({ caption: null, sub: null });
 
     // 2) LUMINĂ VERDE — din spatele participanților, spre păpușă (ea cântă, cu spatele)
     api.setLight("green"); api.turnHead(false, 0.8);
     const songDur = audio.playSong(); // slotul song.mp3; fără fișier → melodia V2
-    if (!songDur) audio.melody(1 + ev.index * 0.025);
+    const songEndAt = performance.now() + songDur * 1000;
+    if (songDur) audio.duck(true); else audio.melody(1 + ev.index * 0.025);
     api.shot("behind"); say({ caption: "LUMINĂ VERDE", sub: null, tone: "green" });
     const fins = ev.entries.filter((x) => x.statusBefore === RL_STATUS.ACTIVE && x.statusAfter === RL_STATUS.FINISHER);
     const movers = ev.entries.filter((x) => (x.outcome === RL_OUTCOME.CORRECT || x.outcome === RL_OUTCOME.EXACT) && x.statusAfter !== RL_STATUS.FINISHER);
@@ -712,16 +744,16 @@ async function direct(api, audio, show, ui, isCancelled) {
     if (exact.length) {
       const p = api.players.get(exact[0].uid);
       if (p) {
-        api.shot("sprint", p); audio.sprint(); p.glowColor.setHex(0xffc23a); p.glow = 1.4; api.focus(p.uid, 0xffc23a); card(p.uid, "exact", { steps: exact[0].stepsAfter });
+        api.shot("sprint", p); audio.sprint(!songDur); p.glowColor.setHex(0xffc23a); p.glow = 1.4; api.focus(p.uid, 0xffc23a); card(p.uid, "exact", { steps: exact[0].stepsAfter });
         api.burst(p.h.root.position.clone(), 0xffc23a, 70, 3, 1.6, 0.16); await api.wait(2.6); api.focus(null); say({ card: null });
       }
       exact.slice(1).forEach((x) => { const q = api.players.get(x.uid); if (q) { q.glowColor.setHex(0xffc23a); q.glow = 1.2; } });
     }
-    if (songDur) { while (!audio.songEnded && !api.skipping && !isCancelled()) await api.wait(0.1); } // păpușa se întoarce DOAR după ce s-a terminat cântecul
+    if (songDur) { while (!audio.songEnded && performance.now() < songEndAt + 250 && !api.skipping && !isCancelled()) await api.wait(0.05); } // păpușa se întoarce DOAR după ce s-a terminat cântecul (ceas real)
     else await api.wait(exact.length ? 0.8 : 3.4);
 
     // 3) LUMINĂ ROȘIE — păpușa se întoarce (contraplonjeu), ochii se aprind
-    audio.stopMelody(); audio.stopSong(); api.setLight("red"); letterbox(true);
+    audio.stopMelody(); audio.stopSong(); audio.duck(false); api.setLight("red"); letterbox(true);
     api.shot("dollTurn"); api.turnHead(true, 1.7); audio.headTurn(); audio.alarm();
     say({ caption: "LUMINĂ ROȘIE", tone: "red" });
     await api.wait(2.2); say({ caption: null });
@@ -807,8 +839,11 @@ async function direct(api, audio, show, ui, isCancelled) {
     });
     (ev.newlySafe || []).forEach((uid) => { const p = api.players.get(uid); if (p) { p.status = RL_STATUS.SAFE; p.faceYaw = 0.6; if (api.skipping) p.h.root.position.copy(api.homeOf(p)); } });
     api.setLight("idle"); api.setEyes(0); api.setScan(0); api.setGold(0); letterbox(false);
+    ev.entries.forEach((x) => { const b = board[x.uid]; if (!b) return; Object.assign(b, { steps: x.stepsAfter, strikes: x.strikesAfter, status: x.statusAfter, outcome: x.statusBefore === RL_STATUS.ACTIVE ? x.outcome : null }); });
+    (ev.newlySafe || []).forEach((u) => { if (board[u]) board[u].status = RL_STATUS.SAFE; });
     api.shot("recap"); say({ counts: null });
-    await api.wait(2.2);
+    openBoard(`HARTA DUPĂ MECIUL ${ev.index + 1}`, "pași · vieți · ce a făcut fiecare la acest meci");
+    await api.wait(5); say({ boardOpen: null });
   }
   audio.stopMelody(); api.endSkip(); letterbox(true); api.shot("poster");
 }
@@ -818,7 +853,19 @@ async function direct(api, audio, show, ui, isCancelled) {
 // ══════════════════════════════════════════════════════════════════
 // mediaBase = folderul sloturilor (în aplicație: /redlight/ → fișierele din public/redlight/)
 export default function RedLightShow3D({ show: showProp, demo = false, onClose, mediaBase = "/redlight/" }) {
-  const show = useMemo(() => (demo ? buildDemoShow() : showProp), [demo, showProp]);
+  // DEMO: jucătorii reali ai Sezonului 3 (citire unică, fără scrieri); dacă nu se pot citi → nume demo
+  const [roster, setRoster] = useState(demo ? undefined : null);
+  useEffect(() => {
+    if (!demo) return undefined;
+    let gone = false; let settled = false;
+    const fin = (r) => { if (gone || settled) return; settled = true; setRoster(r); };
+    const timer = setTimeout(() => fin(null), 6000);
+    loadDemoRoster().then(fin).catch(() => fin(null));
+    return () => { gone = true; clearTimeout(timer); };
+  }, [demo]);
+  const show = useMemo(() => (demo ? (roster === undefined ? null : buildDemoShow(7, roster)) : showProp), [demo, showProp, roster]);
+  const [mapOpen, setMapOpen] = useState(false);
+  const [howOpen, setHowOpen] = useState(false);
   const boxRef = useRef(null); const apiRef = useRef(null); const audioRef = useRef(null); const assetsRef = useRef(null);
   const [ui, setUi] = useState({});
   const [started, setStarted] = useState(false);
@@ -910,6 +957,9 @@ export default function RedLightShow3D({ show: showProp, demo = false, onClose, 
   const toggleLow = () => { const api = apiRef.current; if (!api) return; api.setLow(!api.low); setLow(api.low); };
   const P = (u) => show?.players?.[u] || {};
 
+  if (demo && roster === undefined) {
+    return <div style={sx.root}><div style={sx.center}><p style={sx.msg}>Se pregătesc jucătorii Sezonului 3…</p></div></div>;
+  }
   if (!show?.events?.length) {
     return <div style={sx.root}><div style={sx.center}><p style={sx.msg}>Nu există încă un show de redat.</p><button type="button" style={sx.btn} onClick={onClose}>Închide</button></div></div>;
   }
@@ -965,6 +1015,11 @@ export default function RedLightShow3D({ show: showProp, demo = false, onClose, 
           </div>
         )}
 
+        {started && !done && ui.board && (ui.boardOpen || mapOpen) && (
+          <MapBoard show={show} board={ui.board} title={ui.boardOpen?.title || "HARTA JOCULUI"} sub={ui.boardOpen?.sub || "pași · vieți · alegerea de la ultimul meci"} onClose={mapOpen ? () => setMapOpen(false) : null} />
+        )}
+        {howOpen && <HowTo onClose={() => setHowOpen(false)} />}
+
         {mixOpen && (
           <div style={sx.mix}>
             <label style={sx.mixRow}><span>Voce (song.mp3)</span><input id="rl-vol-voice" type="range" min="0" max="1" step="0.05" value={vols.voice} onChange={(e) => setVol("voice", Number(e.target.value))} /></label>
@@ -975,7 +1030,8 @@ export default function RedLightShow3D({ show: showProp, demo = false, onClose, 
 
         {!done && (
           <div style={sx.controls}>
-            {started && <button type="button" style={sx.ctl} onClick={skip}>⏭ SARI PESTE</button>}
+            {started && <button type="button" style={sx.ctl} onClick={skip}>⏭ SARI</button>}
+            {started && <button type="button" style={{ ...sx.ctl, ...(mapOpen ? { borderColor: "#7dffbd", color: "#7dffbd" } : {}) }} onClick={() => setMapOpen((x) => !x)}>🗺 HARTA</button>}
             <button type="button" style={sx.ctl} onClick={toggleSound}>{soundOn ? "🔊" : "🔇 MUTE"}</button>
             <button type="button" style={sx.ctl} onClick={() => setMixOpen((x) => !x)}>🎚</button>
             <button type="button" style={sx.ctl} onClick={toggleLow}>{low ? "LOW" : "HD"}{fps ? ` · ${fps}` : ""}</button>
@@ -992,11 +1048,102 @@ export default function RedLightShow3D({ show: showProp, demo = false, onClose, 
               <p style={sx.startHint}>Pentru filmare: pornește înregistrarea ecranului, apoi apasă START.</p>
               <div style={sx.slots}><div>Model 3D: {slots.doll}</div><div>Cântec: {slots.song}</div></div>
               <button type="button" style={{ ...sx.btn, opacity: ready ? 1 : 0.5 }} disabled={!ready} onClick={start}>{ready ? "▶ START" : "Se pregătește arena…"}</button>
+              <button type="button" style={sx.howBtn} onClick={() => setHowOpen(true)}>📖 Cum se joacă (ce vede jucătorul)</button>
             </div>
           </div>
         )}
 
         {done && summary && <Poster show={show} summary={summary} onClose={onClose} />}
+      </div>
+    </div>
+  );
+}
+
+// ── HARTA: toți jucătorii, după număr — alegerea la meci, pașii pe traseu, viețile, starea ──
+const OUT_ICON = { [RL_OUTCOME.EXACT]: ["⭐", "+2"], [RL_OUTCOME.CORRECT]: ["✅", "+1"], [RL_OUTCOME.WRONG]: ["❌", "−♥"], [RL_OUTCOME.STAY]: ["⚪", "stă"], [RL_OUTCOME.NO_PREDICTION]: ["⚪", "stă"], [RL_OUTCOME.IGNORED_STOP]: ["⚪", "stă"], [RL_OUTCOME.VOID]: ["⚪", "—"] };
+function MapBoard({ show, board, title, sub, onClose }) {
+  const rows = Object.entries(board).map(([uid, b]) => ({ uid, ...b, info: show.players?.[uid] || {} }))
+    .sort((a, b) => (Number(a.info.number) || 999) - (Number(b.info.number) || 999));
+  return (
+    <div style={mx.wrap} onClick={onClose || undefined}>
+      <div style={mx.panel} onClick={(e) => e.stopPropagation()}>
+        <div style={mx.head}><div><div style={mx.title}>{title}</div><div style={mx.sub}>{sub}</div></div>{onClose && <button type="button" style={mx.x} onClick={onClose}>✕</button>}</div>
+        {rows.map((r) => {
+          const role = roleForNumber(Number(r.info.number)); const [bg, fg] = ROLE_TAG[role] || ROLE_TAG.player;
+          const out = r.status === RL_STATUS.ELIMINATED && !r.outcome ? null : r.outcome ? OUT_ICON[r.outcome] : r.choice ? (r.choice === RL_CHOICE.ADVANCE ? ["🟢", "AV"] : ["⚪", "stă"]) : null;
+          const lives = RL_MAX_STRIKES - Math.min(RL_MAX_STRIKES, r.strikes || 0);
+          const st = r.status === RL_STATUS.ELIMINATED ? ["ELIMINAT", "#ff5a6a"] : r.status === RL_STATUS.FINISHER ? ["FINISH", "#ffcf4a"] : r.status === RL_STATUS.SAFE ? ["SAFE", "#5dffd2"] : [`${pointsForSteps(r.steps)} PCT`, "#c9cfdd"];
+          const dim = r.status === RL_STATUS.ELIMINATED;
+          return (
+            <div key={r.uid} style={{ ...mx.row, opacity: dim ? 0.5 : 1 }}>
+              <span style={{ ...mx.num, background: bg, color: fg, borderColor: fg }}>{pad3(r.info.number) || "—"}</span>
+              <span style={mx.nick}>{r.info.nick || "?"}</span>
+              <span style={mx.act}>{out ? <>{out[0]}<small style={mx.actS}>{out[1]}</small></> : ""}</span>
+              <span style={mx.track}>{Array.from({ length: RL_FINISH_STEPS }, (_, k) => <i key={k} style={{ ...mx.cell, background: k < r.steps ? (r.status === RL_STATUS.FINISHER ? "#ffcf4a" : k >= 6 ? "#34e3a0" : "#2a9d74") : "rgba(255,255,255,.12)", ...(k === 6 ? mx.cell7 : {}) }} />)}</span>
+              <span style={mx.steps}>{r.steps}</span>
+              <span style={mx.lives}>{Array.from({ length: RL_MAX_STRIKES }, (_, k) => <span key={k} style={{ color: k < lives ? "#ff4057" : "rgba(255,255,255,.2)" }}>♥</span>)}</span>
+              <span style={{ ...mx.st, color: st[1] }}>{st[0]}</span>
+            </div>
+          );
+        })}
+        <div style={mx.legend}>🟢 avansează · ⚪ stă · ⭐ scor exact +2 pași · ✅ 1X2 +1 pas · ❌ prins −1 viață · ♥ vieți · de la pasul 7 se iau puncte</div>
+      </div>
+    </div>
+  );
+}
+
+// ── CUM SE JOACĂ — exact ce vede și ce face jucătorul în aplicație ──
+function HowTo({ onClose }) {
+  const [i, setI] = useState(0);
+  const pts = Object.entries(RL_POINTS_TABLE);
+  const pages = [
+    { t: "1 · ALEGI LA FIECARE MECI", body: (
+      <>
+        <p style={hx.p}>În Surprize → Lumină roșie vezi toate meciurile etapei. La fiecare meci alegi:</p>
+        <div style={hx.match}><div style={hx.mTop}>5/20 · sâmbătă 19:30 · pronosticul tău <b>2-1</b></div><div style={hx.mTeams}>ARSENAL – CHELSEA</div>
+          <div style={hx.mBtns}><span style={{ ...hx.b, ...hx.bOn }}>🟢 AVANSEZ</span><span style={hx.b}>⚪ STAU</span></div></div>
+        <p style={hx.p}><b>AVANSEZ</b> = mergi pe pronosticul tău. <b>STAU</b> = nu riști nimic la meciul ăsta.</p>
+        <p style={hx.small}>Alegerea se blochează cu 30 de minute înainte de start (ca pronosticurile). Dacă nu alegi, rămâi pe loc (STAU).</p>
+      </>) },
+    { t: "2 · REZULTATUL DECIDE", body: (
+      <>
+        <div style={hx.rule}><span style={hx.ic}>⭐</span><span><b>Scor exact</b><br />+2 pași</span></div>
+        <div style={hx.rule}><span style={hx.ic}>✅</span><span><b>1X2 corect</b> (doar câștigătorul / egalul)<br />+1 pas</span></div>
+        <div style={hx.rule}><span style={hx.ic}>❌</span><span><b>Greșit</b> — te prinde păpușa<br />pierzi o viață, rămâi pe loc</span></div>
+        <div style={hx.rule}><span style={hx.ic}>⚪</span><span><b>Ai stat</b><br />nimic nu se schimbă</span></div>
+      </>) },
+    { t: "3 · 3 VIEȚI · 14 PAȘI", body: (
+      <>
+        <p style={hx.p}><span style={{ color: "#ff4057", fontSize: 20 }}>♥ ♥ ♥</span> — ai 3 vieți. <b>A 3-a greșeală te elimină</b> și pierzi tot (0 PCT).</p>
+        <p style={hx.p}>🏁 <b>14 pași = FINISHER · 200 PCT</b></p>
+        <p style={hx.small}>Puncte după pași (dacă te oprești sau se termină etapa):</p>
+        <div style={hx.pts}>{pts.map(([s, v]) => <span key={s} style={hx.pt}><b>{s}</b> pași<br />{v} PCT</span>)}</div>
+        <p style={hx.small}>Sub 7 pași = 0 PCT.</p>
+      </>) },
+    { t: "4 · MĂ OPRESC", body: (
+      <>
+        <p style={hx.p}>Oricând, poți apăsa <b>🛑 MĂ OPRESC</b>: devii <b style={{ color: "#5dffd2" }}>SAFE</b> și păstrezi punctele pașilor făcuți până atunci.</p>
+        <p style={hx.p}>Meciurile la care ai ales deja AVANSEZ și s-au blocat se mai joacă; restul nu mai contează pentru tine.</p>
+        <p style={hx.small}>Riști pentru 200 PCT sau te oprești cu ce ai? Asta e toată tensiunea jocului.</p>
+      </>) },
+    { t: "5 · SHOW-UL", body: (
+      <>
+        <p style={hx.p}>După ce meciurile sunt validate, Adminul pornește show-ul. Pentru fiecare meci vedeți:</p>
+        <p style={hx.p}>🗺 <b>Alegerile</b> — cine a avansat, cine a stat<br />🟢 <b>Lumina verde</b> — cine a nimerit pornește în față<br />🔴 <b>Lumina roșie</b> — păpușa se întoarce și îi prinde pe cei care au greșit<br />🗺 <b>Harta</b> — pașii și viețile fiecăruia după meci</p>
+        <p style={hx.small}>Butonul 🗺 HARTA din show o deschide oricând.</p>
+      </>) },
+  ];
+  const pg = pages[i];
+  return (
+    <div style={hx.wrap}>
+      <div style={hx.panel}>
+        <div style={hx.kick}>CUM SE JOACĂ · {i + 1}/{pages.length}</div>
+        <div style={hx.title}>{pg.t}</div>
+        <div style={hx.body}>{pg.body}</div>
+        <div style={hx.nav}>
+          <button type="button" style={hx.navB} onClick={() => (i ? setI(i - 1) : onClose())}>{i ? "‹ Înapoi" : "Închide"}</button>
+          <button type="button" style={{ ...hx.navB, ...hx.navP }} onClick={() => (i < pages.length - 1 ? setI(i + 1) : onClose())}>{i < pages.length - 1 ? "Următorul ›" : "Am înțeles"}</button>
+        </div>
       </div>
     </div>
   );
@@ -1055,6 +1202,46 @@ function Poster({ show, summary, onClose }) {
 }
 
 const F = "'Oswald','Arial Narrow',system-ui,sans-serif";
+const mx = {
+  wrap: { position: "absolute", inset: 0, zIndex: 6, display: "flex", alignItems: "center", justifyContent: "center", padding: "52px 8px 56px", boxSizing: "border-box", pointerEvents: "auto" },
+  panel: { width: "100%", maxHeight: "100%", overflowY: "auto", background: "rgba(8,10,14,.88)", border: "1px solid rgba(255,255,255,.14)", borderRadius: 14, padding: "10px 8px 8px", boxSizing: "border-box", backdropFilter: "blur(4px)" },
+  head: { display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 6, padding: "0 2px" },
+  title: { fontFamily: F, fontSize: 15, fontWeight: 700, letterSpacing: ".08em", color: "#fff" },
+  sub: { fontSize: 10.5, color: "#9aa3b5", marginTop: 1 },
+  x: { background: "transparent", border: "1px solid rgba(255,255,255,.3)", color: "#fff", borderRadius: 8, padding: "2px 8px", fontSize: 13 },
+  row: { display: "flex", alignItems: "center", gap: 5, height: 22, borderBottom: "1px solid rgba(255,255,255,.05)" },
+  num: { fontFamily: F, fontWeight: 700, fontSize: 12, minWidth: 34, textAlign: "center", borderRadius: 5, border: "1px solid", padding: "0 2px", lineHeight: "16px", flexShrink: 0 },
+  nick: { fontSize: 11.5, color: "#e8edf5", width: 62, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flexShrink: 0 },
+  act: { width: 34, fontSize: 12, textAlign: "center", flexShrink: 0, whiteSpace: "nowrap" },
+  actS: { fontSize: 8.5, color: "#c9cfdd", marginLeft: 1 },
+  track: { display: "flex", gap: 1.5, flex: 1, minWidth: 0 },
+  cell: { flex: 1, height: 9, borderRadius: 2, display: "block" },
+  cell7: { boxShadow: "-2px 0 0 #ffcf4a" },
+  steps: { fontFamily: F, fontSize: 12, color: "#fff", width: 16, textAlign: "right", flexShrink: 0 },
+  lives: { fontSize: 11, letterSpacing: -1, width: 30, textAlign: "center", flexShrink: 0 },
+  st: { fontSize: 9, fontWeight: 800, width: 46, textAlign: "right", flexShrink: 0, letterSpacing: ".02em" },
+  legend: { fontSize: 9.5, color: "#9aa3b5", marginTop: 6, lineHeight: 1.35, textAlign: "center" },
+};
+const hx = {
+  wrap: { position: "absolute", inset: 0, zIndex: 8, background: "rgba(0,0,0,.72)", display: "flex", alignItems: "center", justifyContent: "center", padding: 14, boxSizing: "border-box" },
+  panel: { width: "100%", maxHeight: "100%", overflowY: "auto", background: "#10141c", border: "1px solid rgba(255,255,255,.14)", borderRadius: 16, padding: 16, boxSizing: "border-box", color: "#e8edf5" },
+  kick: { fontSize: 10, letterSpacing: ".2em", color: "#ff5a6a", fontWeight: 700 },
+  title: { fontFamily: F, fontSize: 22, fontWeight: 700, margin: "4px 0 10px", color: "#fff" },
+  body: { minHeight: 250 },
+  p: { fontSize: 14, lineHeight: 1.45, margin: "0 0 10px" },
+  small: { fontSize: 12, color: "#9aa3b5", lineHeight: 1.4, margin: "0 0 8px" },
+  match: { background: "#161d2b", border: "1px solid #2a3348", borderRadius: 12, padding: 10, margin: "4px 0 12px" },
+  mTop: { fontSize: 11, color: "#9aa3b5" }, mTeams: { fontFamily: F, fontSize: 18, fontWeight: 700, margin: "4px 0 8px", color: "#fff" },
+  mBtns: { display: "flex", gap: 8 }, b: { flex: 1, textAlign: "center", padding: "8px 0", borderRadius: 10, border: "1px solid #3a4560", fontWeight: 800, fontSize: 13, color: "#c9cfdd" },
+  bOn: { background: "rgba(47,191,154,.18)", borderColor: "#2fbf9a", color: "#7dffbd" },
+  rule: { display: "flex", gap: 12, alignItems: "center", background: "#161d2b", borderRadius: 10, padding: "9px 12px", marginBottom: 8, fontSize: 14, lineHeight: 1.35 },
+  ic: { fontSize: 24, width: 30, textAlign: "center" },
+  pts: { display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 6, margin: "4px 0 8px" },
+  pt: { background: "#161d2b", borderRadius: 8, padding: "6px 2px", fontSize: 11, textAlign: "center", lineHeight: 1.3 },
+  nav: { display: "flex", gap: 10, marginTop: 12 },
+  navB: { flex: 1, padding: "11px 0", borderRadius: 12, border: "1px solid #3a4560", background: "transparent", color: "#e8edf5", fontWeight: 800, fontSize: 14 },
+  navP: { background: "#d81f3c", borderColor: "#d81f3c", color: "#fff" },
+};
 const sx = {
   root: { position: "fixed", inset: 0, zIndex: 9999, background: "#000", display: "flex", alignItems: "center", justifyContent: "center", height: "100dvh" },
   frame: { position: "relative", height: "100%", width: "min(100vw, calc(100dvh * 9 / 16))", overflow: "hidden", background: "#050607", fontFamily: "system-ui, sans-serif" },
@@ -1101,6 +1288,7 @@ const sx = {
   startTitle: { fontFamily: F, fontSize: 30, lineHeight: 1.05, fontWeight: 700, color: "#ff3a4e", letterSpacing: ".08em", marginTop: 8 },
   startSub: { fontSize: 12.5, color: "#ffd34d", fontWeight: 800, marginTop: 8 },
   startHint: { fontSize: 12, color: "#b8c0cf", margin: "10px 0 14px", lineHeight: 1.4 },
+  howBtn: { display: "block", margin: "12px auto 0", background: "transparent", border: "1px solid rgba(255,255,255,.3)", borderRadius: 10, color: "#e8edf5", fontWeight: 700, fontSize: 13, padding: "9px 14px", cursor: "pointer" },
   slots: { fontSize: 10.5, color: "#9aa3b2", margin: "0 0 12px", lineHeight: 1.5, textAlign: "left" },
   mix: { position: "absolute", left: 12, right: 12, bottom: 48, zIndex: 6, background: "rgba(8,10,14,.88)", border: "1px solid rgba(255,255,255,.18)", borderRadius: 12, padding: "8px 12px", display: "flex", flexDirection: "column", gap: 6 },
   mixRow: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, fontSize: 12, fontWeight: 700, color: "#fff" },

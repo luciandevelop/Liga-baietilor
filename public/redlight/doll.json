@@ -1,6 +1,6 @@
 {
-  "rotationY": 180,
+  "rotationY": 0,
   "height": 16,
-  "headFrontDeg": 0,
-  "headBackDeg": 180
+  "headFrontDeg": 180,
+  "headBackDeg": 0
 }

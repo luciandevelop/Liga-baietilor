@@ -523,6 +523,35 @@ export default function RulesScreen({ onBack }) {
           ]} />
         </Section>
 
+        <Section icon="🚪" title="Ascunselea (Surpriză Mică)">
+          <P><b>Trei uși. Unul se ascunde, celălalt caută. Și invers.</b></P>
+          <P>La începutul etapei, Adminul trage la sorți perechile. Perechile rămân aceleași toată săptămâna. Fiecare duel are <b>5 ture</b>, câte una pe fiecare nivel al labirintului: Holul de intrare, Scările încrucișate, Labirintul, Turnul și EXIT.</P>
+          <MiniHeading>O tură</MiniHeading>
+          <P small>Intri în labirint și atingi ușile direct în scenă: întâi <b>3 uși unde te ascunzi</b>, apoi <b>3 uși pe care le deschizi</b> când cauți. Personajul tău fuge la ușă, se ascunde sau o luminează cu lanterna. Ușile sunt ○ CERC, △ TRIUNGHI și □ PĂTRAT. Adversarul face la fel, deci în fiecare tură sunt 6 confruntări. Până confirmi, poți da „Înapoi”.</P>
+          <Table rows={[["Aceeași ușă", "PRINS! Câștigă cel care caută"], ["Uși diferite", "A SCĂPAT! Câștigă cel ascuns"], ["Cine câștigă mai multe din 6", "ia toate punctele turei"], ["3–3", "fiecare ia jumătate, rotunjit în sus"]]} />
+          <MiniHeading>Punctele</MiniHeading>
+          <Table rows={[["Tura 1 · Holul", "15p (3–3: 8 fiecare)"], ["Tura 2 · Scările", "15p (3–3: 8 fiecare)"], ["Tura 3 · Labirintul", "20p (3–3: 10 fiecare)"], ["Tura 4 · Turnul", "20p (3–3: 10 fiecare)"], ["Tura 5 · EXIT", "30p (3–3: 15 fiecare)"]]} />
+          <P small>Maximum 100p. Nu există bonus pentru câștigarea duelului, iar egalitatea finală e permisă. Fără pereche (număr impar de jucători): 50p fix.</P>
+          <MiniHeading>Termen și neprezentare</MiniHeading>
+          <P small>Tura următoare se deschide doar după ce ați confirmat amândoi tura curentă. Puteți juca toate turele odată, dacă sunteți amândoi online, sau pe rând, până la termen (de obicei duminică seara). Alegerile confirmate nu se mai pot schimba. La termen, dacă tu ai confirmat tura la care ai rămas blocat și adversarul nu, <b>toate turele rămase sunt ale tale</b>, cu toate punctele. Cine nu s-a prezentat ia 0p pe ele. Dacă nu joacă niciunul, ambii iau 0p.</P>
+          <MiniHeading>Rezultatele</MiniHeading>
+          <P small>După fiecare tură vezi animația în două reprize: întâi unul caută de 3 ori la rând (vezi cât a prins: 0, 1, 2 sau 3), apoi se schimbă rolurile și caută celălalt de 3 ori. Ordinea e doar pentru show: punctele sunt aceleași. Duelul tău e primul, iar celelalte se pot urmări din listă. Punctele devin oficiale la rezolvarea surprizei, după termen.</P>
+          <MiniHeading>Cartonașul rușinii 🖕</MiniHeading>
+          <P small>După fiecare tură jucată poți salva cartonașul turei: avatarele, scorul confruntărilor, punctele și replica comentatorului. Pe Android îl trimiți direct pe WhatsApp.</P>
+          <MiniHeading>Titlurile săptămânii (doar pentru mișto, nu dau puncte)</MiniHeading>
+          <Table rows={[["👻 FANTOMA", "a jucat toate cele 5 ture și n-a fost prins niciodată"], ["🐕 CÂINELE DE VÂNĂTOARE", "cele mai multe prinderi"], ["🤡 FRAIERUL SĂPTĂMÂNII", "prins de cele mai multe ori"]]} />
+          <P small>Se numără doar turele jucate de amândoi; turele câștigate din oficiu nu contează. La egalitate decide procentul (prinderi din căutări, respectiv prins din ascunderi), iar dacă și acesta e egal, titlul se împarte. Câinele și Fraierul cer minimum o prindere. Dacă nu se califică nimeni, titlul nu se acordă.</P>
+          <MiniHeading>Seara de proiecție 🎬</MiniHeading>
+          <P small>Adminul poate porni toate duelurile la rând, ca la TV, cu rezultatele și titlurile la final. E doar pentru vizionare: nu schimbă nimic. Duelurile neterminate apar ca „în desfășurare”, fără rezultate inventate.</P>
+          <GameFaq items={[
+            ["Văd unde s-a ascuns adversarul înainte să aleg?", "Nu. Alegerile sunt secrete până confirmați amândoi tura. Nici Adminul nu le vede în aplicație înainte."],
+            ["Pot schimba ușile după ce confirm?", "Nu. Confirmarea e definitivă."],
+            ["Pot completa toate turele dinainte?", "Nu. Fiecare tură se deschide doar după ce ați confirmat-o amândoi pe cea dinainte."],
+            ["Ce fac dacă adversarul nu intră?", "Confirmă-ți tura. La termen primești toate turele rămase."],
+            ["Există vreun truc de joc?", "Doar ghicitul și blufful. Nu contează viteza, internetul sau reflexele."],
+          ]} />
+        </Section>
+
         <div style={s.footerNote}>
           Ceva neclar? Întreabă-l pe Lu direct în grup — regulile de mai sus sunt actualizate
           cu ultima versiune a aplicației.

@@ -22,6 +22,8 @@ import BursaScreen from "./BursaScreen";
 import { BURSA_TYPE_ID } from "../services/bursaService";
 import PusculitaScreen from "./PusculitaScreen";
 import RedLightScreen from "./RedLightScreen";
+import HideSeekScreen from "./HideSeekScreen";
+import { HS_TYPE_ID } from "../services/hideSeekEngine";
 import { RED_LIGHT_TYPE_ID } from "../services/redLightEngine";
 import { PUSCULITA_TYPE_ID } from "../services/pusculitaService";
 import SabotajExperience from "../components/SabotajExperience";
@@ -485,6 +487,11 @@ export default function SurprisesScreen({ user, onBack }) {
                   {/* 🌉 Podul de Sticlă */}
                   {secretBonus?.type === BRIDGE_TYPE_ID && (
                     <BridgeScreen gameweekId={gameweek.id} uid={user.uid} />
+                  )}
+
+                  {/* 🚪 Ascunselea */}
+                  {secretBonus?.type === HS_TYPE_ID && (
+                    <HideSeekScreen gameweekId={gameweek.id} uid={user.uid} />
                   )}
 
                   {/* Comoara Blestemată — montat doar când tipul e "treasure-hunt" (încă NU e în BONUS_CATALOG). */}

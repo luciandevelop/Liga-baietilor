@@ -4,6 +4,8 @@ import { listActiveUserIds, listGameweeks, getLiveGameweekPoints, isGameweekRead
 import { PUSCULITA_TYPE_ID, computePusculita } from "./pusculitaService";
 import { getPusculita, buildPusculitaInput, buildRoundSnapshot } from "./pusculitaGame";
 import { BRIDGE_TYPE_ID, finalPoints as bridgeFinalPoints } from "./bridgeLogic";
+import { HS_TYPE_ID, HS_NAME } from "./hideSeekEngine";
+import { computeHideSeekPoints } from "./hideSeekService";
 import { RED_LIGHT_TYPE_ID } from "./redLightEngine";
 import { getRedLight, computeRedLightPrizes } from "./redLightService";
 import { teamScore } from "./scoringEngine";
@@ -47,6 +49,8 @@ export const BONUS_CATALOG = [
   { id: "treasure-hunt", label: "Comoara Blestemată", active: true },
   // 🌉 Podul de Sticlă — se PORNEȘTE din panoul lui (Admin → Surprize), înainte de Dezvăluire.
   { id: BRIDGE_TYPE_ID, label: "🌉 Podul de Sticlă", active: true },
+  // 🚪 Ascunselea — perechile se trag din panoul ei (Admin → Surprize), ÎNAINTE de Dezvăluire.
+  { id: HS_TYPE_ID, label: HS_NAME, active: true },
 ];
 
 // 16 segmente, distribuția aprobată. Ordinea de-aici NU e ordinea vizuală
@@ -478,6 +482,10 @@ export async function revealBonus(gameweekId) {
     if (pre.exists() && pre.data().type === BRIDGE_TYPE_ID) {
       const b = await getDoc(doc(db, "bridge", gameweekId));
       if (!b.exists()) throw new Error("Podul de Sticlă nu e pornit: apasă întâi „Pornește Podul” din panoul lui.");
+    }
+    if (pre.exists() && pre.data().type === HS_TYPE_ID) {
+      const g = await getDoc(doc(db, "hideSeek", gameweekId));
+      if (!g.exists()) throw new Error("Ascunselea: trage întâi perechile din panoul ei.");
     }
   }
 
@@ -1156,6 +1164,14 @@ export async function resolveBonus(gameweekId) {
     const ps = await getDocs(collection(db, "bridge", gameweekId, "players"));
     const byUid = {}; ps.docs.forEach((d) => { byUid[d.id] = d.data(); });
     resultsPerUser = activeUids.map((uid) => ({ uid, points: bridgeFinalPoints(byUid[uid]) }));
+  } else if (bonusType === HS_TYPE_ID) {
+    // 🚪 Ascunselea: punctele DIN ALEGERILE salvate (create-only, validate de reguli), calculate de același motor
+    // ca în aplicație. Doar DUPĂ termen — atunci turele nejucate se socotesc (cine a confirmat le ia).
+    const r = await computeHideSeekPoints(gameweekId);
+    if (!r.game) throw new Error("Ascunselea: perechile nu au fost trase.");
+    const endMs = r.game.endAt?.toMillis ? r.game.endAt.toMillis() : 0;
+    if (Date.now() < endMs) throw new Error(`Ascunselea: termenul nu a trecut încă (${new Date(endMs).toLocaleString("ro-RO")}).`);
+    resultsPerUser = activeUids.map((uid) => ({ uid, points: r.points[uid] ?? 0 }));
   } else if (bonusType === "treasure-hunt") {
     // Comoara Blestemată: fiecare jucător are cel mult un document de joc. Punctajul se
     // calculează DIN STAREA SALVATĂ (nu dintr-un câmp scris de client): terminat → punctele

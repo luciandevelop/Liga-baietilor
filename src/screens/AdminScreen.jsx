@@ -91,6 +91,8 @@ import { runRedLightAfterValidation } from "../services/redLightService";
 // 🚦 Show-ul 3D se încarcă DOAR când se deschide preview-ul (nu îngreunează Adminul).
 const RedLightShow3D = lazy(() => import("../components/RedLightShow3D"));
 import BridgeAdminPanel from "../components/BridgeAdminPanel";
+import HideSeekAdminPanel, { HideSeekDemoButtons } from "../components/HideSeekAdminPanel";
+import { HS_TYPE_ID } from "../services/hideSeekEngine";
 import BridgeTestLab from "../components/BridgeTestLab";
 import PusculitaTestLab from "../components/PusculitaTestLab";
 import { BRIDGE_TYPE_ID } from "../services/bridgeLogic";
@@ -3591,6 +3593,10 @@ export default function AdminScreen({ onBack }) {
                         <BridgeAdminPanel gameweekId={gw.id} />
                       )}
 
+                      {bonusType === HS_TYPE_ID && (
+                        <HideSeekAdminPanel gameweekId={gw.id} />
+                      )}
+
                       {bonusType === "mystery-box" && bonusRevealed && (
                         <div style={s.triviaBox}>
                           {data.public?.mysteryBoxAllRevealed ? (
@@ -3687,6 +3693,14 @@ export default function AdminScreen({ onBack }) {
                 <button type="button" style={s.smallBtn} onClick={() => setRedLightPreviewOpen(true)}>
                   👁 Preview LUMINĂ ROȘIE
                 </button>
+              </SectionCard>
+
+              <SectionCard title="🚪 Preview ASCUNSELEA — DEMO · ZERO SCRIERI">
+                <p style={s.hint}>
+                  Tragerea la sorți, fiecare nivel, PRINS / A SCĂPAT, 3–3, EXIT, neprezentare și finalul — cu 18 jucători fictivi.
+                  Nu citește și nu scrie Firestore. Disponibil oricând.
+                </p>
+                <HideSeekDemoButtons />
               </SectionCard>
 
               <SectionCard title="🐷 Test PUȘCULIȚA pe server — fără etapă de test">

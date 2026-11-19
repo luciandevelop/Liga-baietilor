@@ -389,6 +389,85 @@ service cloud.firestore {
       }
     }
 
+    // ═══ 🚪 ASCUNSELEA (Surpriză Mică) ═══
+    match /hideSeek/{gameweekId} {
+      function hsGame() {
+        return get(/databases/$(database)/documents/hideSeek/$(gameweekId)).data;
+      }
+      function hsKey(pair, turn, uid) {
+        return string(pair) + '_' + string(turn) + '_' + uid;
+      }
+      function hsMark(id) {
+        return exists(/databases/$(database)/documents/hideSeek/$(gameweekId)/marks/$(id));
+      }
+      function hsDoors(l) {
+        return l is list && l.size() == 3
+          && l[0] in ['O', 'T', 'S'] && l[1] in ['O', 'T', 'S'] && l[2] in ['O', 'T', 'S'];
+      }
+      function hsOppOk(pair, uid, opp) {
+        let pr = hsGame().pairs[pair];
+        return (pr.a == uid && pr.b == opp) || (pr.b == uid && pr.a == opp);
+      }
+
+      allow read: if isSignedIn();
+      allow create: if isAdmin()
+        && request.resource.data.keys().hasOnly(['gameweekId', 'pairs', 'bye', 'participants', 'endAt', 'createdAt'])
+        && request.resource.data.gameweekId == gameweekId
+        && request.resource.data.pairs is list
+        && request.resource.data.pairs.size() >= 1
+        && request.resource.data.pairs.size() <= 30
+        && request.resource.data.participants is list
+        && request.resource.data.endAt is timestamp
+        && request.time < request.resource.data.endAt
+        && request.resource.data.createdAt == request.time;
+      allow update: if false;
+      allow delete: if isAdmin();
+
+      match /picks/{pickId} {
+        allow read: if isAdmin() || (isSignedIn() && (
+          pickId.split('_')[2] == request.auth.uid
+          || (hsMark(pickId) && hsMark(hsKey(resource.data.pair, resource.data.turn, resource.data.opp)))
+        ));
+        allow create: if isSignedIn()
+          && request.resource.data.keys().hasOnly(['uid', 'opp', 'pair', 'turn', 'hide', 'seek', 'at'])
+          && request.resource.data.uid == request.auth.uid
+          && request.resource.data.pair is int
+          && request.resource.data.turn is int
+          && request.resource.data.turn >= 1
+          && request.resource.data.turn <= 5
+          && request.resource.data.pair >= 0
+          && request.resource.data.pair < hsGame().pairs.size()
+          && pickId == hsKey(request.resource.data.pair, request.resource.data.turn, request.auth.uid)
+          && hsOppOk(request.resource.data.pair, request.auth.uid, request.resource.data.opp)
+          && hsDoors(request.resource.data.hide)
+          && hsDoors(request.resource.data.seek)
+          && request.resource.data.at == request.time
+          && request.time < hsGame().endAt
+          && existsAfter(/databases/$(database)/documents/hideSeek/$(gameweekId)/marks/$(pickId))
+          && (request.resource.data.turn == 1 || (
+            hsMark(hsKey(request.resource.data.pair, request.resource.data.turn - 1, request.auth.uid))
+            && hsMark(hsKey(request.resource.data.pair, request.resource.data.turn - 1, request.resource.data.opp))
+          ));
+        allow update: if false;
+        allow delete: if isAdmin();
+      }
+
+      match /marks/{markId} {
+        allow read: if isSignedIn();
+        allow create: if isSignedIn()
+          && request.resource.data.keys().hasOnly(['uid', 'pair', 'turn', 'at'])
+          && request.resource.data.uid == request.auth.uid
+          && request.resource.data.pair is int
+          && request.resource.data.turn is int
+          && markId == hsKey(request.resource.data.pair, request.resource.data.turn, request.auth.uid)
+          && request.resource.data.at == request.time
+          && request.time < hsGame().endAt
+          && existsAfter(/databases/$(database)/documents/hideSeek/$(gameweekId)/picks/$(markId));
+        allow update: if false;
+        allow delete: if isAdmin();
+      }
+    }
+
     match /gameweeks/{gameweekId} {
       allow read: if isSignedIn();
       allow write: if isAdmin();
@@ -1365,84 +1444,6 @@ service cloud.firestore {
         allow write: if isAdmin();
       }
 
-    // ═══ 🚪 ASCUNSELEA (Surpriză Mică) ═══
-    match /hideSeek/{gameweekId} {
-      function hsGame() {
-        return get(/databases/$(database)/documents/hideSeek/$(gameweekId)).data;
-      }
-      function hsKey(pair, turn, uid) {
-        return string(pair) + '_' + string(turn) + '_' + uid;
-      }
-      function hsMark(id) {
-        return exists(/databases/$(database)/documents/hideSeek/$(gameweekId)/marks/$(id));
-      }
-      function hsDoors(l) {
-        return l is list && l.size() == 3
-          && l[0] in ['O', 'T', 'S'] && l[1] in ['O', 'T', 'S'] && l[2] in ['O', 'T', 'S'];
-      }
-      function hsOppOk(pair, uid, opp) {
-        let pr = hsGame().pairs[pair];
-        return (pr.a == uid && pr.b == opp) || (pr.b == uid && pr.a == opp);
-      }
-
-      allow read: if isSignedIn();
-      allow create: if isAdmin()
-        && request.resource.data.keys().hasOnly(['gameweekId', 'pairs', 'bye', 'participants', 'endAt', 'createdAt'])
-        && request.resource.data.gameweekId == gameweekId
-        && request.resource.data.pairs is list
-        && request.resource.data.pairs.size() >= 1
-        && request.resource.data.pairs.size() <= 30
-        && request.resource.data.participants is list
-        && request.resource.data.endAt is timestamp
-        && request.time < request.resource.data.endAt
-        && request.resource.data.createdAt == request.time;
-      allow update: if false;
-      allow delete: if isAdmin();
-
-      match /picks/{pickId} {
-        allow read: if isAdmin() || (isSignedIn() && (
-          pickId.split('_')[2] == request.auth.uid
-          || (hsMark(pickId) && hsMark(hsKey(resource.data.pair, resource.data.turn, resource.data.opp)))
-        ));
-        allow create: if isSignedIn()
-          && request.resource.data.keys().hasOnly(['uid', 'opp', 'pair', 'turn', 'hide', 'seek', 'at'])
-          && request.resource.data.uid == request.auth.uid
-          && request.resource.data.pair is int
-          && request.resource.data.turn is int
-          && request.resource.data.turn >= 1
-          && request.resource.data.turn <= 5
-          && request.resource.data.pair >= 0
-          && request.resource.data.pair < hsGame().pairs.size()
-          && pickId == hsKey(request.resource.data.pair, request.resource.data.turn, request.auth.uid)
-          && hsOppOk(request.resource.data.pair, request.auth.uid, request.resource.data.opp)
-          && hsDoors(request.resource.data.hide)
-          && hsDoors(request.resource.data.seek)
-          && request.resource.data.at == request.time
-          && request.time < hsGame().endAt
-          && existsAfter(/databases/$(database)/documents/hideSeek/$(gameweekId)/marks/$(pickId))
-          && (request.resource.data.turn == 1 || (
-            hsMark(hsKey(request.resource.data.pair, request.resource.data.turn - 1, request.auth.uid))
-            && hsMark(hsKey(request.resource.data.pair, request.resource.data.turn - 1, request.resource.data.opp))
-          ));
-        allow update: if false;
-        allow delete: if isAdmin();
-      }
-
-      match /marks/{markId} {
-        allow read: if isSignedIn();
-        allow create: if isSignedIn()
-          && request.resource.data.keys().hasOnly(['uid', 'pair', 'turn', 'at'])
-          && request.resource.data.uid == request.auth.uid
-          && request.resource.data.pair is int
-          && request.resource.data.turn is int
-          && markId == hsKey(request.resource.data.pair, request.resource.data.turn, request.auth.uid)
-          && request.resource.data.at == request.time
-          && request.time < hsGame().endAt
-          && existsAfter(/databases/$(database)/documents/hideSeek/$(gameweekId)/picks/$(markId));
-        allow update: if false;
-        allow delete: if isAdmin();
-      }
-    }  
       match /{document=**} {
         allow read, write: if false;
       }

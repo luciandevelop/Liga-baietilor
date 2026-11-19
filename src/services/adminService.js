@@ -1501,6 +1501,38 @@ async function getLivePlayerEtapaBreakdown(gameweekId, uid, isActive, knownMatch
   return { points, breakdown };
 }
 
+// ── Etichetele etapelor din ALTE sezoane (număr, titlu, sezon) — pentru
+// cardul de jucător. Etapele deja finalizate nu se mai schimbă, deci se
+// citesc O SINGURĂ DATĂ pe sesiune (cache), nu la fiecare card deschis.
+const cardGwMetaCache = new Map();
+function getGameweekMetaCached(gameweekId) {
+  if (!cardGwMetaCache.has(gameweekId)) {
+    cardGwMetaCache.set(gameweekId, getDoc(doc(db, "gameweeks", gameweekId))
+      .then((snap) => {
+        if (!snap.exists()) return null;
+        const g = snap.data();
+        return { number: g.number ?? null, title: g.title || "", seasonId: g.seasonId || null };
+      })
+      .catch((err) => {
+        cardGwMetaCache.delete(gameweekId);
+        console.error("Card: eticheta etapei nu a putut fi citită:", err);
+        return null;
+      }));
+  }
+  return cardGwMetaCache.get(gameweekId);
+}
+let cardSeasonsPromise = null;
+function getSeasonsCached() {
+  if (!cardSeasonsPromise) {
+    cardSeasonsPromise = listSeasons().catch((err) => {
+      cardSeasonsPromise = null;
+      console.error("Card: lista sezoanelor nu a putut fi citită:", err);
+      return [];
+    });
+  }
+  return cardSeasonsPromise;
+}
+
 export async function getPlayerCardStats(uid, seasonId, etapaGameweekId, knownMatches = null) {
   const [scoresSnap, seasonGameweeks, userSnap] = await Promise.all([
     getDocs(query(collection(db, "gameweekScores"), where("userId", "==", uid))),
@@ -1509,6 +1541,26 @@ export async function getPlayerCardStats(uid, seasonId, etapaGameweekId, knownMa
   ]);
 
   const allScores = scoresSnap.docs.map((d) => d.data());
+
+  // ── REPARAT: înainte, DOAR etapele sezonului curent aveau număr — cele
+  // din sezoanele vechi apăreau „ETAPA ?” și „Etapă anterioară”. Acum
+  // fiecare etapă își știe numărul și sezonul. Etapele sezonului curent
+  // vin deja din seasonGameweeks (zero citiri în plus); restul, din cache.
+  const gwMeta = {};
+  seasonGameweeks.forEach((g) => {
+    gwMeta[g.id] = { number: g.number ?? null, title: g.title || "", seasonId: g.seasonId || seasonId || null };
+  });
+  const missingGwIds = [...new Set(allScores.map((sc) => sc.gameweekId))].filter((id) => id && !gwMeta[id]);
+  const [cardSeasons, missingMetas] = await Promise.all([
+    getSeasonsCached(),
+    Promise.all(missingGwIds.map((id) => getGameweekMetaCached(id))),
+  ]);
+  missingGwIds.forEach((id, i) => { if (missingMetas[i]) gwMeta[id] = missingMetas[i]; });
+  const seasonNameById = {};
+  const seasonOrderById = {};
+  cardSeasons.forEach((sn, i) => { seasonNameById[sn.id] = sn.name || ""; seasonOrderById[sn.id] = i + 1; });
+  if (seasonId) seasonOrderById[seasonId] = 0; // sezonul curent mereu primul
+  const seasonOrderOf = (sid) => (sid && seasonOrderById[sid] != null ? seasonOrderById[sid] : 999);
   const seasonGwIds = new Set(seasonGameweeks.map((g) => g.id));
   const seasonScores = allScores.filter((s) => seasonGwIds.has(s.gameweekId));
   const seasonPoints = seasonScores.reduce((sum, s) => sum + (s.totalPoints || 0), 0);
@@ -1615,7 +1667,8 @@ export async function getPlayerCardStats(uid, seasonId, etapaGameweekId, knownMa
       .sort((a, b) => (b.computedAt?.toMillis?.() ?? 0) - (a.computedAt?.toMillis?.() ?? 0));
     if (sorted.length) {
       matchesSource = sorted[0];
-      matchesFallbackGw = seasonGameweeks.find((g) => g.id === matchesSource.gameweekId) || null;
+      matchesFallbackGw = seasonGameweeks.find((g) => g.id === matchesSource.gameweekId)
+        || (gwMeta[matchesSource.gameweekId] ? { id: matchesSource.gameweekId, ...gwMeta[matchesSource.gameweekId] } : null);
     }
   }
   const etapaMatches = matchesSource ? Object.values(matchesSource.breakdown || {}) : [];
@@ -1659,16 +1712,26 @@ export async function getPlayerCardStats(uid, seasonId, etapaGameweekId, knownMa
   // `seasonGameweeks` (deja adus). Lupul Singuratic separat DOAR pentru
   // afișare (suma componentelor rămâne identică cu totalPoints real —
   // nicio valoare nouă, doar recombinare a ce există deja în breakdown).
-  const gwNumberById = {};
-  seasonGameweeks.forEach((g) => { gwNumberById[g.id] = g.number; });
+  // Ordinea: sezonul curent primul, apoi sezoanele vechi (cel mai nou
+  // primul); în fiecare sezon, etapa cea mai nouă prima.
   const etapaHistory = allScores
     .slice()
-    .sort((a, b) => (gwNumberById[b.gameweekId] ?? 0) - (gwNumberById[a.gameweekId] ?? 0))
+    .sort((a, b) => {
+      const ma = gwMeta[a.gameweekId] || {};
+      const mb = gwMeta[b.gameweekId] || {};
+      return (seasonOrderOf(ma.seasonId) - seasonOrderOf(mb.seasonId))
+        || ((Number(mb.number) || 0) - (Number(ma.number) || 0));
+    })
     .map((sc) => {
+      const meta = gwMeta[sc.gameweekId] || {};
       const loneWolfBonus = Object.values(sc.breakdown || {}).reduce((sum, m) => sum + (m.loneWolfBonus || 0), 0);
       return {
         gameweekId: sc.gameweekId,
-        gwNumber: gwNumberById[sc.gameweekId] ?? null,
+        gwNumber: meta.number ?? null,
+        gwTitle: meta.title || "",
+        seasonId: meta.seasonId || null,
+        seasonName: (meta.seasonId && seasonNameById[meta.seasonId]) || "",
+        seasonIsCurrent: !!seasonId && meta.seasonId === seasonId,
         rank: sc.rank ?? null,
         pronosticuriPure: (sc.pointsFromMatches || 0) - loneWolfBonus,
         loneWolfBonus,
@@ -1686,7 +1749,25 @@ export async function getPlayerCardStats(uid, seasonId, etapaGameweekId, knownMa
       };
     });
 
+  // Etapa cerută, dacă e ÎNCĂ în desfășurare (nefinalizată) — afișată
+  // separat, sus, cu meciurile deja terminate (sau „niciun meci terminat
+  // încă”), ca să nu mai pară că lipsesc datele altei etape.
+  const liveEtapa = requestedGw && requestedGw.status !== "completed" && !etapaScore
+    ? {
+      gameweekId: requestedGw.id,
+      gwNumber: requestedGw.number ?? null,
+      gwTitle: requestedGw.title || "",
+      seasonId: requestedGw.seasonId || seasonId || null,
+      seasonName: seasonNameById[requestedGw.seasonId || seasonId] || "",
+      seasonIsCurrent: true,
+      points: liveEtapaPoints ?? 0,
+      // DOAR meciurile acestei etape — niciodată cele din fallback-ul istoric.
+      matches: liveEtapaPoints !== null ? etapaMatches : [],
+    }
+    : null;
+
   return {
+    liveEtapa,
     rank: null, // completat de apelant — poziția AFIȘATĂ pe față, contextuală tabului din care s-a deschis
     isTopGeneral, // determină seria "Icon" — NICIODATĂ contextual
     etapaHistory,
@@ -1733,7 +1814,7 @@ export async function getPlayerCardStats(uid, seasonId, etapaGameweekId, knownMa
     matches: etapaMatches,
     matchesSourceGameweekId: matchesSource?.gameweekId ?? etapaGameweekId ?? null,
     matchesIsFallback: Boolean(matchesFallbackGw),
-    matchesFallbackTitle: matchesFallbackGw?.title ?? null,
+    matchesFallbackTitle: matchesFallbackGw?.title ?? gwMeta[matchesSource?.gameweekId]?.title ?? null,
   };
 }
 

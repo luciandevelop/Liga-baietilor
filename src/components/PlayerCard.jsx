@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import ClubCrest from "./ClubCrest";
 import { getAvatarUrl } from "../assets/avatars";
 import { getCardSeries, getFunStats, getCollectionId } from "../utils/deterministicHash";
@@ -68,15 +68,6 @@ function getParticlesLayer(series) {
 
 export default function PlayerCard({ uid, nickname, avatarId, rank, scope = "etapa", stats, onClose }) {
   const [flipped, setFlipped] = useState(false);
-  // Când meciurile arătate sunt dintr-o etapă anterioară (fallback, nu
-  // etapa cerută), lista pornește închisă — "eventual se deschid la
-  // apăsare, dar tot trebuie să fie", nu ocupă spațiu implicit pentru o
-  // etapă care nu e cea din context.
-  const [matchesOpen, setMatchesOpen] = useState(!stats?.matchesIsFallback);
-  const [openEtapaId, setOpenEtapaId] = useState(stats?.etapaHistory?.[0]?.gameweekId ?? null);
-  // Selector „Meciuri din": "" = comportamentul de dinainte (etapa din context).
-  const [selectedMatchesGwId, setSelectedMatchesGwId] = useState("");
-  useEffect(() => { setSelectedMatchesGwId(""); }, [uid]);
 
   if (!stats) return null;
 
@@ -99,29 +90,6 @@ export default function PlayerCard({ uid, nickname, avatarId, rank, scope = "eta
   const frontPoints = scope === "sezon" ? (stats.seasonPoints ?? stats.generalPoints)
     : scope === "general" ? stats.generalPoints
     : (stats.etapaPoints ?? stats.generalPoints);
-
-  // Cel mai nou meci primul — "primul lucru pe care vor userii să-l vadă".
-  const sortNewestFirst = (list) => (list || []).slice().sort((a, b) => {
-    const at = a.kickoffAt?.toMillis ? a.kickoffAt.toMillis() : 0;
-    const bt = b.kickoffAt?.toMillis ? b.kickoffAt.toMillis() : 0;
-    return bt - at;
-  });
-
-  // Etapele anterioare cu meciuri disponibile (date deja în memorie, din
-  // gameweekScores). Se exclude etapa ale cărei meciuri sunt deja afișate implicit.
-  const pickableEtapas = (stats.etapaHistory || []).filter(
-    (eh) => (eh.matches || []).length > 0 && eh.gameweekId !== stats.matchesSourceGameweekId,
-  );
-  const selectedEtapa = selectedMatchesGwId
-    ? pickableEtapas.find((eh) => eh.gameweekId === selectedMatchesGwId) || null
-    : null;
-  const defaultEtapaEntry = (stats.etapaHistory || []).find((eh) => eh.gameweekId === stats.matchesSourceGameweekId);
-  const defaultEtapaLabel = stats.matchesIsFallback
-    ? `${stats.matchesFallbackTitle || (defaultEtapaEntry?.gwNumber != null ? `Etapa ${defaultEtapaEntry.gwNumber}` : "Ultima etapă jucată")} (implicit)`
-    : defaultEtapaEntry?.gwNumber != null
-      ? `Etapa ${defaultEtapaEntry.gwNumber}`
-      : "Etapa curentă";
-  const matches = sortNewestFirst(selectedEtapa ? selectedEtapa.matches : stats.matches);
 
   const bgGradient = `radial-gradient(140% 100% at 30% 0%, ${series.primary}33, transparent 55%), linear-gradient(165deg, ${series.bg[0]} 0%, ${series.bg[1]} 60%, ${series.bg[2]} 100%)`;
   const frameGradient = getFrameGradient(series);
@@ -309,50 +277,167 @@ export default function PlayerCard({ uid, nickname, avatarId, rank, scope = "eta
           <div style={s.flipHintOuter}>Apasă cardul {flipped ? "pentru a reveni" : "pentru statistici"}</div>
         </div>
 
-        {stats.etapaHistory && stats.etapaHistory.length > 0 && (
-          <div style={s.transparencySection}>
-            <div style={s.transparencyTitle}>📊 PUNCTAJE PE ETAPE</div>
-            {stats.etapaHistory.map((eh) => (
-              <EtapaBreakdownCard key={eh.gameweekId} eh={eh} expanded={openEtapaId === eh.gameweekId} onToggle={() => setOpenEtapaId((v) => (v === eh.gameweekId ? null : eh.gameweekId))} />
-            ))}
-          </div>
-        )}
-
-        <div style={s.list}>
-          {pickableEtapas.length > 0 && (
-            <div style={s.matchesPickerRow}>
-              <span style={s.matchesPickerLabel}>Meciuri din</span>
-              <select
-                style={s.matchesPicker}
-                value={selectedEtapa ? selectedEtapa.gameweekId : ""}
-                onChange={(e) => setSelectedMatchesGwId(e.target.value)}
-              >
-                <option value="">{defaultEtapaLabel}</option>
-                {pickableEtapas.map((eh) => (
-                  <option key={eh.gameweekId} value={eh.gameweekId}>
-                    {eh.gwNumber != null ? `Etapa ${eh.gwNumber}` : "Etapă anterioară"}
-                  </option>
-                ))}
-              </select>
-            </div>
-          )}
-
-          {matches.length === 0 && (
-            <div style={s.emptyMatches}>Nu există încă niciun meci finalizat pentru acest jucător.</div>
-          )}
-
-          {matches.length > 0 && stats.matchesIsFallback && !selectedEtapa && (
-            <button type="button" style={s.matchesFallbackHeader} onClick={() => setMatchesOpen((v) => !v)}>
-              <span>Meciuri din {stats.matchesFallbackTitle || "ultima etapă jucată"} · etapa curentă nu are date pentru acest jucător</span>
-              <span style={{ transform: matchesOpen ? "rotate(180deg)" : "rotate(0deg)", transition: "transform 200ms ease" }}>▾</span>
-            </button>
-          )}
-
-          {matches.length > 0 && (matchesOpen || !!selectedEtapa) && matches.map((m) => (
-            <MatchBreakdownRow key={m.matchId} m={m} />
-          ))}
-        </div>
+        <EtapeSection key={uid} stats={stats} nickname={nickname} />
       </div>
+    </div>
+  );
+}
+
+// ══════════════════════════════════════════════════════════════════
+// 📊 ETAPELE JUCĂTORULUI — O SINGURĂ listă, grupată pe sezoane (înainte
+// erau două liste separate + un selector cu „Etapă anterioară” repetat,
+// imposibil de deosebit). Fiecare etapă se deschide la apăsare și arată
+// ÎMPREUNĂ: punctajul pe surse + ce a pus jucătorul la fiecare meci.
+// Implicit e deschisă etapa în curs (dacă are meciuri terminate) sau
+// ultima etapă jucată — niciodată o listă închisă care pare goală.
+// Doar afișare: nu recalculează și nu scrie nimic.
+// ══════════════════════════════════════════════════════════════════
+const plural = (n, one, many) => `${n} ${n === 1 ? one : (n === 0 || n % 100 < 20) ? many : `de ${many}`}`;
+const sortNewestFirst = (list) => (list || []).slice().sort((a, b) => {
+  const at = a.kickoffAt?.toMillis ? a.kickoffAt.toMillis() : 0;
+  const bt = b.kickoffAt?.toMillis ? b.kickoffAt.toMillis() : 0;
+  return bt - at;
+});
+const etapaName = (e) => (e.gwNumber != null ? `ETAPA ${e.gwNumber}` : (e.gwTitle || "ETAPĂ FĂRĂ NUMĂR").toUpperCase());
+const groupKey = (e) => e.seasonId || "_";
+
+function buildSeasonGroups(stats) {
+  const groups = [];
+  const byKey = {};
+  const add = (e) => {
+    const k = groupKey(e);
+    if (!byKey[k]) {
+      byKey[k] = { key: k, name: e.seasonName, isCurrent: !!e.seasonIsCurrent, items: [] };
+      groups.push(byKey[k]);
+    }
+    byKey[k].items.push(e);
+  };
+  if (stats?.liveEtapa) add({ ...stats.liveEtapa, isLive: true, totalPoints: stats.liveEtapa.points || 0 });
+  (stats?.etapaHistory || []).forEach(add);
+  groups.forEach((g) => {
+    const done = g.items.filter((e) => !e.isLive);
+    g.doneCount = done.length;
+    g.total = done.reduce((sum, e) => sum + (e.totalPoints || 0), 0);
+    g.hasLive = g.items.some((e) => e.isLive);
+    g.label = g.name || (g.isCurrent ? "Sezonul curent" : g.key === "_" ? "Alte etape" : "Sezon anterior");
+  });
+  return groups;
+}
+
+function defaultOpenEtapaId(stats) {
+  if (!stats) return null;
+  const live = stats.liveEtapa;
+  if (live && (live.matches || []).length > 0) return live.gameweekId;
+  const hist = stats.etapaHistory || [];
+  if (stats.etapaGameweekId && hist.some((eh) => eh.gameweekId === stats.etapaGameweekId)) return stats.etapaGameweekId;
+  return hist[0]?.gameweekId ?? (live ? live.gameweekId : null);
+}
+
+function EtapeSection({ stats, nickname }) {
+  const groups = buildSeasonGroups(stats);
+  const [openEtapaId, setOpenEtapaId] = useState(() => defaultOpenEtapaId(stats));
+  const [openSeasons, setOpenSeasons] = useState(() => {
+    const open = new Set();
+    const first = groups[0];
+    if (first) open.add(first.key);
+    const def = defaultOpenEtapaId(stats);
+    const owner = groups.find((g) => g.items.some((e) => e.gameweekId === def));
+    if (owner) open.add(owner.key);
+    return open;
+  });
+
+  if (groups.length === 0) {
+    return (
+      <div style={s.transparencySection}>
+        <div style={s.transparencyTitle}>📊 ETAPELE JUCĂTORULUI</div>
+        <div style={s.emptyMatches}>Nu există încă nicio etapă jucată pentru acest jucător.</div>
+      </div>
+    );
+  }
+
+  const toggleSeason = (k) => setOpenSeasons((prev) => {
+    const next = new Set(prev);
+    if (next.has(k)) next.delete(k); else next.add(k);
+    return next;
+  });
+
+  return (
+    <div style={s.transparencySection}>
+      <div style={s.transparencyTitle}>📊 ETAPELE LUI {(nickname || "").toUpperCase()}</div>
+      <div style={s.transparencyHint}>Apasă o etapă: vezi punctajul și ce a pus la fiecare meci.</div>
+      {groups.map((g) => {
+        const open = openSeasons.has(g.key);
+        return (
+          <div key={g.key} style={s.seasonBlock}>
+            <button type="button" style={{ ...s.seasonHeader, ...(g.isCurrent ? s.seasonHeaderCurrent : {}) }} onClick={() => toggleSeason(g.key)}>
+              <span style={s.seasonName}>
+                {g.label.toUpperCase()}
+                {g.isCurrent && <span style={s.seasonChip}>CURENT</span>}
+              </span>
+              <span style={s.seasonMeta}>
+                {plural(g.doneCount, "etapă", "etape")}{g.doneCount > 0 ? ` · ${g.total >= 0 ? "+" : ""}${g.total}p` : ""}
+              </span>
+              <span style={{ ...s.etapaCardChevron, transform: open ? "rotate(180deg)" : "rotate(0deg)" }}>▾</span>
+            </button>
+            {open && (
+              <div style={s.seasonBody}>
+                {g.items.map((e) => (
+                  <EtapaCard
+                    key={e.gameweekId}
+                    e={e}
+                    expanded={openEtapaId === e.gameweekId}
+                    onToggle={() => setOpenEtapaId((v) => (v === e.gameweekId ? null : e.gameweekId))}
+                  />
+                ))}
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function EtapaCard({ e, expanded, onToggle }) {
+  const matches = sortNewestFirst(e.matches);
+  const sub = e.isLive
+    ? (matches.length ? `în curs · ${plural(matches.length, "meci terminat", "meciuri terminate")}` : "în curs · niciun meci terminat încă")
+    : `${plural(matches.length, "meci", "meciuri")}${e.rank ? ` · locul ${e.rank}` : ""}`;
+  const pts = e.totalPoints || 0;
+  return (
+    <div style={{ ...s.etapaCard, ...(expanded ? s.etapaCardOpen : {}), ...(e.isLive ? s.etapaCardLive : {}) }}>
+      <button type="button" style={s.etapaCardHeader} onClick={onToggle}>
+        <span style={s.etapaCardTitleCol}>
+          <span style={s.etapaCardTitle}>
+            {etapaName(e)}
+            {e.isLive && <span style={s.liveChip}><span style={s.liveDot} />LIVE</span>}
+          </span>
+          <span style={s.etapaCardSub}>{sub}</span>
+        </span>
+        <span style={s.etapaCardTotal}>{pts >= 0 ? "+" : ""}{pts}p</span>
+        <span style={{ ...s.etapaCardChevron, transform: expanded ? "rotate(180deg)" : "rotate(0deg)" }}>▾</span>
+      </button>
+      {expanded && (
+        <div style={s.etapaCardBody}>
+          {e.isLive ? (
+            <div style={s.liveNoteBox}>
+              {matches.length
+                ? "Punctaj provizoriu — se actualizează după fiecare meci terminat. Bonusurile și surprizele se adaugă la finalul etapei."
+                : "Niciun meci terminat încă. Ce a pus apare aici după fiecare meci terminat."}
+            </div>
+          ) : (
+            <EtapaPointsBreakdown eh={e} />
+          )}
+          {matches.length > 0 && (
+            <>
+              <div style={s.matchesHead}>⚽ CE A PUS · {plural(matches.length, "meci", "meciuri")}</div>
+              <div style={s.list}>
+                {matches.map((m) => <MatchBreakdownRow key={m.matchId} m={m} />)}
+              </div>
+            </>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -397,18 +482,11 @@ function fmtSideVal(v) {
 // (fiecare componentă + TOTAL, verificabil prin adunare). Reutilizează
 // EXACT valorile deja persistate în gameweekScores — nu recalculează
 // nimic, doar le grupează pentru afișare. ──
-function EtapaBreakdownCard({ eh, expanded, onToggle }) {
+function EtapaPointsBreakdown({ eh }) {
   const mainLabel = getSurpriseTypeLabel(eh.mainSurpriseType, "main", eh.gameweekId);
   const bonusLabel = getSurpriseTypeLabel(eh.bonusSurpriseType, "bonus", eh.gameweekId);
   return (
-    <div style={s.etapaCard}>
-      <button type="button" style={s.etapaCardHeader} onClick={onToggle}>
-        <span style={s.etapaCardTitle}>ETAPA {eh.gwNumber ?? "?"}</span>
-        <span style={s.etapaCardTotal}>{eh.totalPoints >= 0 ? "+" : ""}{eh.totalPoints}p</span>
-        <span style={{ ...s.etapaCardChevron, transform: expanded ? "rotate(180deg)" : "rotate(0deg)" }}>▾</span>
-      </button>
-      {expanded && (
-        <div style={s.etapaCardBody}>
+        <div style={s.pointsBox}>
           <div style={s.summaryRow}>
             <span>⚽ Pronosticuri</span>
             <span style={s.summaryVal}>+{eh.pronosticuriPure}p</span>
@@ -449,8 +527,6 @@ function EtapaBreakdownCard({ eh, expanded, onToggle }) {
             <span style={s.summaryTotalVal}>{eh.totalPoints >= 0 ? "+" : ""}{eh.totalPoints}p</span>
           </div>
         </div>
-      )}
-    </div>
   );
 }
 
@@ -673,23 +749,64 @@ const s = {
   summaryTotalVal: { fontWeight: 800 },
   // ── 📊 Secțiunea de transparență — foarte vizibilă, imediat sub card,
   // înainte de lista de meciuri. Nu necesită flip. ──
-  transparencySection: { padding: "0 16px 14px" },
+  transparencySection: { padding: "0 2px 14px" },
   transparencyTitle: {
-    fontSize: 12, fontWeight: 800, letterSpacing: "0.04em", color: color.textPrimary,
-    marginBottom: 8, fontFamily: font.display,
+    fontSize: 13, fontWeight: 800, letterSpacing: "0.04em", color: color.textPrimary,
+    marginBottom: 3, fontFamily: font.display,
   },
+  transparencyHint: { fontSize: 11, color: color.textMuted, marginBottom: 10, fontFamily: font.body },
+  // ── Sezon (grup) ──
+  seasonBlock: { marginBottom: 10 },
+  seasonHeader: {
+    width: "100%", display: "flex", alignItems: "center", gap: 8, cursor: "pointer", textAlign: "left",
+    padding: "11px 12px", borderRadius: 10, background: color.surfaceElevated,
+    border: `1px solid ${color.border}`, borderLeft: `3px solid ${color.textFaint}`,
+  },
+  seasonHeaderCurrent: { borderLeft: `3px solid ${color.gold}`, background: "linear-gradient(90deg, rgba(201,162,39,0.10), rgba(22,29,51,1) 60%)" },
+  seasonName: {
+    flex: 1, display: "flex", alignItems: "center", gap: 7, fontSize: 12.5, fontWeight: 800,
+    letterSpacing: "0.05em", color: color.textPrimary, fontFamily: font.display,
+  },
+  seasonChip: {
+    fontSize: 8.5, fontWeight: 800, letterSpacing: "0.08em", color: color.goldOn, background: color.goldGradient,
+    borderRadius: 999, padding: "2px 7px", fontFamily: font.body,
+  },
+  seasonMeta: { fontSize: 11, fontWeight: 700, color: color.textMuted, fontFamily: font.body, whiteSpace: "nowrap" },
+  seasonBody: { padding: "6px 0 0 10px", borderLeft: `1px dashed ${color.border}`, marginLeft: 8, marginTop: 6 },
+  // ── Etapă ──
   etapaCard: {
     background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.1)",
     borderRadius: 10, marginBottom: 6, overflow: "hidden",
   },
+  etapaCardOpen: { border: "1px solid rgba(201,162,39,0.45)", background: "rgba(201,162,39,0.05)" },
+  etapaCardLive: { border: `1px solid ${color.liveBorder}`, background: color.liveBg },
   etapaCardHeader: {
     width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8,
     padding: "10px 12px", background: "transparent", border: "none", cursor: "pointer", textAlign: "left",
   },
-  etapaCardTitle: { fontSize: 11, fontWeight: 800, color: color.textPrimary, fontFamily: font.display, flex: 1 },
-  etapaCardTotal: { fontSize: 13, fontWeight: 800, color: color.gold || "#D4AF37", fontFamily: font.display },
-  etapaCardChevron: { fontSize: 12, color: "rgba(255,255,255,0.5)", transition: "transform 200ms ease" },
-  etapaCardBody: { padding: "0 12px 10px" },
+  etapaCardTitleCol: { flex: 1, display: "flex", flexDirection: "column", gap: 2, minWidth: 0 },
+  etapaCardTitle: { display: "flex", alignItems: "center", gap: 7, fontSize: 13, fontWeight: 800, color: color.textPrimary, fontFamily: font.display, letterSpacing: "0.03em" },
+  etapaCardSub: { fontSize: 10.5, color: color.textMuted, fontFamily: font.body, fontWeight: 600 },
+  etapaCardTotal: { fontSize: 15, fontWeight: 800, color: color.goldLight, fontFamily: font.display, flexShrink: 0 },
+  etapaCardChevron: { fontSize: 12, color: "rgba(255,255,255,0.5)", transition: "transform 200ms ease", flexShrink: 0 },
+  etapaCardBody: { padding: "0 10px 10px" },
+  liveChip: {
+    display: "inline-flex", alignItems: "center", gap: 4, fontSize: 8.5, fontWeight: 800, letterSpacing: "0.08em",
+    color: color.live, background: "rgba(181,69,61,0.18)", border: `1px solid ${color.liveBorder}`,
+    borderRadius: 999, padding: "1px 6px", fontFamily: font.body,
+  },
+  liveDot: { width: 5, height: 5, borderRadius: "50%", background: color.live, boxShadow: `0 0 6px ${color.live}` },
+  liveNoteBox: {
+    fontSize: 11, lineHeight: 1.45, color: color.textSecondary, background: "rgba(0,0,0,0.25)",
+    border: `1px solid ${color.borderSubtle}`, borderRadius: 8, padding: "9px 10px", fontFamily: font.body,
+  },
+  pointsBox: {
+    background: "rgba(0,0,0,0.22)", border: `1px solid ${color.borderSubtle}`, borderRadius: 8, padding: "8px 10px",
+  },
+  matchesHead: {
+    fontSize: 10.5, fontWeight: 800, letterSpacing: "0.06em", color: color.goldLight,
+    margin: "12px 0 8px", fontFamily: font.body,
+  },
   realStatsList: { padding: "0 16px", display: "flex", flexDirection: "column", gap: 2 },
   statRow: {
     display: "flex", justifyContent: "space-between", alignItems: "center",
@@ -719,18 +836,6 @@ const s = {
   emptyMatches: {
     textAlign: "center", fontSize: 11.5, color: color.textFaint, padding: "16px 10px",
     background: color.surface, border: `1px solid ${color.borderSubtle}`, borderRadius: radius.sm,
-  },
-  matchesPickerRow: { display: "flex", alignItems: "center", gap: 10, marginBottom: 2 },
-  matchesPickerLabel: { fontSize: 10.5, fontWeight: 700, letterSpacing: 0.6, color: color.textFaint, fontFamily: font.body, textTransform: "uppercase" },
-  matchesPicker: {
-    flex: 1, background: "rgba(18,20,28,0.9)", color: color.textPrimary, fontFamily: font.body, fontSize: 13, fontWeight: 700,
-    border: "1px solid rgba(212,175,55,0.45)", borderRadius: radius.sm, padding: "9px 10px", cursor: "pointer",
-  },
-  matchesFallbackHeader: {
-    display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, width: "100%",
-    background: "rgba(212,175,55,0.08)", border: "1px solid rgba(212,175,55,0.25)", borderRadius: radius.sm,
-    padding: "9px 12px", cursor: "pointer", fontSize: 10.5, fontWeight: 600, color: color.textSecondary,
-    fontFamily: font.body, textAlign: "left",
   },
   compactRow: {
     display: "flex", alignItems: "center", gap: 8, background: color.surface,

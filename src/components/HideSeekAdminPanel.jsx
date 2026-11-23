@@ -2,7 +2,7 @@ import { Suspense, lazy, useEffect, useState } from "react";
 import { color } from "../theme";
 import { getUserPublicProfiles } from "../services/profilesService";
 import { getSeasonNumbers, getPlayerLooks } from "../services/seasonNumbersService";
-import { cancelHideSeek, computeHideSeekPoints, getHideSeek, hasMark, listenMarks, startHideSeek } from "../services/hideSeekService";
+import { cancelHideSeek, computeHideSeekPoints, extendHideSeek, getHideSeek, getHideSeekBackup, hasMark, listenMarks, restoreHideSeek, startHideSeek } from "../services/hideSeekService";
 import { HS_BYE_POINTS, HS_TURNS } from "../services/hideSeekEngine";
 import { demoCard, demoCinema, demoDraw, demoDuel, demoPlayers } from "../hideseek/hsDemo";
 
@@ -42,8 +42,17 @@ export function HideSeekDemoButtons() {
 function nextSundayEnd() {
   const d = new Date(); const add = (7 - d.getDay()) % 7; d.setDate(d.getDate() + add); d.setHours(23, 59, 0, 0);
   if (d.getTime() < Date.now()) d.setDate(d.getDate() + 7);
+  return toLocalInput(d);
+}
+function toLocalInput(d) {
   const p = (n) => String(n).padStart(2, "0");
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+// ⏱ Prelungire: „+X ore” se adaugă la termenul actual dacă n-a trecut, altfel la ora de acum.
+function plusHours(baseMs, h) {
+  const d = new Date(Math.max(Date.now(), Number.isFinite(baseMs) ? baseMs : 0) + h * 3600000);
+  d.setSeconds(0, 0);
+  return d;
 }
 
 export default function HideSeekAdminPanel({ gameweekId }) {
@@ -57,6 +66,7 @@ export default function HideSeekAdminPanel({ gameweekId }) {
   const [preview, setPreview] = useState(null);
   const [replay, setReplay] = useState(false);
   const [cinema, setCinema] = useState(null);
+  const [extendTo, setExtendTo] = useState(() => toLocalInput(plusHours(NaN, 6)));
 
   const endMs = game?.endAt?.toMillis ? game.endAt.toMillis() : NaN;
   const load = () => getHideSeek(gameweekId).then(setGame).catch(() => setGame(null));
@@ -85,6 +95,27 @@ export default function HideSeekAdminPanel({ gameweekId }) {
     try { await cancelHideSeek(gameweekId); setGame(null); setMarks({}); setMsg("Tragerea a fost anulată."); } catch (e) { setMsg(`Eroare: ${e.message || e.code}`); }
     setBusy(false);
   }
+  // ⏱ Prelungire termen: aceleași perechi, aceleași alegeri — doar termen nou.
+  async function extend(target) {
+    const d = target instanceof Date ? target : new Date(target);
+    if (!(d.getTime() >= Date.now() + 10 * 60 * 1000)) { setMsg("Noul termen trebuie să fie la cel puțin 10 minute de acum."); return; }
+    if (Number.isFinite(endMs) && d.getTime() <= endMs) { setMsg("Noul termen trebuie să fie după cel actual."); return; }
+    if (!window.confirm(`Prelungești Ascunselea?\n\nTermen nou: ${d.toLocaleString("ro-RO")}\n\nPerechile și alegerile deja confirmate rămân neschimbate. Duelurile blocate continuă de unde au rămas.`)) return;
+    setBusy(true); setMsg("");
+    try { await extendHideSeek(gameweekId, d); setPreview(null); setMsg(`✅ Termen nou: ${d.toLocaleString("ro-RO")}. Spune-le jucătorilor să închidă și să redeschidă aplicația.`); }
+    catch (e) { setMsg(`Eroare: ${e.message || e.code}`); }
+    await load();
+    setBusy(false);
+  }
+  async function restore() {
+    const d = new Date(extendTo);
+    if (!window.confirm(`Restaurezi Ascunselea cu ACELEAȘI perechi?\n\nTermen: ${d.toLocaleString("ro-RO")}`)) return;
+    setBusy(true); setMsg("");
+    try { await restoreHideSeek(gameweekId, d); setMsg(`✅ Restaurat. Termen: ${d.toLocaleString("ro-RO")}.`); }
+    catch (e) { setMsg(`Eroare: ${e.message || e.code}`); }
+    await load();
+    setBusy(false);
+  }
   // 🎬 Seara de proiecție: doar citire (Admin vede toate alegerile). Nu scrie nimic.
   async function openCinema() {
     setBusy(true); setMsg("");
@@ -103,7 +134,14 @@ export default function HideSeekAdminPanel({ gameweekId }) {
   return (
     <div style={s.box}>
       <div style={s.title}>🚪 Ascunselea</div>
-      {game === undefined ? <p style={s.hint}>Se încarcă…</p> : !game ? (
+      {game === undefined ? <p style={s.hint}>Se încarcă…</p> : !game && getHideSeekBackup(gameweekId) ? (
+        <>
+          <p style={{ ...s.hint, color: "#ffb4c6" }}>⚠️ Prelungirea termenului s-a întrerupt (probabil conexiunea). Perechile sunt salvate în acest telefon — NU trage perechi noi. Restaurează-le cu termenul de mai jos; alegerile jucătorilor sunt neatinse.</p>
+          <label style={s.lbl}>Termen (ora României)</label>
+          <input type="datetime-local" value={extendTo} onChange={(e) => setExtendTo(e.target.value)} style={s.input} />
+          <button type="button" style={s.btnGold} disabled={busy} onClick={restore}>♻️ Restaurează Ascunselea ({getHideSeekBackup(gameweekId).pairs.length} perechi, aceleași)</button>
+        </>
+      ) : !game ? (
         <>
           <p style={s.hint}>Pasul 1: trage perechile (o singură dată, cu toți jucătorii activi). Pasul 2: Dezvăluie surpriza. „Rezolvă” merge doar după termen.</p>
           <label style={s.lbl}>Termen final (ora României)</label>
@@ -113,6 +151,19 @@ export default function HideSeekAdminPanel({ gameweekId }) {
       ) : (
         <>
           <p style={s.hint}>Termen: <b>{Number.isFinite(endMs) ? new Date(endMs).toLocaleString("ro-RO") : "—"}</b>{Number.isFinite(endMs) && Date.now() >= endMs ? " · ⏱ a trecut (poți Rezolva)" : ""}</p>
+          <div style={s.ext}>
+            <div style={s.extT}>⏱ PRELUNGEȘTE TERMENUL</div>
+            <div style={s.row}>
+              {[3, 5, 6, 7].map((h) => (
+                <button key={h} type="button" style={s.btnExt} disabled={busy} onClick={() => extend(plusHours(endMs, h))}>+{h} ore</button>
+              ))}
+            </div>
+            <div style={{ ...s.row, alignItems: "center", flexWrap: "nowrap" }}>
+              <input type="datetime-local" value={extendTo} onChange={(e) => setExtendTo(e.target.value)} style={{ ...s.input, flex: 1, minWidth: 0 }} />
+              <button type="button" style={{ ...s.btnExt, whiteSpace: "nowrap" }} disabled={busy} onClick={() => extend(extendTo)}>Prelungește</button>
+            </div>
+            <p style={s.hint}>„+X ore” se adaugă la termenul actual (sau la ora de acum, dacă a trecut). Perechile și alegerile deja confirmate rămân; duelurile blocate continuă de unde au rămas. Nu apăsa „Rezolvă” înainte de noul termen.</p>
+          </div>
           <div style={s.table}>
             {game.pairs.map((p, i) => (
               <div key={i} style={s.pr}>
@@ -159,6 +210,9 @@ const s = {
   btnGold: { width: "100%", marginTop: 10, background: "linear-gradient(180deg,#f5c451,#c99a2e)", color: "#1a1408", border: "none", borderRadius: 10, padding: "11px", fontSize: 14, fontWeight: 900 },
   btn: { background: "rgba(255,255,255,.06)", color: "#fff", border: `1px solid ${color.border}`, borderRadius: 8, padding: "8px 10px", fontSize: 12.5, fontWeight: 800 },
   row: { display: "flex", gap: 6, flexWrap: "wrap", marginTop: 6 },
+  ext: { background: "rgba(245,196,81,.07)", border: "1px solid rgba(245,196,81,.45)", borderRadius: 10, padding: "8px 10px", marginTop: 6 },
+  extT: { fontSize: 12.5, fontWeight: 900, color: "#f5c451", letterSpacing: ".04em" },
+  btnExt: { background: "linear-gradient(180deg,#f5c451,#c99a2e)", color: "#1a1408", border: "none", borderRadius: 8, padding: "8px 12px", fontSize: 13, fontWeight: 900 },
   table: { background: "rgba(0,0,0,.2)", borderRadius: 8, padding: "4px 8px", marginTop: 6 },
   pr: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 6, padding: "5px 0", borderTop: `1px solid ${color.border}`, fontSize: 12.5, color: "#e8edf5" },
   pn: { flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },

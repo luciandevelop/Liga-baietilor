@@ -46,6 +46,76 @@ export async function cancelHideSeek(gw) {
   await deleteDoc(gameRef(gw));
 }
 
+// ── ⏱ Admin: PRELUNGIRE TERMEN ──────────────────────────────────────
+// Regulile NU permit modificarea documentului hideSeek/{gw} (nici Adminului: „update: false”), dar îi permit
+// Adminului să-l șteargă și să-l creeze. Așa că îl RESCRIEM identic — aceleași perechi, același bye, aceiași
+// participanți — doar cu termenul nou. Alegerile și marcajele (subcolecțiile picks / marks) NU se ating:
+// Firestore nu șterge subcolecțiile odată cu documentul. Duelurile continuă exact de unde au rămas.
+// Siguranță: copia perechilor stă în telefon (localStorage) până la recreare; dacă ceva pică între ștergere
+// și creare, panoul arată „Restaurează” (cu ACELEAȘI perechi), nu o tragere nouă.
+const backupKey = (gw) => `hs_backup_${gw}`;
+export function getHideSeekBackup(gw) {
+  try {
+    const raw = localStorage.getItem(backupKey(gw)); const b = raw ? JSON.parse(raw) : null;
+    return b && Array.isArray(b.pairs) && b.pairs.length && Array.isArray(b.participants) ? b : null;
+  } catch { return null; }
+}
+function saveBackup(gw, b) { try { localStorage.setItem(backupKey(gw), JSON.stringify(b)); } catch { /* fără stocare */ } }
+function clearBackup(gw) { try { localStorage.removeItem(backupKey(gw)); } catch { /* fără stocare */ } }
+const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+
+function checkNewEnd(newEnd) {
+  const end = newEnd instanceof Date ? newEnd : new Date(newEnd);
+  if (Number.isNaN(end.getTime())) throw new Error("Data noului termen nu e validă.");
+  if (end.getTime() < Date.now() + 10 * 60 * 1000) throw new Error("Noul termen trebuie să fie la cel puțin 10 minute de acum.");
+  return end;
+}
+// Creează documentul cu perechile DATE (fără tragere nouă). Dacă există deja, nu schimbă nimic.
+function createWithPairs(gw, keep, end) {
+  return runTransaction(db, async (tx) => {
+    const snap = await tx.get(gameRef(gw));
+    if (snap.exists()) return { id: gw, ...snap.data(), already: true };
+    const data = { gameweekId: gw, pairs: keep.pairs, bye: keep.bye ?? null, participants: keep.participants, endAt: Timestamp.fromDate(end), createdAt: serverTimestamp() };
+    tx.set(gameRef(gw), data);
+    return { id: gw, ...data };
+  });
+}
+async function createWithRetry(gw, keep, end, tries = 4) {
+  let last;
+  for (let i = 0; i < tries; i++) {
+    try { return await createWithPairs(gw, keep, end); } catch (e) { last = e; if (i < tries - 1) await wait(700 * (i + 1)); }
+  }
+  throw last;
+}
+
+export async function extendHideSeek(gw, newEnd) {
+  const end = checkNewEnd(newEnd);
+  const pub = await getDoc(doc(db, "weeklySurprises", gw));
+  if (pub.exists() && pub.data().bonusResolved) throw new Error("Surpriza e deja rezolvată — punctele sunt oficiale, termenul nu se mai schimbă.");
+  const snap = await getDoc(gameRef(gw));
+  if (!snap.exists()) throw new Error("Ascunselea nu există pentru etapa asta.");
+  const d = snap.data();
+  if (!Array.isArray(d.pairs) || !d.pairs.length || !Array.isArray(d.participants)) throw new Error("Documentul Ascunselea e incomplet — nu-l ating.");
+  const curEnd = d.endAt?.toMillis ? d.endAt.toMillis() : 0;
+  if (end.getTime() <= curEnd) throw new Error("Noul termen trebuie să fie după cel actual.");
+  const keep = { pairs: d.pairs, bye: d.bye ?? null, participants: d.participants, oldEndMs: curEnd };
+  saveBackup(gw, keep);
+  await deleteDoc(gameRef(gw));
+  const g = await createWithRetry(gw, keep, end);
+  clearBackup(gw);
+  return g;
+}
+
+// Dacă prelungirea s-a întrerupt după ștergere: recreează din copia din telefon (aceleași perechi).
+export async function restoreHideSeek(gw, newEnd) {
+  const b = getHideSeekBackup(gw);
+  if (!b) throw new Error("Nu există o copie a perechilor în acest telefon.");
+  const end = checkNewEnd(newEnd);
+  const g = await createWithRetry(gw, b, end);
+  clearBackup(gw);
+  return g;
+}
+
 export function myPairIndex(game, uid) {
   return (game?.pairs || []).findIndex((p) => p.a === uid || p.b === uid);
 }

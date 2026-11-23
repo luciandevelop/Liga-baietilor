@@ -14,6 +14,7 @@ import DuelMiniCard from "../components/DuelMiniCard";
 import TeamDuelExperience from "../components/TeamDuelExperience";
 import TeamDuelMiniCard from "../components/TeamDuelMiniCard";
 import HalfHalfExperience from "../components/HalfHalfExperience";
+import TugOfWarExperience from "../components/TugOfWarExperience";
 import TriviaExperience from "../components/TriviaExperience";
 import DiceExperience from "../components/DiceExperience";
 import BetBuilderScreen from "./BetBuilderScreen";
@@ -355,16 +356,31 @@ export default function SurprisesScreen({ user, onBack }) {
 
                   {(secretMain?.type === "half-random" || secretMain?.type === "half-topbottom") && (
                     <LiveScoresGate status={liveScoresStatus}>
-                      <HalfHalfExperience
-                        myUid={user.uid}
-                        top={secretMain?.config?.top || []}
-                        bottom={secretMain?.config?.bottom || []}
-                        isTopVariant={secretMain?.type === "half-topbottom"}
-                        profiles={profiles}
-                        liveScores={liveScores}
-                        resolved={!!pub?.mainResolved}
-                        myPoints={myResult?.mainPoints}
-                      />
+                      {secretMain?.duelTheme === "tug" ? (
+                        // 🪢 Tema Squid Game „Trasul de frânghie” — doar grafică; taberele, formula și punctajul sunt identice.
+                        <TugOfWarExperience
+                          myUid={user.uid}
+                          top={secretMain?.config?.top || []}
+                          bottom={secretMain?.config?.bottom || []}
+                          isTopVariant={secretMain?.type === "half-topbottom"}
+                          profiles={profiles}
+                          liveScores={liveScores}
+                          resolved={!!pub?.mainResolved}
+                          myPoints={myResult?.mainPoints}
+                          gameweekId={gameweek.id}
+                        />
+                      ) : (
+                        <HalfHalfExperience
+                          myUid={user.uid}
+                          top={secretMain?.config?.top || []}
+                          bottom={secretMain?.config?.bottom || []}
+                          isTopVariant={secretMain?.type === "half-topbottom"}
+                          profiles={profiles}
+                          liveScores={liveScores}
+                          resolved={!!pub?.mainResolved}
+                          myPoints={myResult?.mainPoints}
+                        />
+                      )}
                     </LiveScoresGate>
                   )}
 

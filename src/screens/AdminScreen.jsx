@@ -92,6 +92,7 @@ import { runRedLightAfterValidation } from "../services/redLightService";
 const RedLightShow3D = lazy(() => import("../components/RedLightShow3D"));
 import BridgeAdminPanel from "../components/BridgeAdminPanel";
 import HideSeekAdminPanel, { HideSeekDemoButtons } from "../components/HideSeekAdminPanel";
+import TugOfWarDemo from "../components/TugOfWarDemo";
 import { HS_TYPE_ID } from "../services/hideSeekEngine";
 import BridgeTestLab from "../components/BridgeTestLab";
 import PusculitaTestLab from "../components/PusculitaTestLab";
@@ -416,6 +417,7 @@ export default function AdminScreen({ onBack }) {
   const [higherLowerPreviewOpen, setHigherLowerPreviewOpen] = useState(false);
   const [bursaPreviewOpen, setBursaPreviewOpen] = useState(false);
   const [redLightPreviewOpen, setRedLightPreviewOpen] = useState(false);
+  const [tugPreviewOpen, setTugPreviewOpen] = useState(false);
   const [bursaPreviewState, setBursaPreviewState] = useState("A");
   const [pusculitaPreviewOpen, setPusculitaPreviewOpen] = useState(false);
   const [bridgeLabOpen, setBridgeLabOpen] = useState(false);
@@ -3000,6 +3002,20 @@ export default function AdminScreen({ onBack }) {
                         </div>
                       )}
 
+                      {(mainType === "half-random" || mainType === "half-topbottom") && (
+                        <div style={s.surpriseRow}>
+                          <label style={s.surpriseLabel}>🪢 TEMĂ</label>
+                          <select
+                            style={s.surpriseSelect}
+                            value={duelTheme === "tug" ? "tug" : ""}
+                            onChange={(e) => handleConfigureSurprise(gw.id, "duelTheme", e.target.value)}
+                          >
+                            <option value="">Jumate-Jumate clasic</option>
+                            <option value="tug">🦑 Trasul de frânghie (Squid Game)</option>
+                          </select>
+                        </div>
+                      )}
+
                       {mainType === "sabotaj" && mainRevealed && (
                         <div style={s.triviaBox}>
                           {(() => {
@@ -3701,6 +3717,16 @@ export default function AdminScreen({ onBack }) {
                   Nu citește și nu scrie Firestore. Disponibil oricând.
                 </p>
                 <HideSeekDemoButtons />
+              </SectionCard>
+
+              <SectionCard title="🪢 Preview TRASUL DE FRÂNGHIE — DEMO · ZERO SCRIERI">
+                <p style={s.hint}>
+                  Jumate-Jumate cu grafică Squid Game: frânghia LIVE, 👑 exclusul, tragerea finală, câștig / pierdere / egal, 17 sau 18 jucători.
+                  Jucători fictivi, puncte simulate — nu citește și nu scrie Firestore. Pentru jucători se activează din „🪢 TEMĂ” la Jumate-Jumate.
+                </p>
+                <button type="button" style={s.smallBtn} onClick={() => setTugPreviewOpen(true)}>
+                  👁 Preview TRASUL DE FRÂNGHIE
+                </button>
               </SectionCard>
 
               <SectionCard title="🐷 Test PUȘCULIȚA pe server — fără etapă de test">
@@ -4488,6 +4514,8 @@ export default function AdminScreen({ onBack }) {
           <RedLightShow3D demo onClose={() => setRedLightPreviewOpen(false)} />
         </Suspense>
       )}
+
+      {tugPreviewOpen && <TugOfWarDemo onClose={() => setTugPreviewOpen(false)} />}
 
       {bursaPreviewOpen && (
         <div style={s.bbPreviewOverlay}>
